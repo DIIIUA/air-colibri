@@ -36,7 +36,7 @@ from src.gpu_ring_pipeline import GPURingPipeline, SlotState
 
 MODEL_DIR = r"C:\air-colibri\models\deepseek-v4-9b-colibri"
 PROMPT = "The capital of France is"
-NUM_NEW_TOKENS = 10
+NUM_NEW_TOKENS = int(sys.argv[1]) if len(sys.argv) > 1 else 3
 
 
 def run_single_benchmark(
@@ -77,13 +77,18 @@ def run_single_benchmark(
     model.eval()
 
     # Permanent globals: norm and lm_head on GPU, embed on CPU
-    norm_w = manager.globals["model.norm.weight"].to(device=device, dtype=dtype)
-    set_module_tensor_to_device(model, "model.norm.weight", device, value=norm_w, clear_cache=False)
+    if "model.norm.weight" in manager.globals:
+        norm_w = manager.globals.pop("model.norm.weight").to(device=device, dtype=dtype)
+        set_module_tensor_to_device(model, "model.norm.weight", device, value=norm_w, clear_cache=False)
+        del norm_w
 
-    lm_head_w = manager.globals["lm_head.weight"].to(device=device, dtype=dtype)
-    set_module_tensor_to_device(model, "lm_head.weight", device, value=lm_head_w, clear_cache=False)
+    if "lm_head.weight" in manager.globals:
+        lm_head_w = manager.globals.pop("lm_head.weight").to(device=device, dtype=dtype)
+        set_module_tensor_to_device(model, "lm_head.weight", device, value=lm_head_w, clear_cache=False)
+        del lm_head_w
 
     embed_w_cpu = manager.globals["model.embed_tokens.weight"]
+    gc.collect()
 
     # 3. Pipeline Setup
     template = {k: v for k, v in manager.pinned_pool.slots[0].items()}
@@ -146,11 +151,13 @@ def run_single_benchmark(
                 if next_layer < num_layers:
                     pinned_t = manager.load_layer_to_pinned_slot(next_layer, target_slot_idx=next_layer % num_slots)
                     next_slot = pipeline.get_slot_for_loading(next_layer)
-                    pipeline.load_tensors_async(next_slot, pinned_t)
-                elif next_layer == num_layers and pipeline.tail_to_head_prefetch:
-                    pinned_t = manager.load_layer_to_pinned_slot(0, target_slot_idx=0)
-                    pipeline.prefetch_tail_to_head(pinned_t)
-                    pipeline.tail_prefetched = True
+                    pipeline.load_tensors_async(next_slot, pinned_t, pinned_pool=manager.pinned_pool)
+                elif pipeline.tail_to_head_prefetch:
+                    target_slot_idx = 0
+                    if slot.slot_id == target_slot_idx and not pipeline.tail_prefetched:
+                        pinned_t = manager.load_layer_to_pinned_slot(0, target_slot_idx=0)
+                        pipeline.prefetch_tail_to_head(target_layer_idx=0, pinned_tensors=pinned_t, pinned_pool=manager.pinned_pool)
+                        pipeline.tail_prefetched = True
             return o
 
         layer_mod.register_forward_pre_hook(_pre)
@@ -183,7 +190,7 @@ def run_single_benchmark(
                         continue
                     pinned_t = manager.load_layer_to_pinned_slot(s, target_slot_idx=s)
                     slot = pipeline.get_slot_for_loading(s)
-                    pipeline.load_tensors_async(slot, pinned_t)
+                    pipeline.load_tensors_async(slot, pinned_t, pinned_pool=manager.pinned_pool)
 
             outputs = model(
                 inputs_embeds=inputs_embeds,

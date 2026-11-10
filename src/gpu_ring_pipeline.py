@@ -1,14 +1,15 @@
-"""GPU Ring Pipeline for AirColibri (Stage B & Stage C):
-Кольцевой конвейер VRAM-буферов с управлением состоянием и перекрытием передачи и вычислений.
+"""GPU Ring Pipeline for AirColibri (Stage 5 / Refactored):
+Кольцевой конвейер VRAM-буферов с управлением состоянием, строгой семантикой READY/LOADING
+и межпоточной синхронизацией через CUDA Streams и Events.
 
 Состояния слота:
-FREE -> LOADING -> READY -> COMPUTING -> FREE
+FREE -> LOADING (DMA в полете) -> READY (передача завершена) -> COMPUTING -> FREE
 
 Поддерживает режимы:
 1. Single Slot (1 слот, последовательный)
 2. Double Buffer (2 слота, базовое перекрытие)
 3. Triple Ring Pipeline (3 слота, трехфазная «лесенка»)
-4. Triple Ring + Tail-to-Head Prefetch (упреждающая загрузка слоя 0 для следующего токена)
+4. Triple Ring + Tail-to-Head Prefetch (упреждающая загрузка первого потокового слоя следующего токена)
 """
 
 import enum
@@ -38,7 +39,7 @@ class RingSlot:
         slot_id: int,
         template_tensors: Dict[str, torch.Tensor],
         device: torch.device,
-        dtype: torch.dtype = torch.float16
+        dtype: torch.dtype = torch.bfloat16
     ):
         self.slot_id = slot_id
         self.device = device
@@ -61,6 +62,22 @@ class RingSlot:
 
         self.slot_bytes = sum(t.nbytes for t in self.tensors.values())
 
+    def is_ready(self) -> bool:
+        """Проверяет фактическую готовность слота на GPU без блокировки."""
+        if self.state == SlotState.READY:
+            return True
+        if self.state == SlotState.LOADING and self.transfer_done_event is not None:
+            if self.transfer_done_event.query():
+                self.state = SlotState.READY
+                return True
+        return False
+
+    def wait_ready(self) -> None:
+        """Ожидает фактического завершения DMA-передачи слота на CPU."""
+        if self.state == SlotState.LOADING and self.transfer_done_event is not None:
+            self.transfer_done_event.synchronize()
+            self.state = SlotState.READY
+
 
 class GPURingPipeline:
     """Кольцевой менеджер VRAM с поддержкой 1, 2 или 3 слотов («лесенка»)."""
@@ -70,7 +87,7 @@ class GPURingPipeline:
         template_tensors: Dict[str, torch.Tensor],
         num_slots: int = 3,
         device: Optional[torch.device] = None,
-        dtype: torch.dtype = torch.float16,
+        dtype: torch.dtype = torch.bfloat16,
         tail_to_head_prefetch: bool = False
     ):
         self.num_slots = max(1, min(num_slots, 4))
@@ -117,7 +134,8 @@ class GPURingPipeline:
     def load_tensors_async(
         self,
         slot: RingSlot,
-        pinned_src_tensors: Dict[str, torch.Tensor]
+        pinned_src_tensors: Dict[str, torch.Tensor],
+        pinned_pool: Optional[Any] = None
     ) -> None:
         """Асинхронно копирует веса из закрепленной памяти в GPU-слот через transfer_stream."""
         if self.device.type == "cuda" and self.transfer_stream is not None:
@@ -126,12 +144,19 @@ class GPURingPipeline:
                     if name in slot.tensors:
                         slot.tensors[name].copy_(src_t, non_blocking=True)
                 slot.transfer_done_event.record(self.transfer_stream)
+
+            # Регистрируем в pinned-пуле активную DMA-передачу для предотвращения гонок
+            if pinned_pool is not None:
+                pinned_pool.record_dma_in_flight(slot.slot_id, self.transfer_stream)
+
+            # На CPU семантически состояние остается LOADING до завершения DMA
+            slot.state = SlotState.LOADING
         else:
             for name, src_t in pinned_src_tensors.items():
                 if name in slot.tensors:
                     slot.tensors[name].copy_(src_t, non_blocking=False)
+            slot.state = SlotState.READY
 
-        slot.state = SlotState.READY
         self.total_loads += 1
 
     def acquire_slot_for_compute(self, layer_idx: int) -> RingSlot:
@@ -139,7 +164,7 @@ class GPURingPipeline:
         slot_idx = layer_idx % self.num_slots
         slot = self.slots[slot_idx]
 
-        # Вычисления ждут завершения DMA-передачи этого слота
+        # Вычисления в compute_stream строго ждут завершения DMA-передачи этого слота
         if self.device.type == "cuda" and slot.transfer_done_event is not None:
             self.compute_stream.wait_event(slot.transfer_done_event)
 
@@ -156,21 +181,22 @@ class GPURingPipeline:
 
     def prefetch_tail_to_head(
         self,
-        layer_0_pinned_tensors: Dict[str, torch.Tensor]
+        target_layer_idx: int,
+        pinned_tensors: Dict[str, torch.Tensor],
+        pinned_pool: Optional[Any] = None
     ) -> Optional[RingSlot]:
-        """Упреждающая предзагрузка слоя 0 токена T+1 на свободный слот кольца.
+        """Упреждающая предзагрузка первого стримингового слоя следующего токена на свободный слот кольца.
 
-        Вызывается во время вычисления хвоста (слоя 31) токена T.
+        Вызывается во время вычисления хвоста токена T.
         """
         if not self.tail_to_head_prefetch or self.num_slots < 2:
             return None
 
-        # Выбираем слот для слоя 0 токена T+1
-        slot_idx = 0 % self.num_slots
+        slot_idx = target_layer_idx % self.num_slots
         slot = self.slots[slot_idx]
 
         # Запускаем упреждающую загрузку в transfer_stream
-        self.get_slot_for_loading(0)
-        self.load_tensors_async(slot, layer_0_pinned_tensors)
+        self.get_slot_for_loading(target_layer_idx)
+        self.load_tensors_async(slot, pinned_tensors, pinned_pool=pinned_pool)
         self.tail_prefetches += 1
         return slot

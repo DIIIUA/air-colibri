@@ -1,4 +1,4 @@
-"""Unit tests for Bounded Memory Manager (Stage A)."""
+"""Unit tests for Bounded Memory Manager (Stage 5 / Refactored)."""
 
 import os
 import unittest
@@ -15,7 +15,7 @@ MODEL_DIR = r"C:\air-colibri\models\deepseek-v4-9b-colibri"
 class TestBoundedMemory(unittest.TestCase):
 
     def test_bounded_ram_cache_lru_eviction(self):
-        cache = BoundedRAMCache(max_cached_layers=3)
+        cache = BoundedRAMCache(max_cached_layers=3, policy="lru")
         # Add 3 layers
         cache.put(0, {"w": torch.zeros(10)})
         cache.put(1, {"w": torch.zeros(10)})
@@ -35,18 +35,30 @@ class TestBoundedMemory(unittest.TestCase):
         self.assertIsNotNone(cache.get(2))
         self.assertIsNotNone(cache.get(3))
 
+    def test_bounded_ram_cache_static_pinned(self):
+        cache = BoundedRAMCache(max_cached_layers=2, policy="static_pinned")
+        cache.put(0, {"w": torch.zeros(10)})
+        cache.put(1, {"w": torch.zeros(10)})
+        # Trying to add 3rd layer in static pinned mode: should NOT evict layers 0 and 1!
+        cache.put(2, {"w": torch.zeros(10)})
+        self.assertEqual(cache.current_layers_count, 2)
+        self.assertEqual(cache.evictions, 0)
+        self.assertIsNotNone(cache.get(0))
+        self.assertIsNotNone(cache.get(1))
+        self.assertIsNone(cache.get(2))
+
     def test_pinned_buffer_pool(self):
         if not torch.cuda.is_available():
             self.skipTest("CUDA not available")
 
-        template = {"matrix": torch.zeros(100, 100, dtype=torch.float16)}
-        pool = BoundedPinnedBufferPool(template_tensors=template, num_slots=2, dtype=torch.float16)
+        template = {"matrix": torch.zeros(100, 100, dtype=torch.bfloat16)}
+        pool = BoundedPinnedBufferPool(template_tensors=template, num_slots=2, dtype=torch.bfloat16)
         self.assertEqual(len(pool.slots), 2)
         self.assertTrue(pool.slots[0]["matrix"].is_pinned())
         self.assertTrue(pool.slots[1]["matrix"].is_pinned())
 
         # Test copying into slot
-        src = {"matrix": torch.ones(100, 100, dtype=torch.float16)}
+        src = {"matrix": torch.ones(100, 100, dtype=torch.bfloat16)}
         slot0 = pool.copy_into_slot(0, src)
         self.assertEqual(slot0["matrix"][0, 0].item(), 1.0)
 
@@ -55,15 +67,17 @@ class TestBoundedMemory(unittest.TestCase):
             model_dir=MODEL_DIR,
             max_ram_layers=4,
             num_pinned_slots=2,
-            dtype=torch.float16
+            cache_policy="static_pinned",
+            dtype=torch.bfloat16
         )
         # Load layer 0 and layer 1
         s0 = manager.load_layer_to_pinned_slot(layer_idx=0, target_slot_idx=0)
         self.assertIn("input_layernorm.weight", s0)
-        self.assertEqual(s0["input_layernorm.weight"].dtype, torch.float16)
+        self.assertEqual(s0["input_layernorm.weight"].dtype, torch.bfloat16)
 
         s1 = manager.load_layer_to_pinned_slot(layer_idx=1, target_slot_idx=1)
         self.assertIn("input_layernorm.weight", s1)
+        manager.close()
 
 
 if __name__ == "__main__":

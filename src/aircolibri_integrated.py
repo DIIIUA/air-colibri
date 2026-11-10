@@ -39,6 +39,7 @@ class AirColibriModel:
         pipeline_mode: str = "triple_ring_prefetch",  # "sequential", "double_buffer", "triple_ring", "triple_ring_prefetch"
         vram_resident_layers: int = 0,
         max_ram_layers: int = 8,
+        cache_policy: str = "static_pinned",
         num_slots: Optional[int] = None,
         device: Optional[torch.device] = None,
         dtype: torch.dtype = torch.bfloat16
@@ -48,6 +49,7 @@ class AirColibriModel:
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = dtype
         self.vram_resident_layers = vram_resident_layers
+        self.cache_policy = cache_policy
 
         # Определяем параметры кольца по режиму
         if num_slots is None:
@@ -71,6 +73,7 @@ class AirColibriModel:
             model_dir=model_dir,
             max_ram_layers=max_ram_layers,
             num_pinned_slots=self.num_slots,
+            cache_policy=cache_policy,
             dtype=self.dtype
         )
 
@@ -120,12 +123,18 @@ class AirColibriModel:
         self.embed_tokens_weight = self.weight_manager.globals["model.embed_tokens.weight"]
 
         # Norm на GPU
-        norm_w = self.weight_manager.globals["model.norm.weight"].to(device=self.device, dtype=self.dtype)
-        set_module_tensor_to_device(self.model, "model.norm.weight", self.device, value=norm_w, clear_cache=False)
+        if "model.norm.weight" in self.weight_manager.globals:
+            norm_w = self.weight_manager.globals.pop("model.norm.weight").to(device=self.device, dtype=self.dtype)
+            set_module_tensor_to_device(self.model, "model.norm.weight", self.device, value=norm_w, clear_cache=False)
+            del norm_w
 
-        # LM Head на GPU
-        lm_head_w = self.weight_manager.globals["lm_head.weight"].to(device=self.device, dtype=self.dtype)
-        set_module_tensor_to_device(self.model, "lm_head.weight", self.device, value=lm_head_w, clear_cache=False)
+        # LM Head на GPU (удаляем 2.03 ГБ копию из globals для экономии RAM!)
+        if "lm_head.weight" in self.weight_manager.globals:
+            lm_head_w = self.weight_manager.globals.pop("lm_head.weight").to(device=self.device, dtype=self.dtype)
+            set_module_tensor_to_device(self.model, "lm_head.weight", self.device, value=lm_head_w, clear_cache=False)
+            del lm_head_w
+
+        gc.collect()
 
     def _install_pipeline_hooks(self) -> None:
         """Устанавливает pre/post хуки кольцевого конвейера на каждый слой."""
@@ -189,13 +198,16 @@ class AirColibriModel:
                     if next_layer < num_layers:
                         pinned_t = self.weight_manager.load_layer_to_pinned_slot(next_layer, target_slot_idx=next_layer % self.num_slots)
                         next_slot = self.pipeline.get_slot_for_loading(next_layer)
-                        self.pipeline.load_tensors_async(next_slot, pinned_t)
-                    elif next_layer == num_layers and self.tail_to_head_prefetch:
-                        # Tail-to-Head Prefetch: первый стриминговый слой следующего токена!
+                        self.pipeline.load_tensors_async(next_slot, pinned_t, pinned_pool=self.weight_manager.pinned_pool)
+                    elif self.tail_to_head_prefetch:
+                        # Tail-to-Head Prefetch: загружаем первый стриминговый слой следующего токена
+                        # ТОЛЬКО когда освободился именно его слот (target_slot_idx)!
                         first_s = self.vram_resident_layers
-                        pinned_t = self.weight_manager.load_layer_to_pinned_slot(first_s, target_slot_idx=first_s % self.num_slots)
-                        self.pipeline.prefetch_tail_to_head(pinned_t)
-                        self.tail_prefetched = True
+                        target_slot_idx = first_s % self.num_slots
+                        if slot.slot_id == target_slot_idx and not self.tail_prefetched:
+                            pinned_t = self.weight_manager.load_layer_to_pinned_slot(first_s, target_slot_idx=target_slot_idx)
+                            self.pipeline.prefetch_tail_to_head(target_layer_idx=first_s, pinned_tensors=pinned_t, pinned_pool=self.weight_manager.pinned_pool)
+                            self.tail_prefetched = True
 
                 return output
 
@@ -239,13 +251,14 @@ class AirColibriModel:
 
                 # Первоначальное заполнение кольца перед началом слоев
                 if self.num_slots > 1 or self.pipeline_mode != "sequential":
-                    for s in range(self.vram_resident_layers, min(self.vram_resident_layers + self.num_slots, num_layers)):
-                        if s == 0 and self.tail_prefetched:
+                    first_s = self.vram_resident_layers
+                    for s in range(first_s, min(first_s + self.num_slots, num_layers)):
+                        if s == first_s and self.tail_prefetched:
                             self.tail_prefetched = False
                             continue
                         pinned_t = self.weight_manager.load_layer_to_pinned_slot(s, target_slot_idx=s % self.num_slots)
                         slot = self.pipeline.get_slot_for_loading(s)
-                        self.pipeline.load_tensors_async(slot, pinned_t)
+                        self.pipeline.load_tensors_async(slot, pinned_t, pinned_pool=self.weight_manager.pinned_pool)
 
                 # Истинный forward pass модели Transformers
                 outputs = self.model(
