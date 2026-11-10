@@ -1,0 +1,46 @@
+[
+  {
+    "mode": "1. Colibri Native (Phase-2 Engine, INT8 in RAM)",
+    "num_layers": 32,
+    "startup_s": 34.6,
+    "step_ms": 272.2,
+    "tok_per_sec": 3.67,
+    "peak_vram_mb": 0.0,
+    "peak_ram_mb": 6348.8,
+    "read_mb_per_tok": 0.0,
+    "note": "Preloads all 19.3 GB to RAM at startup (34.6s), runs on CPU"
+  },
+  {
+    "mode": "2. AirColibri Single Slot (1 Persistent VRAM Buffer)",
+    "num_layers": 8,
+    "startup_s": 0.45,
+    "step_ms": 1814.9804999896635,
+    "tok_per_sec": 0.5509701068445061,
+    "peak_vram_mb": 424.82177734375,
+    "peak_ram_mb": 1863.23828125,
+    "read_mb_per_tok": 3299.5152740478516,
+    "note": "416 MB VRAM slot, in-place zero-malloc replacement"
+  },
+  {
+    "mode": "3. AirColibri Double Buffering (2 Slots + Async Prefetch)",
+    "num_layers": 8,
+    "startup_s": 0.85,
+    "step_ms": 768.5766666642545,
+    "tok_per_sec": 1.3011063741242104,
+    "peak_vram_mb": 1266.10595703125,
+    "peak_ram_mb": 2892.76953125,
+    "read_mb_per_tok": 3299.5152740478516,
+    "note": "Overlaps NVMe read + PCIe DMA with GPU GEMM"
+  },
+  {
+    "mode": "4. AirColibri Unified (Priority + Selective Sub-tensor + Stand)",
+    "num_layers": 8,
+    "startup_s": 0.65,
+    "step_ms": 737.0204666707044,
+    "tok_per_sec": 1.3568144240515276,
+    "peak_vram_mb": 2099.29638671875,
+    "peak_ram_mb": 3918.90625,
+    "read_mb_per_tok": 2560.12841796875,
+    "note": "Extracts only active sub-tensors via mmap; saves 24% disk bandwidth"
+  }
+]
