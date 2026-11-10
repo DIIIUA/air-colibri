@@ -1,12 +1,17 @@
 """AirColibri Integrated Inference Engine:
-Соединение математического графа HuggingFace / Transformers с ярусным менеджером памяти Colibri.
+Соединение математического графа HuggingFace / Transformers с ярусным менеджером памяти Colibri
+и кольцевым конвейером GPU Ring Pipeline («Лесенка»).
 
-- Математический forward: оригинальный Qwen3_5 / Transformers (без упрощений!)
-- Стриминг и кэширование: DynamicTieredCache + Zero Disk Re-read
-- Поддержка KV-кэша и RoPE
-- Генерация настоящих токенов и проверка логитов
+Ключевые свойства:
+1. Математический forward: оригинальный Qwen3_5 / Transformers (без упрощений, бит-в-бит)
+2. GPU Ring Pipeline: 3-слотовая кольцевая архитектура с перекрытием вычислений и DMA-передачи
+3. Bounded Memory Manager: строгий лимит RAM-кэша + 2-3 закрепленных слота (~800-1200 МБ)
+4. Tail-to-Head Prefetch: упреждающая загрузка слоя 0 следующего токена во время вычисления хвоста
+5. Zero VRAM Waste: embed_tokens вынесен в Host RAM (экономия 2.03 ГБ VRAM)
 """
 
+import collections
+import gc
 import os
 import sys
 import time
@@ -21,160 +26,177 @@ from accelerate import init_empty_weights
 from accelerate.utils import set_module_tensor_to_device
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
-
-class AirColibriWeightProvider:
-    """Менеджер весов: подгружает и удерживает веса слоев из model-XXXXX.safetensors."""
-
-    def __init__(
-        self,
-        model_dir: str,
-        device: torch.device,
-        dtype: torch.dtype = torch.bfloat16,
-        vram_resident_layers: int = 4
-    ):
-        self.model_dir = model_dir
-        self.device = device
-        self.dtype = dtype
-        self.vram_resident_layers_count = vram_resident_layers
-
-        # Кэш весов:
-        # vram_cache: {layer_idx: {param_name: tensor_on_cuda}}
-        # ram_cache:  {layer_idx: {param_name: tensor_on_cpu}}
-        self.vram_cache: Dict[int, Dict[str, torch.Tensor]] = {}
-        self.ram_cache: Dict[int, Dict[str, torch.Tensor]] = {}
-
-        # Глобальные веса (embed, norm, lm_head) держим в памяти
-        self.globals: Dict[str, torch.Tensor] = {}
-        self._load_globals()
-
-    def _load_globals(self) -> None:
-        globals_path = os.path.join(self.model_dir, "model-globals.safetensors")
-        with safetensors.safe_open(globals_path, framework="pt", device="cpu") as f:
-            for k in f.keys():
-                t = f.get_slice(k)[:]
-                self.globals[k] = t
-
-    def get_global_weights(self, module_name: str) -> Dict[str, torch.Tensor]:
-        weights = {}
-        if module_name == "embed":
-            weights["weight"] = self.globals["model.embed_tokens.weight"]
-        elif module_name == "norm":
-            weights["weight"] = self.globals["model.norm.weight"]
-        elif module_name == "lm_head":
-            weights["weight"] = self.globals["lm_head.weight"]
-        return weights
-
-    def get_layer_weights(self, layer_idx: int) -> Dict[str, torch.Tensor]:
-        # 1. Если уже в VRAM
-        if layer_idx in self.vram_cache:
-            return self.vram_cache[layer_idx]
-
-        # 2. Если в RAM
-        if layer_idx in self.ram_cache:
-            ram_tensors = self.ram_cache[layer_idx]
-            # Если входит в пул VRAM-резидентности — переносим в VRAM навсегда
-            if layer_idx < self.vram_resident_layers_count:
-                vram_tensors = {k: v.to(device=self.device, dtype=self.dtype) for k, v in ram_tensors.items()}
-                self.vram_cache[layer_idx] = vram_tensors
-                return vram_tensors
-            return ram_tensors
-
-        # 3. Чтение с SSD (только в первый раз!)
-        layer_file = os.path.join(self.model_dir, f"model-{layer_idx:05d}.safetensors")
-        tensors = {}
-        with safetensors.safe_open(layer_file, framework="pt", device="cpu") as f:
-            prefix = f"model.layers.{layer_idx}."
-            for k in f.keys():
-                short_k = k.replace(prefix, "")
-                tensors[short_k] = f.get_slice(k)[:]
-
-        # Сохраняем в RAM-кэш для исключения повторного чтения с диска
-        self.ram_cache[layer_idx] = tensors
-
-        if layer_idx < self.vram_resident_layers_count:
-            vram_tensors = {k: v.to(device=self.device, dtype=self.dtype) for k, v in tensors.items()}
-            self.vram_cache[layer_idx] = vram_tensors
-            return vram_tensors
-
-        return tensors
+from src.bounded_memory_manager import StableWeightManager, BoundedRAMCache, BoundedPinnedBufferPool
+from src.gpu_ring_pipeline import GPURingPipeline, SlotState
 
 
 class AirColibriModel:
-    """Обертка над настоящей моделью HuggingFace с потоковой подачей весов AirColibri."""
+    """Интегрированная модель AirColibri с поддержкой GPU Ring Pipeline и Tail-to-Head Prefetch."""
 
     def __init__(
         self,
         model_dir: str,
-        vram_resident_layers: int = 4,
+        pipeline_mode: str = "triple_ring_prefetch",  # "sequential", "double_buffer", "triple_ring", "triple_ring_prefetch"
+        vram_resident_layers: int = 0,
+        max_ram_layers: int = 8,
+        num_slots: Optional[int] = None,
         device: Optional[torch.device] = None,
         dtype: torch.dtype = torch.bfloat16
     ):
         self.model_dir = model_dir
+        self.pipeline_mode = pipeline_mode
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = dtype
         self.vram_resident_layers = vram_resident_layers
 
-        # 1. Загрузка конфигурации
+        # Определяем параметры кольца по режиму
+        if num_slots is None:
+            if pipeline_mode in ("triple_ring", "triple_ring_prefetch"):
+                self.num_slots = 3
+            elif pipeline_mode == "double_buffer":
+                self.num_slots = 2
+            else:
+                self.num_slots = 1
+        else:
+            self.num_slots = num_slots
+
+        self.tail_to_head_prefetch = (pipeline_mode == "triple_ring_prefetch" and self.num_slots >= 2)
+
+        # 1. Загрузка конфигурации и токенизатора
         self.config = AutoConfig.from_pretrained(model_dir, config_file="config.hf.json")
         self.tokenizer = AutoTokenizer.from_pretrained(model_dir)
 
-        # 2. Создание модели на meta-устройстве (0 байт VRAM!)
-        with init_empty_weights():
-            self.model = AutoModelForCausalLM.from_config(self.config)
-
-        self.model.eval()
-
-        # 3. Инициализация менеджера весов
-        self.weight_provider = AirColibriWeightProvider(
+        # 2. Инициализация менеджера памяти
+        self.weight_manager = StableWeightManager(
             model_dir=model_dir,
-            device=self.device,
-            dtype=self.dtype,
-            vram_resident_layers=vram_resident_layers
+            max_ram_layers=max_ram_layers,
+            num_pinned_slots=self.num_slots,
+            dtype=self.dtype
         )
 
-        # 4. Предзагрузка глобальных весов на устройство
-        self._load_permanent_globals()
+        # 3. Создание модели на meta-устройстве (0 байт VRAM!)
+        with init_empty_weights():
+            self.model = AutoModelForCausalLM.from_config(self.config)
+        self.model.eval()
 
-        # 5. Установка стриминговых хуков на слои
-        self._install_hooks()
+        # 4. Постоянные веса и VRAM-резидентные слои
+        self._setup_permanent_weights()
+
+        # 5. Инициализация GPU Ring Pipeline
+        template = {k: v for k, v in self.weight_manager.pinned_pool.slots[0].items()}
+        self.pipeline = GPURingPipeline(
+            template_tensors=template,
+            num_slots=self.num_slots,
+            device=self.device,
+            dtype=self.dtype,
+            tail_to_head_prefetch=self.tail_to_head_prefetch
+        )
+        self.tail_prefetched = False
+
+        # 6. Загружаем VRAM-резидентные слои
+        for r_idx in range(self.vram_resident_layers):
+            self._load_resident_layer(r_idx)
+
+        # 7. Установка стриминговых хуков на декодер-слои
+        self._install_pipeline_hooks()
 
         # Статистика
         self.last_step_time_ms = 0.0
 
-    def _load_permanent_globals(self) -> None:
-        """Эмбеддинг и финальную норму держим на GPU для быстрого прохода."""
-        # Embed
-        embed_w = self.weight_provider.get_global_weights("embed")["weight"]
-        set_module_tensor_to_device(self.model, "model.embed_tokens.weight", self.device, value=embed_w.to(dtype=self.dtype))
+    def _load_resident_layer(self, layer_idx: int) -> None:
+        """Загружает VRAM-резидентный слой навсегда на GPU."""
+        layer_file = os.path.join(self.model_dir, f"model-{layer_idx:05d}.safetensors")
+        prefix = f"model.layers.{layer_idx}."
+        layer_module = self.model.model.layers[layer_idx]
+        with safetensors.safe_open(layer_file, framework="pt", device="cpu") as f:
+            for k in f.keys():
+                short_k = k.replace(prefix, "")
+                t = f.get_slice(k)[:].to(device=self.device, dtype=self.dtype)
+                set_module_tensor_to_device(layer_module, short_k, self.device, value=t, clear_cache=False)
 
-        # Norm
-        norm_w = self.weight_provider.get_global_weights("norm")["weight"]
-        set_module_tensor_to_device(self.model, "model.norm.weight", self.device, value=norm_w.to(dtype=self.dtype))
+    def _setup_permanent_weights(self) -> None:
+        """Эмбеддинг на CPU (экономия 2.03 ГБ VRAM), norm и lm_head на GPU."""
+        # Embed держим на CPU: lookup дает вектор 8 КБ, который передается на GPU
+        self.embed_tokens_weight = self.weight_manager.globals["model.embed_tokens.weight"]
 
-        # LM Head (можно держать в RAM или VRAM в зависимости от доступной памяти)
-        lm_head_w = self.weight_provider.get_global_weights("lm_head")["weight"]
-        set_module_tensor_to_device(self.model, "lm_head.weight", self.device, value=lm_head_w.to(dtype=self.dtype))
+        # Norm на GPU
+        norm_w = self.weight_manager.globals["model.norm.weight"].to(device=self.device, dtype=self.dtype)
+        set_module_tensor_to_device(self.model, "model.norm.weight", self.device, value=norm_w, clear_cache=False)
 
-    def _install_hooks(self) -> None:
-        """Устанавливает forward pre/post хуки на каждый декодер-слой."""
+        # LM Head на GPU
+        lm_head_w = self.weight_manager.globals["lm_head.weight"].to(device=self.device, dtype=self.dtype)
+        set_module_tensor_to_device(self.model, "lm_head.weight", self.device, value=lm_head_w, clear_cache=False)
+
+    def _install_pipeline_hooks(self) -> None:
+        """Устанавливает pre/post хуки кольцевого конвейера на каждый слой."""
+        num_layers = self.config.num_hidden_layers
+        self.active_slot_per_layer = [None] * num_layers
+
+        # Собираем список параметров для каждого слоя
+        layer_param_names = []
+        for l_idx, layer_mod in enumerate(self.model.model.layers):
+            layer_param_names.append([k for k, _ in layer_mod.named_parameters()])
+
         for idx, layer_module in enumerate(self.model.model.layers):
             layer_module._air_layer_idx = idx
 
             def _pre_hook(module, args):
-                idx = module._air_layer_idx
-                # Получаем веса из кэша (VRAM или RAM)
-                weights = self.weight_provider.get_layer_weights(idx)
-                # Переносим на GPU только если еще не там
-                for param_name, tensor in weights.items():
-                    target_device = tensor.device if tensor.device.type == "cuda" else self.device
-                    set_module_tensor_to_device(module, param_name, target_device, value=tensor.to(device=self.device, dtype=self.dtype))
+                i = module._air_layer_idx
+                # Слой резидентен в VRAM?
+                if i < self.vram_resident_layers:
+                    return
+
+                if self.num_slots == 1 and self.pipeline_mode == "sequential":
+                    # Базовый последовательный режим
+                    cached = self.weight_manager.ram_cache.get(i)
+                    if cached is None:
+                        layer_file = os.path.join(self.model_dir, f"model-{i:05d}.safetensors")
+                        cached = {}
+                        prefix = f"model.layers.{i}."
+                        with safetensors.safe_open(layer_file, framework="pt", device="cpu") as f:
+                            for k in f.keys():
+                                short_k = k.replace(prefix, "")
+                                cached[short_k] = f.get_slice(k)[:].to(dtype=self.dtype)
+                        self.weight_manager.ram_cache.put(i, cached)
+                    slot = self.pipeline.slots[0]
+                    for k, t in cached.items():
+                        slot.tensors[k].copy_(t, non_blocking=False)
+                    for k in layer_param_names[i]:
+                        if k in slot.tensors:
+                            set_module_tensor_to_device(module, k, self.device, value=slot.tensors[k], clear_cache=False)
+                    self.active_slot_per_layer[i] = slot
+                else:
+                    # Ring Pipeline: ожидаем готовности слота
+                    slot = self.pipeline.acquire_slot_for_compute(i)
+                    self.active_slot_per_layer[i] = slot
+                    # Zero-copy привязка указателей
+                    for k in layer_param_names[i]:
+                        if k in slot.tensors:
+                            set_module_tensor_to_device(module, k, self.device, value=slot.tensors[k], clear_cache=False)
 
             def _post_hook(module, args, output):
-                idx = module._air_layer_idx
-                # Если слой не VRAM-резидентный — освобождаем слот на GPU
-                if idx >= self.vram_resident_layers:
-                    for name, _ in module.named_parameters():
-                        set_module_tensor_to_device(module, name, "meta")
+                i = module._air_layer_idx
+                if i < self.vram_resident_layers:
+                    return output
+
+                slot = self.active_slot_per_layer[i]
+                if self.num_slots > 1 or self.pipeline_mode != "sequential":
+                    # Освобождаем слот после вычислений
+                    self.pipeline.release_slot_after_compute(slot)
+
+                    # Запускаем загрузку следующего слоя для этого слота
+                    next_layer = i + self.num_slots
+                    if next_layer < num_layers:
+                        pinned_t = self.weight_manager.load_layer_to_pinned_slot(next_layer, target_slot_idx=next_layer % self.num_slots)
+                        next_slot = self.pipeline.get_slot_for_loading(next_layer)
+                        self.pipeline.load_tensors_async(next_slot, pinned_t)
+                    elif next_layer == num_layers and self.tail_to_head_prefetch:
+                        # Tail-to-Head Prefetch: первый стриминговый слой следующего токена!
+                        first_s = self.vram_resident_layers
+                        pinned_t = self.weight_manager.load_layer_to_pinned_slot(first_s, target_slot_idx=first_s % self.num_slots)
+                        self.pipeline.prefetch_tail_to_head(pinned_t)
+                        self.tail_prefetched = True
+
                 return output
 
             layer_module.register_forward_pre_hook(_pre_hook)
@@ -186,15 +208,16 @@ class AirColibriModel:
         max_new_tokens: int = 10,
         temperature: float = 0.0
     ) -> Tuple[str, List[int], List[float]]:
-        """Честная генерация токенов через сквозной вычислительный граф."""
+        """Честная генерация токенов через сквозной вычислительный граф и кольцевой конвейер."""
         inputs = self.tokenizer(prompt, return_tensors="pt")
-        input_ids = inputs["input_ids"].to(self.device)
+        input_ids = inputs["input_ids"]
 
         generated_ids = input_ids[0].tolist()
         step_times = []
+        num_layers = self.config.num_hidden_layers
 
         print(f"\n[AirColibri Integrated] Starting genuine generation for prompt: '{prompt}'")
-        print(f"[AirColibri Integrated] Input tokens: {len(generated_ids)} | Target new tokens: {max_new_tokens}")
+        print(f"[AirColibri Integrated] Input tokens: {len(generated_ids)} | Target new tokens: {max_new_tokens} | Mode: {self.pipeline_mode}")
 
         past_key_values = None
 
@@ -204,13 +227,30 @@ class AirColibriModel:
 
                 # На первом шаге передаем весь prompt, затем по 1 токену с KV-кэшем
                 if past_key_values is None:
-                    curr_input = input_ids
+                    step_tokens = torch.tensor([generated_ids], dtype=torch.long)
                 else:
-                    curr_input = torch.tensor([[generated_ids[-1]]], device=self.device)
+                    step_tokens = torch.tensor([[generated_ids[-1]]], dtype=torch.long)
+
+                # Поиск эмбеддингов на CPU -> передача 8 КБ на GPU
+                inputs_embeds = torch.nn.functional.embedding(step_tokens, self.embed_tokens_weight).to(
+                    device=self.device,
+                    dtype=self.dtype
+                )
+
+                # Первоначальное заполнение кольца перед началом слоев
+                if self.num_slots > 1 or self.pipeline_mode != "sequential":
+                    for s in range(self.vram_resident_layers, min(self.vram_resident_layers + self.num_slots, num_layers)):
+                        if s == 0 and self.tail_prefetched:
+                            self.tail_prefetched = False
+                            continue
+                        pinned_t = self.weight_manager.load_layer_to_pinned_slot(s, target_slot_idx=s % self.num_slots)
+                        slot = self.pipeline.get_slot_for_loading(s)
+                        self.pipeline.load_tensors_async(slot, pinned_t)
 
                 # Истинный forward pass модели Transformers
                 outputs = self.model(
-                    input_ids=curr_input,
+                    inputs_embeds=inputs_embeds,
+                    input_ids=None,
                     past_key_values=past_key_values,
                     use_cache=True
                 )
@@ -229,11 +269,13 @@ class AirColibriModel:
                     next_token = torch.multinomial(probs, num_samples=1).item()
 
                 generated_ids.append(next_token)
+                if self.device.type == "cuda":
+                    torch.cuda.synchronize()
                 step_ms = (time.perf_counter() - t0) * 1000.0
                 step_times.append(step_ms)
 
                 decoded_token = self.tokenizer.decode([next_token])
-                print(f"  Step {step + 1}/{max_new_tokens}: Token ID={next_token} ('{decoded_token}') | Step Time: {step_ms:.1f} ms")
+                print(f"  Step {step + 1}/{max_new_tokens}: Token ID={next_token} ('{decoded_token}') | Step Time: {step_ms:.1f} ms", flush=True)
 
         output_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
         return output_text, generated_ids, step_times
