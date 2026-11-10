@@ -1,0 +1,10 @@
+upstream_airllm/
+upstream_colibri/
+.venv/
+__pycache__/
+*.pyc
+*.bin
+*.safetensors
+*.log
+.gemini/
+.pytest_cache/
