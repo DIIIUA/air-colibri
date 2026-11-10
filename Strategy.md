@@ -28,8 +28,35 @@ Outcome_(t-1) + ObservedBehavior_(t-1) = Strategy_t = ObservedBehavior_(t+1) + O
   - Single Slot: 25.59 ms/step (39.08 tok/s, 20.66x speedup, 24.1 MB VRAM)
   - Double Buffer: 24.49 ms/step (40.84 tok/s, 21.59x speedup, 48.3 MB VRAM)
   - Ring Pool + LFRU Cache: 16.96 ms/step (58.97 tok/s, 31.17x speedup, 73.75% transfer reduction, 80.3 MB VRAM)
+- [x] Tested real DeepSeek-V4-9B weights from physical SATA HDD (`D:\Colibri\models\deepseek-v4-9b-colibri`):
+  - Colibri Native: 257.5 ms/tok (3.88 tok/s) on CPU OpenMP threads, 6.17 GB RAM, 0 MB VRAM, 139.5s HDD cold load.
+  - AirColibri Single Slot: 424.8 MB VRAM, 1.88 GB RAM, executes on RTX 3060 Ti GPU (0.8 ms compute/layer).
+  - AirColibri Double Buffering: 849.5 MB VRAM, 2.39 GB RAM, 800.3 ms per 8 layers (1.25 tok/s), 12.3 GB/s PCIe DMA.
+
+## 2.1. Топология и логика двухэтапного синтеза AirColibri
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                        AirColibri Pipeline                             │
+├────────────────────────────────────────────────────────────────────────┤
+│  Этап 1: Предварительная приоритизация топологии (Colibri-Planner)    │
+│  - Анализ графа слоев модели до запуска                                │
+│  - Ранжирование: постоянный остов vs потоковые слои vs разреженные MoE │
+│  - Назначение бюджета памяти (RAM/VRAM) под приоритетные блоки         │
+├────────────────────────────────────────────────────────────────────────┤
+│  Этап 2: Поочередное наслаивание (AirLLM-Streamer)                     │
+│  - Потоковая подача слоев строго по приоритетному конвейеру             │
+│  - Использование переиспользуемых слотов (Single/Double Buffer)        │
+├────────────────────────────────────────────────────────────────────────┤
+│  Этап 3: Выборочное выдергивание весов и LFRU-замещение (Colibri-Core) │
+│  - Из входящего слоя забираются ТОЛЬКО активные веса (sub-tensors/MoE) │
+│  - Ненужные веса не грузятся в память, экономя шину HDD/PCIe           │
+│  - Мгновенное вытеснение отработанных весов по алгоритму LFRU          │
+└────────────────────────────────────────────────────────────────────────┘
+```
 
 ## 3. Next Steps
+- [ ] Разработать модуль гранулярного планировщика приоритетов слоев (`src/priority_planner.py`).
+- [ ] Реализовать выборочную загрузку суб-тензоров (Selective Sub-tensor Loader) из safetensors/GGUF без десериализации всего монолитного слоя.
+- [ ] Добавить поддержку адаптивного переключения между профилями хранения (SATA HDD vs NVMe SSD vs Resident RAM).
 - [ ] Implement C/CUDA native extension bindings (`c/air_slot.cu`) to bypass Python runtime overhead.
-- [ ] Hook into Colibri's async `FILE_FLAG_OVERLAPPED` Windows prefetching engine for direct NVMe-to-Pinned-RAM streaming.
-- [ ] Implement MTP speculative decoding verification on resident draft heads.
