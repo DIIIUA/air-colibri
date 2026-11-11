@@ -94,6 +94,7 @@ class AirColibriModel:
             dtype=self.dtype,
             tail_to_head_prefetch=self.tail_to_head_prefetch
         )
+        del template
         self.tail_prefetched = False
 
         # 6. Загружаем VRAM-резидентные слои
@@ -119,8 +120,8 @@ class AirColibriModel:
 
     def _setup_permanent_weights(self) -> None:
         """Эмбеддинг на CPU (экономия 2.03 ГБ VRAM), norm и lm_head на GPU."""
-        # Embed держим на CPU: lookup дает вектор 8 КБ, который передается на GPU
-        self.embed_tokens_weight = self.weight_manager.globals["model.embed_tokens.weight"]
+        # Embed держим на CPU: забираем pop(), чтобы не удерживать дубликат в globals
+        self.embed_tokens_weight = self.weight_manager.globals.pop("model.embed_tokens.weight")
 
         # Norm на GPU
         if "model.norm.weight" in self.weight_manager.globals:
@@ -140,6 +141,7 @@ class AirColibriModel:
         """Устанавливает pre/post хуки кольцевого конвейера на каждый слой."""
         num_layers = self.config.num_hidden_layers
         self.active_slot_per_layer = [None] * num_layers
+        self._hook_handles: List[Any] = []
 
         # Собираем список параметров для каждого слоя
         layer_param_names = []
@@ -211,8 +213,8 @@ class AirColibriModel:
 
                 return output
 
-            layer_module.register_forward_pre_hook(_pre_hook)
-            layer_module.register_forward_hook(_post_hook)
+            self._hook_handles.append(layer_module.register_forward_pre_hook(_pre_hook))
+            self._hook_handles.append(layer_module.register_forward_hook(_post_hook))
 
     def generate(
         self,
@@ -292,3 +294,32 @@ class AirColibriModel:
 
         output_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
         return output_text, generated_ids, step_times
+
+    def close(self) -> None:
+        """Удаляет хуки и освобождает ресурсы GPU и CPU."""
+        for handle in getattr(self, "_hook_handles", []):
+            try:
+                handle.remove()
+            except Exception:
+                pass
+        if hasattr(self, "_hook_handles"):
+            self._hook_handles.clear()
+        if hasattr(self, "active_slot_per_layer"):
+            self.active_slot_per_layer.clear()
+        if getattr(self, "pipeline", None) is not None:
+            self.pipeline.close()
+            self.pipeline = None
+        if getattr(self, "weight_manager", None) is not None:
+            self.weight_manager.close()
+            self.weight_manager = None
+        self.embed_tokens_weight = None
+        self.model = None
+        gc.collect()
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def __enter__(self) -> "AirColibriModel":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()

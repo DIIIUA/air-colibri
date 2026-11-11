@@ -9,3 +9,4 @@ __pycache__/
 .gemini/
 .pytest_cache/
 models/
+.relay/

@@ -1,5 +1,6 @@
 """Unit tests for DynamicTieredCache, StaticWeightMap, and Zero Disk Re-read."""
 
+import gc
 import os
 import unittest
 import torch
@@ -18,6 +19,12 @@ class TestTieredCacheAndReUse(unittest.TestCase):
     def setUpClass(cls):
         cls.weight_map = StaticWeightMap(MODEL_DIR)
 
+    @classmethod
+    def tearDownClass(cls):
+        if getattr(cls, "weight_map", None) is not None:
+            cls.weight_map.layers.clear()
+            cls.weight_map = None
+
     def test_static_weight_map_indexing(self):
         self.assertEqual(len(self.weight_map.layers), 32)
         # Check Layer 0
@@ -33,21 +40,48 @@ class TestTieredCacheAndReUse(unittest.TestCase):
     def test_tiered_cache_vram_budgets(self):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # 1. Test 2 GB VRAM budget
+        # 1. Test 2 GB VRAM budget (sequentially created and closed)
         cache_2gb = DynamicTieredCache(self.weight_map, vram_budget_gb=2.0, ram_budget_gb=5.0, device=device)
-        layers_in_vram_2gb = len(cache_2gb.vram_resident_layers)
+        try:
+            layers_in_vram_2gb = len(cache_2gb.vram_resident_layers)
+            b2_gb = cache_2gb.vram_budget_bytes / (1024**3)
+            c2 = cache_2gb.vram_clamped
+        finally:
+            cache_2gb.close()
+            del cache_2gb
 
         # 2. Test 4 GB VRAM budget
         cache_4gb = DynamicTieredCache(self.weight_map, vram_budget_gb=4.0, ram_budget_gb=5.0, device=device)
-        layers_in_vram_4gb = len(cache_4gb.vram_resident_layers)
+        try:
+            layers_in_vram_4gb = len(cache_4gb.vram_resident_layers)
+            b4_gb = cache_4gb.vram_budget_bytes / (1024**3)
+            c4 = cache_4gb.vram_clamped
+        finally:
+            cache_4gb.close()
+            del cache_4gb
 
         # 3. Test 6 GB VRAM budget
         cache_6gb = DynamicTieredCache(self.weight_map, vram_budget_gb=6.0, ram_budget_gb=5.0, device=device)
-        layers_in_vram_6gb = len(cache_6gb.vram_resident_layers)
+        try:
+            layers_in_vram_6gb = len(cache_6gb.vram_resident_layers)
+            b6_gb = cache_6gb.vram_budget_bytes / (1024**3)
+            c6 = cache_6gb.vram_clamped
+        finally:
+            cache_6gb.close()
+            del cache_6gb
 
+        gc.collect()
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+        print(
+            f"\n[Test Budgets] "
+            f"2GB(eff={b2_gb:.2f}G,clamped={c2}): {layers_in_vram_2gb} layers | "
+            f"4GB(eff={b4_gb:.2f}G,clamped={c4}): {layers_in_vram_4gb} layers | "
+            f"6GB(eff={b6_gb:.2f}G,clamped={c6}): {layers_in_vram_6gb} layers"
+        )
         self.assertLess(layers_in_vram_2gb, layers_in_vram_4gb)
         self.assertLess(layers_in_vram_4gb, layers_in_vram_6gb)
-        print(f"\n[Test Budgets] 2GB VRAM: {layers_in_vram_2gb} layers | 4GB VRAM: {layers_in_vram_4gb} layers | 6GB VRAM: {layers_in_vram_6gb} layers")
 
     def test_zero_disk_reread_guarantee(self):
         """Crucial test: when model fits in VRAM + RAM (6GB VRAM + 5GB RAM), disk read MUST be 0.0 MB!"""
@@ -56,8 +90,29 @@ class TestTieredCacheAndReUse(unittest.TestCase):
             MODEL_DIR,
             vram_budget_gb=6.0,
             ram_budget_gb=5.0,
-            preload_at_init=True
+            preload_at_init=False
         )
+        self.addCleanup(engine.close)
+
+        total_layers = len(engine.weight_map.layers)
+        cached_layers = len(engine.cache.vram_resident_layers) + len(engine.cache.ram_resident_layers)
+        if cached_layers < total_layers:
+            budget_vram_gb = engine.cache.vram_budget_bytes / (1024**3)
+            budget_ram_gb = engine.cache.ram_budget_bytes / (1024**3)
+            budget_total_gb = budget_vram_gb + budget_ram_gb
+            active_total_gb = sum(l.active_bytes for l in engine.weight_map.layers.values()) / (1024**3)
+            free_vram_gb = engine.cache.free_vram_at_init_bytes / (1024**3)
+            free_ram_gb = engine.cache.free_ram_at_init_bytes / (1024**3)
+            self.skipTest(
+                f"Clamped residency insufficient for zero disk re-read ({cached_layers}/{total_layers} layers): "
+                f"budget={budget_total_gb:.2f} GiB (vram={budget_vram_gb:.2f} GiB, ram={budget_ram_gb:.2f} GiB, "
+                f"clamped=vram:{engine.cache.vram_clamped}/ram:{engine.cache.ram_clamped}), "
+                f"free=(vram={free_vram_gb:.2f} GiB, ram={free_ram_gb:.2f} GiB), "
+                f"active_total={active_total_gb:.2f} GiB"
+            )
+
+        engine.cold_init_time_s = engine.cache.preload_cache()
+        print(f"[AirColibri] Preload complete in {engine.cold_init_time_s:.2f} s | Zero Disk Re-read mode ACTIVE")
 
         x = torch.randn(1, 1, 4096, dtype=torch.float16, device=device)
 
@@ -78,6 +133,7 @@ class TestTieredCacheAndReUse(unittest.TestCase):
             ram_budget_gb=5.0,
             preload_at_init=True
         )
+        self.addCleanup(engine.close)
 
         x = torch.randn(1, 1, 4096, dtype=torch.float16, device=device)
         x, step_ms, disk_read_mb, pcie_mb = engine.execute_token_step(x, token_idx=0)

@@ -24,12 +24,14 @@ class TestPinnedBufferRaceCondition(unittest.TestCase):
             num_slots=num_slots,
             dtype=self.dtype
         )
+        self.addCleanup(pool.close)
         pipe = GPURingPipeline(
             template_tensors=self.template,
             num_slots=num_slots,
             device=self.device,
             dtype=self.dtype
         )
+        self.addCleanup(pipe.close)
 
         # Run 30 rapid buffer recycling cycles
         for cycle in range(30):

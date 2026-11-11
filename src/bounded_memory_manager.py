@@ -9,11 +9,14 @@
 """
 
 import collections
+import collections.abc
 import gc
 import os
 import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
+
+_MISSING = object()
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -136,6 +139,95 @@ class BoundedPinnedBufferPool:
             self.dma_events[idx].record(stream)
             self._has_in_flight_dma[idx] = True
 
+    def close(self) -> None:
+        """Освобождает pinned-слоты после синхронизации DMA."""
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            try:
+                torch.cuda.synchronize()
+            except Exception:
+                pass
+        self.slots.clear()
+        self.dma_events.clear()
+        self._has_in_flight_dma.clear()
+
+    def __enter__(self) -> "BoundedPinnedBufferPool":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+
+class LazyGlobalsMap(collections.abc.MutableMapping):
+    """Ленивый mmap-словарь глобальных весов без жадной загрузки 4 ГБ в RAM."""
+
+    def __init__(self, globals_path: str, dtype: torch.dtype):
+        self._globals_path = globals_path
+        self._dtype = dtype
+        self._handle: Any = safetensors.safe_open(globals_path, framework="pt", device="cpu")
+        self._keys: Dict[str, None] = dict.fromkeys(self._handle.keys())
+        self._materialized: Dict[str, torch.Tensor] = {}
+
+    def _ensure_handle(self) -> Any:
+        if self._handle is None:
+            self._handle = safetensors.safe_open(self._globals_path, framework="pt", device="cpu")
+        return self._handle
+
+    def _read_tensor(self, key: str) -> torch.Tensor:
+        return self._ensure_handle().get_slice(key)[:].to(dtype=self._dtype)
+
+    def __getitem__(self, key: str) -> torch.Tensor:
+        if key not in self._keys:
+            raise KeyError(key)
+        if key not in self._materialized:
+            self._materialized[key] = self._read_tensor(key)
+        return self._materialized[key]
+
+    def __setitem__(self, key: str, value: torch.Tensor) -> None:
+        self._keys[key] = None
+        self._materialized[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        if key not in self._keys:
+            raise KeyError(key)
+        del self._keys[key]
+        self._materialized.pop(key, None)
+        if not self._keys and not self._materialized:
+            self._handle = None
+
+    def pop(self, key: str, default: Any = _MISSING) -> Any:
+        if key not in self._keys:
+            if default is _MISSING:
+                raise KeyError(key)
+            return default
+        if key in self._materialized:
+            tensor = self._materialized.pop(key)
+        else:
+            tensor = self._read_tensor(key)
+        self._keys.pop(key, None)
+        if not self._keys and not self._materialized:
+            self._handle = None
+        return tensor
+
+    def __iter__(self):
+        return iter(list(self._keys))
+
+    def __len__(self) -> int:
+        return len(self._keys)
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._keys
+
+    def clear(self) -> None:
+        self._materialized.clear()
+        self._keys.clear()
+        self._handle = None
+
+    def close(self) -> None:
+        self.clear()
+
+    def __repr__(self) -> str:
+        return f"LazyGlobalsMap(keys={list(self._keys.keys())}, loaded={list(self._materialized.keys())})"
+
 
 class StableWeightManager:
     """Стабильный менеджер весов с защитой от гонок, постоянными mmap-дескрипторами и кэшем."""
@@ -171,9 +263,10 @@ class StableWeightManager:
             num_slots=num_pinned_slots,
             dtype=dtype
         )
+        del template
 
-        # Глобальные веса (embed, norm, lm_head)
-        self.globals: Dict[str, torch.Tensor] = {}
+        # Глобальные веса (embed, norm, lm_head) — ленивый mmap без жадной загрузки
+        self.globals: collections.abc.MutableMapping = {}
         self._load_globals()
 
     def _get_mmap_handle(self, layer_idx: int) -> Any:
@@ -185,9 +278,7 @@ class StableWeightManager:
 
     def _load_globals(self) -> None:
         globals_path = os.path.join(self.model_dir, "model-globals.safetensors")
-        with safetensors.safe_open(globals_path, framework="pt", device="cpu") as f:
-            for k in f.keys():
-                self.globals[k] = f.get_slice(k)[:].to(dtype=self.dtype)
+        self.globals = LazyGlobalsMap(globals_path, dtype=self.dtype)
 
     def load_layer_to_pinned_slot(self, layer_idx: int, target_slot_idx: int) -> Dict[str, torch.Tensor]:
         """Загружает веса слоя в закрепленный слот для отправки на GPU по DMA."""
@@ -210,6 +301,16 @@ class StableWeightManager:
         return pinned_slot
 
     def close(self) -> None:
-        """Освобождает дескрипторы."""
+        """Освобождает дескрипторы, кэш RAM, глобалы и pinned-буферы."""
         self.mmap_handles.clear()
         self.ram_cache.clear()
+        if hasattr(self, "globals") and self.globals is not None:
+            self.globals.clear()
+        if hasattr(self, "pinned_pool") and self.pinned_pool is not None:
+            self.pinned_pool.close()
+
+    def __enter__(self) -> "StableWeightManager":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()

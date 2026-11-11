@@ -200,3 +200,28 @@ class GPURingPipeline:
         self.load_tensors_async(slot, pinned_tensors, pinned_pool=pinned_pool)
         self.tail_prefetches += 1
         return slot
+
+    def close(self) -> None:
+        """Освобождает GPU-слоты и сбрасывает состояние конвейера."""
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            try:
+                torch.cuda.synchronize()
+            except Exception:
+                pass
+        for slot in self.slots:
+            slot.tensors.clear()
+            slot.compute_done_event = None
+            slot.transfer_done_event = None
+            slot.current_layer_idx = None
+            slot.state = SlotState.FREE
+        self.slots.clear()
+        self.compute_stream = None
+        self.transfer_stream = None
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def __enter__(self) -> "GPURingPipeline":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()

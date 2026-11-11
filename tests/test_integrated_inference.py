@@ -18,6 +18,12 @@ class TestIntegratedInference(unittest.TestCase):
             dtype=torch.bfloat16
         )
 
+    @classmethod
+    def tearDownClass(cls):
+        if getattr(cls, "engine", None) is not None:
+            cls.engine.close()
+            cls.engine = None
+
     def test_first_token_logits_and_capital_paris(self):
         prompt = "The capital of France is"
         out_text, tokens, step_times = self.engine.generate(

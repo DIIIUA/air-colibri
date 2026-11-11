@@ -6,6 +6,7 @@
 5. Постоянные VRAM/RAM подставки (Zero Malloc Runtime).
 """
 
+import gc
 import os
 import sys
 import time
@@ -229,6 +230,24 @@ class MemoryStandPool:
                 else:
                     gpu_stand[short_k].copy_(ram_stand[short_k], non_blocking=False)
 
+    def close(self) -> None:
+        """Освобождает GPU-подставки и pinned RAM-подставки."""
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            try:
+                torch.cuda.synchronize()
+            except Exception:
+                pass
+        self.gpu_stands.clear()
+        self.pinned_ram_stands.clear()
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def __enter__(self) -> "MemoryStandPool":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
 
 class DynamicTieredCache:
     """Динамический ярусный кэш с настраиваемым бюджетом VRAM (2, 4, 6 ГБ).
@@ -247,14 +266,53 @@ class DynamicTieredCache:
         ram_budget_gb: float = 10.0,
         device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ):
-        # Автоматический безопасный расчёт доступной RAM, если не задана вручную
+        # Страховочное ограничение RAM (reserve 1.5 GiB, чтобы не уходить в своп)
+        avail_ram_bytes = psutil.virtual_memory().available
+        ram_reserve_bytes = int(1.5 * (1024**3))
+        max_safe_ram_bytes = max(0, avail_ram_bytes - ram_reserve_bytes)
+
+        self.free_ram_at_init_bytes = avail_ram_bytes
+        self.ram_clamped = False
         if ram_budget_gb is None:
-            avail_gb = psutil.virtual_memory().available / (1024**3)
-            ram_budget_gb = max(2.0, avail_gb - 2.0)
+            requested_ram_bytes = max_safe_ram_bytes
+            self.ram_budget_bytes = max_safe_ram_bytes
+        else:
+            requested_ram_bytes = int(ram_budget_gb * (1024**3))
+            if requested_ram_bytes > max_safe_ram_bytes:
+                self.ram_budget_bytes = max_safe_ram_bytes
+                self.ram_clamped = True
+                print(
+                    f"[TieredCache] WARNING: RAM budget clamped "
+                    f"{requested_ram_bytes / (1024**3):.2f} -> {self.ram_budget_bytes / (1024**3):.2f} GiB "
+                    f"(free={avail_ram_bytes / (1024**3):.2f} GiB, reserve=1.50 GiB)"
+                )
+            else:
+                self.ram_budget_bytes = requested_ram_bytes
+        self.requested_ram_budget_bytes = requested_ram_bytes
+
+        # Страховочное ограничение VRAM (резерв 512 MiB; при free >= 6.5 GiB бюджет <= 6.0 GiB не режется)
+        requested_vram_bytes = int(vram_budget_gb * (1024**3))
+        self.requested_vram_budget_bytes = requested_vram_bytes
+        self.vram_clamped = False
+        self.free_vram_at_init_bytes = 0
+        self.vram_budget_bytes = requested_vram_bytes
+
+        if device.type == "cuda" and torch.cuda.is_available():
+            dev_idx = device.index if device.index is not None else torch.cuda.current_device()
+            free_vram_bytes, _total_vram_bytes = torch.cuda.mem_get_info(dev_idx)
+            self.free_vram_at_init_bytes = free_vram_bytes
+            vram_reserve_bytes = 512 * 1024**2
+            max_safe_vram_bytes = max(0, free_vram_bytes - vram_reserve_bytes)
+            if requested_vram_bytes > max_safe_vram_bytes:
+                self.vram_budget_bytes = max_safe_vram_bytes
+                self.vram_clamped = True
+                print(
+                    f"[TieredCache] WARNING: VRAM budget clamped "
+                    f"{requested_vram_bytes / (1024**3):.2f} -> {self.vram_budget_bytes / (1024**3):.2f} GiB "
+                    f"(free={free_vram_bytes / (1024**3):.2f} GiB, reserve=0.50 GiB)"
+                )
 
         self.weight_map = weight_map
-        self.vram_budget_bytes = int(vram_budget_gb * (1024**3))
-        self.ram_budget_bytes = int(ram_budget_gb * (1024**3))
         self.device = device
 
         # Слои в постоянном кэше
@@ -269,6 +327,7 @@ class DynamicTieredCache:
                 template_tensors[k] = f.get_slice(k)[:]
 
         self.streaming_pool = MemoryStandPool(template_tensors, device=self.device, num_stands=2)
+        del template_tensors
         self.streaming_slot_bytes = self.streaming_pool.stand_nbytes * 2
 
         # Стримы CUDA для асинхронного перекрытия
@@ -315,7 +374,9 @@ class DynamicTieredCache:
                 self.ram_resident_layers[idx] = {}  # будет загружен в RAM
                 self.used_ram_bytes += layer_bytes
 
-        print(f"[TieredCache] Plan: {len(self.vram_resident_layers)} layers in VRAM ({self.used_vram_bytes / (1024**2):.1f} MB) | "
+        print(f"[TieredCache] Plan (eff={self.vram_budget_bytes / (1024**3):.2f}G/{self.ram_budget_bytes / (1024**3):.2f}G, "
+              f"clamped=vram:{self.vram_clamped}/ram:{self.ram_clamped}): "
+              f"{len(self.vram_resident_layers)} layers in VRAM ({self.used_vram_bytes / (1024**2):.1f} MB) | "
               f"{len(self.ram_resident_layers)} layers in RAM ({self.used_ram_bytes / (1024**2):.1f} MB) | "
               f"{len(self.weight_map.layers) - len(self.vram_resident_layers) - len(self.ram_resident_layers)} layers streaming from SSD")
 
@@ -405,6 +466,35 @@ class DynamicTieredCache:
         self.total_disk_read_bytes += disk_bytes
         self.streaming_pool.place_on_stand(subtensors, stand_idx=stand_idx)
         return self.streaming_pool.gpu_stands[stand_idx], disk_bytes, disk_bytes
+
+    def close(self) -> None:
+        """Освобождает резидентные слои VRAM/RAM и стриминговый пул."""
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            try:
+                torch.cuda.synchronize()
+            except Exception:
+                pass
+        self.vram_resident_layers.clear()
+        self.ram_resident_layers.clear()
+        if getattr(self, "streaming_pool", None) is not None:
+            self.streaming_pool.close()
+            self.streaming_pool = None
+        self.compute_stream = None
+        self.transfer_stream = None
+        if hasattr(self, "transfer_ready_events"):
+            self.transfer_ready_events.clear()
+        if hasattr(self, "compute_done_events"):
+            self.compute_done_events.clear()
+        self.used_vram_bytes = 0
+        self.used_ram_bytes = 0
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def __enter__(self) -> "DynamicTieredCache":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
 
 
 class AirColibriEngine:
@@ -497,3 +587,23 @@ class AirColibriEngine:
             disk_bytes_step / (1024 * 1024),
             pcie_bytes_step / (1024 * 1024)
         )
+
+    def close(self) -> None:
+        """Освобождает кэш, карту весов и очищает память устройства."""
+        if getattr(self, "cache", None) is not None:
+            self.cache.close()
+            self.cache = None
+        self.stand_pool = None
+        self.weight_map = None
+        self.ranker = None
+        self.ranked_layers = []
+        self.selective_loader = None
+        gc.collect()
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def __enter__(self) -> "AirColibriEngine":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()

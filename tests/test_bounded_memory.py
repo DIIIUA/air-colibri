@@ -53,6 +53,7 @@ class TestBoundedMemory(unittest.TestCase):
 
         template = {"matrix": torch.zeros(100, 100, dtype=torch.bfloat16)}
         pool = BoundedPinnedBufferPool(template_tensors=template, num_slots=2, dtype=torch.bfloat16)
+        self.addCleanup(pool.close)
         self.assertEqual(len(pool.slots), 2)
         self.assertTrue(pool.slots[0]["matrix"].is_pinned())
         self.assertTrue(pool.slots[1]["matrix"].is_pinned())
@@ -70,6 +71,7 @@ class TestBoundedMemory(unittest.TestCase):
             cache_policy="static_pinned",
             dtype=torch.bfloat16
         )
+        self.addCleanup(manager.close)
         # Load layer 0 and layer 1
         s0 = manager.load_layer_to_pinned_slot(layer_idx=0, target_slot_idx=0)
         self.assertIn("input_layernorm.weight", s0)

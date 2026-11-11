@@ -62,6 +62,8 @@ class TestAirColibriCore(unittest.TestCase):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         stand_pool = MemoryStandPool(template, device=device, num_stands=1)
+        self.addCleanup(stand_pool.close)
+        del template
         initial_ptr = stand_pool.gpu_stands[0]["mlp.down_proj.weight"].data_ptr()
 
         # Place new tensor on the stand
