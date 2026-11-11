@@ -1,5 +1,10 @@
 # AirColibri 🦅⚡
 
+> [!WARNING]
+> **🚧 Work in Progress — Early Experimental Stage**
+>
+> This project is currently under active development and architectural experimentation. **Do not expect good results, high speed, or production-ready stability yet** — components are still being refactored, benchmarked, and assembled (active engineering work happens on the [`feature/hybrid-engine-mvp`](https://github.com/DIIIUA/air-colibri/tree/feature/hybrid-engine-mvp) branch).
+
 > **Unified Low-Resource LLM Inference Engine:** Fusing the layer-wise streaming of [AirLLM](https://github.com/lyogavin/airllm) with the native high-speed C/CUDA expert-streaming architecture of [Colibri](https://github.com/JustVugg/colibri).
 
 ---
