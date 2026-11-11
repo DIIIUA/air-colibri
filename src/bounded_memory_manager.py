@@ -10,7 +10,9 @@
 
 import collections
 import collections.abc
+from dataclasses import dataclass
 import gc
+import math
 import os
 import sys
 import time
@@ -76,8 +78,157 @@ class BoundedRAMCache:
         return len(self.cache)
 
 
+ARENA_ALIGN_BYTES = 2 * 1024 * 1024  # 2 MiB выравнивание шага слота в единой арене
+TENSOR_ALIGN_BYTES = 256             # 256-байтное выравнивание тензоров внутри слота
+
+
+def align_up(value: int, alignment: int) -> int:
+    """Выравнивает размер вверх до ближайшей кратной границы alignment."""
+    if alignment <= 1 or value <= 0:
+        return max(0, value)
+    return ((value + alignment - 1) // alignment) * alignment
+
+
+@dataclass(frozen=True)
+class TensorArenaSpec:
+    """Смещение и геометрия одного тензора внутри слота арены."""
+    name: str
+    shape: Tuple[int, ...]
+    offset_bytes: int
+    nbytes: int
+    region: str  # "shared" | "linear_attn" | "self_attn"
+
+
+class SlotArenaLayout:
+    """Единый шаблон слота из двух зон (shared + перекрытый overlay attention) без union-раздувания."""
+
+    ATTENTION_PREFIXES: Tuple[str, ...] = ("linear_attn.", "self_attn.")
+
+    def __init__(
+        self,
+        specs: Dict[str, TensorArenaSpec],
+        dtype: torch.dtype,
+        shared_bytes: int,
+        attn_offset: int,
+        variant_bytes: Dict[str, int],
+        payload_bytes: int,
+        slot_stride: int,
+    ):
+        self.specs = specs
+        self.dtype = dtype
+        self.shared_bytes = shared_bytes
+        self.attn_offset = attn_offset
+        self.variant_bytes = variant_bytes
+        self.payload_bytes = payload_bytes
+        self.slot_stride = slot_stride
+
+    @classmethod
+    def _classify_region(cls, name: str) -> str:
+        for prefix in cls.ATTENTION_PREFIXES:
+            if name.startswith(prefix):
+                return prefix[:-1]
+        return "shared"
+
+    @classmethod
+    def from_templates(
+        cls,
+        template_tensors: Dict[str, Any],
+        dtype: torch.dtype = torch.bfloat16,
+        slot_alignment: int = ARENA_ALIGN_BYTES,
+        tensor_alignment: int = TENSOR_ALIGN_BYTES,
+    ) -> "SlotArenaLayout":
+        elem_size = torch.empty((), dtype=dtype).element_size()
+        grouped: Dict[str, List[Tuple[str, Tuple[int, ...]]]] = {
+            "shared": [],
+            "linear_attn": [],
+            "self_attn": [],
+        }
+
+        for name, spec_val in template_tensors.items():
+            shape = tuple(spec_val.shape) if isinstance(spec_val, torch.Tensor) else tuple(spec_val)
+            grouped[cls._classify_region(name)].append((name, shape))
+
+        specs: Dict[str, TensorArenaSpec] = {}
+        cursor = 0
+        shared_logical = 0
+        max_end = 0
+
+        for name, shape in grouped["shared"]:
+            numel = math.prod(shape) if shape else 1
+            nbytes = numel * elem_size
+            specs[name] = TensorArenaSpec(
+                name=name,
+                shape=shape,
+                offset_bytes=cursor,
+                nbytes=nbytes,
+                region="shared",
+            )
+            shared_logical += nbytes
+            end = cursor + nbytes
+            if end > max_end:
+                max_end = end
+            cursor = align_up(end, tensor_alignment)
+
+        attn_offset = cursor
+        variant_bytes: Dict[str, int] = {}
+
+        # Ветки attention стартуют от одного attn_offset и разделяют общую память без union-суммирования
+        for region_name in ("linear_attn", "self_attn"):
+            items = grouped[region_name]
+            if not items:
+                continue
+            v_cursor = attn_offset
+            v_logical = 0
+            for name, shape in items:
+                numel = math.prod(shape) if shape else 1
+                nbytes = numel * elem_size
+                specs[name] = TensorArenaSpec(
+                    name=name,
+                    shape=shape,
+                    offset_bytes=v_cursor,
+                    nbytes=nbytes,
+                    region=region_name,
+                )
+                v_logical += nbytes
+                v_end = v_cursor + nbytes
+                if v_end > max_end:
+                    max_end = v_end
+                v_cursor = align_up(v_end, tensor_alignment)
+            variant_bytes[region_name] = v_logical
+
+        payload_bytes = max_end
+        slot_stride = align_up(payload_bytes, slot_alignment) if payload_bytes > 0 else 0
+        return cls(
+            specs=specs,
+            dtype=dtype,
+            shared_bytes=shared_logical,
+            attn_offset=attn_offset,
+            variant_bytes=variant_bytes,
+            payload_bytes=payload_bytes,
+            slot_stride=slot_stride,
+        )
+
+    def bind_slot_views(
+        self,
+        arena: torch.Tensor,
+        slot_idx: int,
+        dtype: Optional[torch.dtype] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Создает zero-copy тензорные view слота внутри единой арены uint8."""
+        view_dtype = dtype or self.dtype
+        base = slot_idx * self.slot_stride
+        views: Dict[str, torch.Tensor] = {}
+        for name, spec in self.specs.items():
+            if spec.nbytes == 0:
+                views[name] = torch.empty(spec.shape, dtype=view_dtype, device=arena.device)
+            else:
+                start = base + spec.offset_bytes
+                views[name] = arena[start : start + spec.nbytes].view(view_dtype).view(spec.shape)
+        return views
+
+
 class BoundedPinnedBufferPool:
-    """Пул закрепленных (pinned) буферов для быстрой передачи по PCIe DMA.
+    """Пул закрепленных (pinned) буферов в единой неразрывной арене для PCIe DMA.
 
     Включает строгую синхронизацию через CUDA Events:
     CPU никогда не перезаписывает закрепленный буфер, пока асинхронный DMA-контроллер GPU
@@ -86,22 +237,39 @@ class BoundedPinnedBufferPool:
 
     def __init__(
         self,
-        template_tensors: Dict[str, torch.Tensor],
+        template_tensors: Optional[Dict[str, Any]] = None,
         num_slots: int = 2,
-        dtype: torch.dtype = torch.bfloat16
+        dtype: torch.dtype = torch.bfloat16,
+        arena_layout: Optional[SlotArenaLayout] = None,
     ):
         self.num_slots = num_slots
         self.dtype = dtype
-        self.slots: List[Dict[str, torch.Tensor]] = []
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Выделяем ровно num_slots закрепленных буферов
-        for s in range(num_slots):
-            slot = {}
-            for name, tensor in template_tensors.items():
-                pinned_t = torch.empty(tensor.shape, dtype=dtype, pin_memory=True)
-                slot[name] = pinned_t
-            self.slots.append(slot)
+        if arena_layout is not None:
+            if arena_layout.dtype != dtype:
+                raise ValueError(f"arena_layout.dtype ({arena_layout.dtype}) != dtype ({dtype})")
+            self.layout = arena_layout
+        elif template_tensors is not None:
+            self.layout = SlotArenaLayout.from_templates(template_tensors, dtype=dtype)
+        else:
+            raise ValueError("Either template_tensors or arena_layout must be provided")
+
+        self.slot_stride = self.layout.slot_stride
+        total_bytes = self.num_slots * self.slot_stride
+        use_pinned = self.device.type == "cuda"
+        self.arena: Optional[torch.Tensor] = (
+            torch.empty(total_bytes, dtype=torch.uint8, pin_memory=use_pinned)
+            if total_bytes > 0
+            else torch.empty(0, dtype=torch.uint8)
+        )
+        self.total_pinned_bytes = self.arena.nbytes
+
+        # Единый пул на все слоты со смещением s * slot_stride без перекрытия и фрагментации
+        self.slots: List[Dict[str, torch.Tensor]] = [
+            self.layout.bind_slot_views(self.arena, s, dtype=dtype)
+            for s in range(self.num_slots)
+        ]
 
         # CUDA события для защиты от гонок между CPU-записью в буфер и GPU DMA-чтением
         if self.device.type == "cuda":
@@ -111,13 +279,19 @@ class BoundedPinnedBufferPool:
             self.dma_events = [None] * num_slots
             self._has_in_flight_dma = [False] * num_slots
 
-        total_pinned_bytes = sum(t.nbytes for s in self.slots for t in s.values())
-        print(f"[BoundedPinnedPool] Allocated {num_slots} pinned DMA slots ({total_pinned_bytes / (1024**2):.1f} MB total) with zero-race protection")
+        stride_mb = self.slot_stride / (1024**2)
+        payload_mb = self.layout.payload_bytes / (1024**2)
+        print(
+            f"[BoundedPinnedPool] Allocated {num_slots} pinned DMA slots "
+            f"({self.total_pinned_bytes / (1024**2):.1f} MB total arena | "
+            f"stride {stride_mb:.1f} MB | payload {payload_mb:.2f} MB) with zero-race protection"
+        )
 
     def copy_into_slot(self, slot_idx: int, src_tensors: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        """Копирует тензоры в закрепленный слот перед передачей по DMA.
+        """Копирует активные тензоры слоя в закрепленный слот перед передачей по DMA.
 
-        Гарантирует завершение предыдущей асинхронной DMA-передачи из этого слота перед перезаписью.
+        Возвращает только view, соответствующие ключам src_tensors (без неактивного overlay-алиаса),
+        чтобы асинхронный DMA не затирал активную ветку attention.
         """
         idx = slot_idx % self.num_slots
 
@@ -127,10 +301,13 @@ class BoundedPinnedBufferPool:
             self._has_in_flight_dma[idx] = False
 
         target_slot = self.slots[idx]
+        active_views: Dict[str, torch.Tensor] = {}
         for name, src_t in src_tensors.items():
             if name in target_slot:
-                target_slot[name].copy_(src_t, non_blocking=False)
-        return target_slot
+                target_t = target_slot[name]
+                target_t.copy_(src_t, non_blocking=False)
+                active_views[name] = target_t
+        return active_views
 
     def record_dma_in_flight(self, slot_idx: int, stream: Optional[torch.cuda.Stream]) -> None:
         """Регистрирует запуск асинхронной DMA-передачи из слота."""
@@ -140,13 +317,14 @@ class BoundedPinnedBufferPool:
             self._has_in_flight_dma[idx] = True
 
     def close(self) -> None:
-        """Освобождает pinned-слоты после синхронизации DMA."""
+        """Освобождает единую pinned-арену и слоты после синхронизации DMA."""
         if self.device.type == "cuda" and torch.cuda.is_available():
             try:
                 torch.cuda.synchronize()
             except Exception:
                 pass
         self.slots.clear()
+        self.arena = None
         self.dma_events.clear()
         self._has_in_flight_dma.clear()
 
@@ -248,15 +426,15 @@ class StableWeightManager:
         # Постоянные открытые mmap-дескрипторы файлов safetensors
         self.mmap_handles: Dict[int, Any] = {}
 
-        # Читаем слои как шаблон для выделения закрепленного пула (учитывая linear_attention и full_attention)
-        template = {}
+        # Читаем только метаданные форм весов (без чтения тензоров с диска) для linear_attn и self_attn
+        template: Dict[str, Tuple[int, ...]] = {}
         for l_idx in [0, 3]:
             l_file = os.path.join(model_dir, f"model-{l_idx:05d}.safetensors")
             if os.path.exists(l_file):
                 f = self._get_mmap_handle(l_idx)
                 for k in f.keys():
                     short_k = k.replace(f"model.layers.{l_idx}.", "")
-                    template[short_k] = f.get_slice(k)[:]
+                    template[short_k] = tuple(f.get_slice(k).get_shape())
 
         self.pinned_pool = BoundedPinnedBufferPool(
             template_tensors=template,

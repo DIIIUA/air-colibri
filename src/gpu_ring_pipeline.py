@@ -23,6 +23,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 import torch
 
+try:
+    from src.bounded_memory_manager import SlotArenaLayout
+except ImportError:
+    from bounded_memory_manager import SlotArenaLayout
+
 
 class SlotState(enum.Enum):
     FREE = "FREE"
@@ -37,30 +42,41 @@ class RingSlot:
     def __init__(
         self,
         slot_id: int,
-        template_tensors: Dict[str, torch.Tensor],
-        device: torch.device,
-        dtype: torch.dtype = torch.bfloat16
+        template_tensors: Optional[Dict[str, Any]] = None,
+        device: Optional[torch.device] = None,
+        dtype: torch.dtype = torch.bfloat16,
+        arena: Optional[torch.Tensor] = None,
+        arena_layout: Optional[SlotArenaLayout] = None,
     ):
         self.slot_id = slot_id
-        self.device = device
+        self.device = device or torch.device("cpu")
         self.dtype = dtype
         self.state = SlotState.FREE
         self.current_layer_idx: Optional[int] = None
+        self._owned_arena: Optional[torch.Tensor] = None
 
-        # Выделяем постоянные GPU-тензоры один раз при инициализации
-        self.tensors: Dict[str, torch.Tensor] = {}
-        for name, tensor in template_tensors.items():
-            self.tensors[name] = torch.zeros(tensor.shape, dtype=dtype, device=device)
+        if arena is not None and arena_layout is not None:
+            self.tensors = arena_layout.bind_slot_views(arena, slot_id, dtype=dtype)
+            self.slot_bytes = arena_layout.slot_stride
+            self.payload_bytes = arena_layout.payload_bytes
+        else:
+            layout = arena_layout or SlotArenaLayout.from_templates(template_tensors or {}, dtype=dtype)
+            self._owned_arena = (
+                torch.zeros(layout.slot_stride, dtype=torch.uint8, device=self.device)
+                if layout.slot_stride > 0
+                else torch.empty(0, dtype=torch.uint8, device=self.device)
+            )
+            self.tensors = layout.bind_slot_views(self._owned_arena, 0, dtype=dtype)
+            self.slot_bytes = layout.slot_stride
+            self.payload_bytes = layout.payload_bytes
 
         # CUDA события для строгой синхронизации без блокировки CPU
-        if device.type == "cuda":
+        if self.device.type == "cuda":
             self.compute_done_event = torch.cuda.Event()
             self.transfer_done_event = torch.cuda.Event()
         else:
             self.compute_done_event = None
             self.transfer_done_event = None
-
-        self.slot_bytes = sum(t.nbytes for t in self.tensors.values())
 
     def is_ready(self) -> bool:
         """Проверяет фактическую готовность слота на GPU без блокировки."""
@@ -84,20 +100,45 @@ class GPURingPipeline:
 
     def __init__(
         self,
-        template_tensors: Dict[str, torch.Tensor],
+        template_tensors: Optional[Dict[str, Any]] = None,
         num_slots: int = 3,
         device: Optional[torch.device] = None,
         dtype: torch.dtype = torch.bfloat16,
-        tail_to_head_prefetch: bool = False
+        tail_to_head_prefetch: bool = False,
+        arena_layout: Optional[SlotArenaLayout] = None,
     ):
         self.num_slots = max(1, min(num_slots, 4))
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = dtype
         self.tail_to_head_prefetch = tail_to_head_prefetch
 
-        # Создаем кольцевой пул слотов
+        if arena_layout is not None:
+            if arena_layout.dtype != dtype:
+                raise ValueError(f"arena_layout.dtype ({arena_layout.dtype}) != dtype ({dtype})")
+            self.layout = arena_layout
+        elif template_tensors is not None:
+            self.layout = SlotArenaLayout.from_templates(template_tensors, dtype=dtype)
+        else:
+            raise ValueError("Either template_tensors or arena_layout must be provided")
+
+        self.slot_stride = self.layout.slot_stride
+        total_bytes = self.num_slots * self.slot_stride
+        # Единая неразрывная VRAM-арена на все слоты кольца без фрагментации
+        self.arena: Optional[torch.Tensor] = (
+            torch.zeros(total_bytes, dtype=torch.uint8, device=self.device)
+            if total_bytes > 0
+            else torch.empty(0, dtype=torch.uint8, device=self.device)
+        )
+
+        # Создаем кольцевой пул слотов со смещением i * slot_stride
         self.slots: List[RingSlot] = [
-            RingSlot(slot_id=i, template_tensors=template_tensors, device=self.device, dtype=dtype)
+            RingSlot(
+                slot_id=i,
+                device=self.device,
+                dtype=dtype,
+                arena=self.arena,
+                arena_layout=self.layout,
+            )
             for i in range(self.num_slots)
         ]
 
@@ -115,8 +156,14 @@ class GPURingPipeline:
         self.tail_prefetches = 0
         self.h2d_overlap_time_ms = 0.0
 
-        total_mb = sum(s.slot_bytes for s in self.slots) / (1024**2)
-        print(f"[GPURingPipeline] Initialized {self.num_slots}-slot ring ({total_mb:.1f} MB VRAM) | Mode: {'Triple-Ring + Tail-Prefetch' if (self.num_slots >= 3 and tail_to_head_prefetch) else f'{self.num_slots}-Slot Ring'}")
+        total_mb = self.arena.nbytes / (1024**2)
+        stride_mb = self.slot_stride / (1024**2)
+        payload_mb = self.layout.payload_bytes / (1024**2)
+        print(
+            f"[GPURingPipeline] Initialized {self.num_slots}-slot ring "
+            f"({total_mb:.1f} MB VRAM arena | stride {stride_mb:.1f} MB | payload {payload_mb:.2f} MB) | "
+            f"Mode: {'Triple-Ring + Tail-Prefetch' if (self.num_slots >= 3 and tail_to_head_prefetch) else f'{self.num_slots}-Slot Ring'}"
+        )
 
     def get_slot_for_loading(self, layer_idx: int) -> RingSlot:
         """Выбирает слот для загрузки следующего слоя весов (LOADING)."""
@@ -210,11 +257,13 @@ class GPURingPipeline:
                 pass
         for slot in self.slots:
             slot.tensors.clear()
+            slot._owned_arena = None
             slot.compute_done_event = None
             slot.transfer_done_event = None
             slot.current_layer_idx = None
             slot.state = SlotState.FREE
         self.slots.clear()
+        self.arena = None
         self.compute_stream = None
         self.transfer_stream = None
         if self.device.type == "cuda" and torch.cuda.is_available():

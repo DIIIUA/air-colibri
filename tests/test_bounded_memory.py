@@ -4,9 +4,11 @@ import os
 import unittest
 import torch
 from src.bounded_memory_manager import (
+    ARENA_ALIGN_BYTES,
     BoundedRAMCache,
     BoundedPinnedBufferPool,
-    StableWeightManager
+    SlotArenaLayout,
+    StableWeightManager,
 )
 
 MODEL_DIR = r"C:\air-colibri\models\deepseek-v4-9b-colibri"
@@ -77,9 +79,50 @@ class TestBoundedMemory(unittest.TestCase):
         self.assertIn("input_layernorm.weight", s0)
         self.assertEqual(s0["input_layernorm.weight"].dtype, torch.bfloat16)
 
+        self.assertEqual(manager.pinned_pool.layout.slot_stride, 418 * 1024 * 1024)
+        self.assertEqual(manager.pinned_pool.arena.nbytes, 2 * 418 * 1024 * 1024)
+        self.assertEqual(len(s0), 14)
+
         s1 = manager.load_layer_to_pinned_slot(layer_idx=1, target_slot_idx=1)
         self.assertIn("input_layernorm.weight", s1)
         manager.close()
+
+    def test_slot_arena_layout_non_union_and_disjoint_slots(self):
+        # 2 MiB shared + overlapping 4 MiB linear_attn / 2 MiB self_attn => payload ~6 MiB (not 8 MiB union!)
+        template = {
+            "mlp.weight": (1024, 1024),                 # 2.0 MiB in bf16
+            "linear_attn.proj.weight": (2048, 1024),    # 4.0 MiB in bf16
+            "self_attn.q_proj.weight": (1024, 1024),    # 2.0 MiB in bf16
+        }
+        pool = BoundedPinnedBufferPool(template_tensors=template, num_slots=2, dtype=torch.bfloat16)
+        self.addCleanup(pool.close)
+
+        layout = pool.layout
+        mib = 1024 * 1024
+        self.assertEqual(layout.shared_bytes, 2 * mib)
+        self.assertEqual(layout.attn_offset, 2 * mib)
+        self.assertEqual(layout.variant_bytes["linear_attn"], 4 * mib)
+        self.assertEqual(layout.variant_bytes["self_attn"], 2 * mib)
+        self.assertEqual(layout.payload_bytes, 6 * mib)
+        self.assertEqual(layout.slot_stride, 6 * mib)
+        self.assertEqual(layout.slot_stride % ARENA_ALIGN_BYTES, 0)
+        self.assertEqual(pool.arena.nbytes, 2 * 6 * mib)
+
+        # Соседние слоты не перекрываются в виртуальных адресах
+        s0_ptrs = [(t.data_ptr(), t.data_ptr() + t.nbytes) for t in pool.slots[0].values()]
+        s1_ptrs = [(t.data_ptr(), t.data_ptr() + t.nbytes) for t in pool.slots[1].values()]
+        self.assertLessEqual(max(hi for _, hi in s0_ptrs), min(lo for lo, _ in s1_ptrs))
+
+        # copy_into_slot возвращает только ключи переданной ветки без stale-алиаса другой ветки
+        ret_self = pool.copy_into_slot(
+            0,
+            {
+                "mlp.weight": torch.full((1024, 1024), 2.0, dtype=torch.bfloat16),
+                "self_attn.q_proj.weight": torch.full((1024, 1024), 5.0, dtype=torch.bfloat16),
+            },
+        )
+        self.assertEqual(set(ret_self.keys()), {"mlp.weight", "self_attn.q_proj.weight"})
+        self.assertEqual(ret_self["self_attn.q_proj.weight"][0, 0].item(), 5.0)
 
 
 if __name__ == "__main__":

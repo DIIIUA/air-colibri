@@ -85,16 +85,15 @@ class AirColibriModel:
         # 4. Постоянные веса и VRAM-резидентные слои
         self._setup_permanent_weights()
 
-        # 5. Инициализация GPU Ring Pipeline
-        template = {k: v for k, v in self.weight_manager.pinned_pool.slots[0].items()}
+        # 5. Инициализация GPU Ring Pipeline на едином layout без union-раздувания
         self.pipeline = GPURingPipeline(
-            template_tensors=template,
+            template_tensors=None,
             num_slots=self.num_slots,
             device=self.device,
             dtype=self.dtype,
-            tail_to_head_prefetch=self.tail_to_head_prefetch
+            tail_to_head_prefetch=self.tail_to_head_prefetch,
+            arena_layout=self.weight_manager.pinned_pool.layout,
         )
-        del template
         self.tail_prefetched = False
 
         # 6. Загружаем VRAM-резидентные слои

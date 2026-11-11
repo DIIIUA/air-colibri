@@ -3,6 +3,7 @@
 import os
 import unittest
 import torch
+from src.bounded_memory_manager import ARENA_ALIGN_BYTES, BoundedPinnedBufferPool
 from src.gpu_ring_pipeline import (
     GPURingPipeline,
     RingSlot,
@@ -99,10 +100,57 @@ class TestGPURingPipeline(unittest.TestCase):
             dtype=self.dtype,
             tail_to_head_prefetch=True
         )
+        self.addCleanup(pipe.close)
         l0_tensors = {"weight": torch.ones(128, 128, dtype=self.dtype), "bias": torch.ones(128, dtype=self.dtype)}
         slot = pipe.prefetch_tail_to_head(target_layer_idx=0, pinned_tensors=l0_tensors)
         self.assertIsNotNone(slot)
         self.assertEqual(pipe.tail_prefetches, 1)
+
+    def test_attention_overlay_no_union_and_non_clobbering_dma(self):
+        """Проверяет единую VRAM/pinned арену без union и сохранность активной ветки attention при переключении."""
+        template = {
+            "mlp.weight": (1024, 1024),                 # 2 MiB bf16
+            "linear_attn.proj.weight": (2048, 1024),    # 4 MiB bf16
+            "self_attn.q_proj.weight": (1024, 1024),    # 2 MiB bf16
+        }
+        pool = BoundedPinnedBufferPool(template_tensors=template, num_slots=2, dtype=self.dtype)
+        self.addCleanup(pool.close)
+        pipe = GPURingPipeline(
+            num_slots=2,
+            device=self.device,
+            dtype=self.dtype,
+            arena_layout=pool.layout,
+        )
+        self.addCleanup(pipe.close)
+
+        mib = 1024 * 1024
+        self.assertEqual(pipe.slot_stride, 6 * mib)
+        self.assertEqual(pipe.slot_stride % ARENA_ALIGN_BYTES, 0)
+        self.assertEqual(pipe.arena.nbytes, 2 * 6 * mib)
+
+        # Загружаем в слот 0 ветку linear_attn, затем перезаписываем self_attn, затем снова linear_attn
+        lin_src = {
+            "mlp.weight": torch.full((1024, 1024), 1.0, dtype=self.dtype),
+            "linear_attn.proj.weight": torch.full((2048, 1024), 3.0, dtype=self.dtype),
+        }
+        self_src = {
+            "mlp.weight": torch.full((1024, 1024), 2.0, dtype=self.dtype),
+            "self_attn.q_proj.weight": torch.full((1024, 1024), 7.0, dtype=self.dtype),
+        }
+
+        for src, key, val in [
+            (lin_src, "linear_attn.proj.weight", 3.0),
+            (self_src, "self_attn.q_proj.weight", 7.0),
+            (lin_src, "linear_attn.proj.weight", 3.0),
+        ]:
+            pinned_views = pool.copy_into_slot(0, src)
+            slot = pipe.get_slot_for_loading(0)
+            pipe.load_tensors_async(slot, pinned_views, pinned_pool=pool)
+            comp = pipe.acquire_slot_for_compute(0)
+            self.assertTrue(torch.equal(comp.tensors["mlp.weight"].cpu(), src["mlp.weight"]))
+            self.assertTrue(torch.equal(comp.tensors[key].cpu(), src[key]))
+            self.assertEqual(comp.tensors[key][0, 0].item(), val)
+            pipe.release_slot_after_compute(comp)
 
 
 if __name__ == "__main__":
