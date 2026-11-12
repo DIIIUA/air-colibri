@@ -27,4 +27,4 @@ jobs:
       - name: Test synthetic CPU contracts
         # CUDA and the locally compiled native DLL cases skip on this runner.
         # This job is not a full-model, GPU or performance certification.
-        run: python -m pytest tests/test_integration_contract.py tests/test_olmoe_integration.py -q
+        run: python -m pytest tests/test_integration_contract.py tests/test_olmoe_integration.py tests/test_quality_metrics.py tests/test_quality_runner.py tests/test_ring_concurrent_streams.py -q

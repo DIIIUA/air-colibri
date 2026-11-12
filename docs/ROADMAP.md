@@ -6,7 +6,7 @@
 |---|---|---|
 | P0 — baseline | Source revisions, local backups and evidence captured | Reproduce on an independent machine |
 | P1 — shared path | Contracts, original readers, GPU Ring and persistent Q4 cache integrated | Broader format/provider coverage |
-| P2 — ownership | Fences, admission, byte budgets, failure/reopen tested | Long soak, live prefetch cancellation |
+| P2 — ownership | Per-slot stream/initialization fences; 3,072 reuses and in-flight prefetch teardown tested | Long-duration soak, asynchronous prefetch cancellation |
 | P3 — full Dense | Qwen 9B tested with logits and recurrent/KV state | Longer and more varied workloads |
 | P4 — original native mechanism | Original C `tier.h` affects real RAM retention | Complete native CUDA executor/interoperability |
 | P5 — common placement | One global RAM admission policy and backend ACKs | General dynamic VRAM placement and cancellation |
@@ -28,4 +28,5 @@ MTP, GGUF, Vulkan, arbitrary models and an OpenAI-compatible service are
 possible future directions, **not current AirColibri capabilities**. Upstream
 support does not automatically become integration support.
 
-See [the experiment report](EXPERIMENTS_2026-11-13.md) for evidence and limits.
+See [the experiment report](EXPERIMENTS_2026-11-13.md) and
+[follow-up CUDA tests](TESTING_2026-11-13.md) for evidence and limits.

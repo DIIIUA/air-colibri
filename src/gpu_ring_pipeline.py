@@ -53,6 +53,7 @@ class RingSlot:
         self.dtype = dtype
         self.state = SlotState.FREE
         self.current_layer_idx: Optional[int] = None
+        self.consumer_stream: Optional[torch.cuda.Stream] = None
         self.loaded_keys = set()
         self._owned_arena: Optional[torch.Tensor] = None
 
@@ -145,8 +146,11 @@ class GPURingPipeline:
 
         # Раздельные потоки CUDA для исполнения и передачи
         if self.device.type == "cuda":
-            self.compute_stream = torch.cuda.current_stream()
+            self.compute_stream = torch.cuda.current_stream(self.device)
             self.transfer_stream = torch.cuda.Stream(device=self.device)
+            # Arena zero-initialization was enqueued on the construction stream.
+            # The first H2D must not race with that write on another stream.
+            self.transfer_stream.wait_stream(self.compute_stream)
         else:
             self.compute_stream = None
             self.transfer_stream = None
@@ -180,6 +184,7 @@ class GPURingPipeline:
 
         slot.state = SlotState.LOADING
         slot.current_layer_idx = layer_idx
+        slot.consumer_stream = None
         slot.loaded_keys.clear()
         return slot
 
@@ -237,8 +242,9 @@ class GPURingPipeline:
 
         # Вычисления в compute_stream строго ждут завершения DMA-передачи этого слота
         if self.device.type == "cuda" and slot.transfer_done_event is not None:
-            self.compute_stream = torch.cuda.current_stream(self.device)
-            self.compute_stream.wait_event(slot.transfer_done_event)
+            slot.consumer_stream = torch.cuda.current_stream(self.device)
+            self.compute_stream = slot.consumer_stream
+            slot.consumer_stream.wait_event(slot.transfer_done_event)
 
         slot.state = SlotState.COMPUTING
         return slot
@@ -248,7 +254,12 @@ class GPURingPipeline:
         if slot not in self.slots or slot.state != SlotState.COMPUTING:
             raise RuntimeError("Release requires an active local compute slot")
         if self.device.type == "cuda" and slot.compute_done_event is not None:
-            slot.compute_done_event.record(self.compute_stream)
+            # Another slot can be acquired by a different stream before this
+            # one is released. Fence this slot's actual consumer, not the most
+            # recently acquired stream on the pipeline.
+            if slot.consumer_stream is None:
+                raise RuntimeError("CUDA release requires the slot's consumer stream")
+            slot.compute_done_event.record(slot.consumer_stream)
 
         slot.state = SlotState.FREE
         self.total_computes += 1
@@ -288,6 +299,7 @@ class GPURingPipeline:
             slot.compute_done_event = None
             slot.transfer_done_event = None
             slot.current_layer_idx = None
+            slot.consumer_stream = None
             slot.loaded_keys.clear()
             slot.state = SlotState.FREE
         self.slots.clear()

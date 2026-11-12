@@ -90,6 +90,9 @@ cache-hit timings as fresh-conversion timings.
 Use BF16 unless specifically investigating Q4. Off/on Q4 parity does not
 satisfy the strict Q4-versus-BF16 quality gate.
 
+The [fixed-text quality protocol](QUALITY_EVALUATION.md) describes bounded
+teacher forcing, reusable reference artifacts and the unchanged acceptance gate.
+
 ## Tests and research probes
 
 Synthetic contracts (small tensors, no model download):

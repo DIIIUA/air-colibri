@@ -134,6 +134,8 @@ or the explicit `--report` path.
 ## 📚 Research & Reproducibility
 
 * [Integration experiment report and machine-readable evidence](docs/EXPERIMENTS_2026-11-13.md).
+* [Follow-up CUDA ordering fixes and 3,072 slot reuses](docs/TESTING_2026-11-13.md).
+* [Strict Q4/BF16 quality protocol](docs/QUALITY_EVALUATION.md) — full fixed-text result pending.
 * [Developer setup, layouts and validation commands](docs/DEVELOPMENT.md).
 * [Original architecture audit](docs/audit_and_design.md) — historical design context.
 * [Current engineering strategy](Strategy.md).
