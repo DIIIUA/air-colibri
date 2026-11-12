@@ -19,7 +19,15 @@ import psutil
 import safetensors
 import safetensors.torch
 import torch
+from src.bounded_memory_manager import SlotArenaLayout
 from src.lfru_cache import ColibriLFRUCache
+
+
+def _validate_single_attention_branch(keys: Any) -> None:
+    has_linear = any(k.startswith("linear_attn.") for k in keys)
+    has_self = any(k.startswith("self_attn.") for k in keys)
+    if has_linear and has_self:
+        raise ValueError("Cannot mix 'linear_attn.' and 'self_attn.' keys in the same active stand payload.")
 
 
 @dataclass
@@ -180,35 +188,50 @@ class SelectiveSubtensorLoader:
 
 
 class MemoryStandPool:
-    """Постоянная «подставка» (Persistent Stand) в VRAM и pinned RAM (Zero Malloc Runtime)."""
+    """Постоянная «подставка» (Persistent Stand) в единых аренах VRAM и pinned RAM (Zero Malloc Runtime)."""
 
     def __init__(
         self,
-        template_tensors: Dict[str, torch.Tensor],
+        template_tensors: Dict[str, Any],
         device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-        num_stands: int = 2
+        num_stands: int = 2,
+        dtype: torch.dtype = torch.float16,
     ):
         self.device = device
         self.num_stands = num_stands
+        self.dtype = dtype
 
-        self.gpu_stands = []
-        self.pinned_ram_stands = []
+        normalized_template: Dict[str, Tuple[int, ...]] = {}
+        for k, v in template_tensors.items():
+            short_k = k.split(".", 3)[-1] if k.startswith("model.layers.") else k
+            normalized_template[short_k] = tuple(v.shape) if isinstance(v, torch.Tensor) else tuple(v)
 
-        for i in range(num_stands):
-            gpu_stand = {}
-            ram_stand = {}
-            for k, v in template_tensors.items():
-                short_k = k.split(".", 3)[-1]
-                gpu_stand[short_k] = v.to(device=device, dtype=torch.float16)
-                if device.type == "cuda":
-                    ram_stand[short_k] = torch.empty_like(v, pin_memory=True)
-                else:
-                    ram_stand[short_k] = torch.empty_like(v)
-            self.gpu_stands.append(gpu_stand)
-            self.pinned_ram_stands.append(ram_stand)
+        self.layout = SlotArenaLayout.from_templates(normalized_template, dtype=dtype)
+        total_bytes = self.num_stands * self.layout.slot_stride
+        use_pinned = device.type == "cuda"
+
+        self.gpu_arena: Optional[torch.Tensor] = (
+            torch.zeros(total_bytes, dtype=torch.uint8, device=device)
+            if total_bytes > 0
+            else torch.empty(0, dtype=torch.uint8, device=device)
+        )
+        self.pinned_arena: Optional[torch.Tensor] = (
+            torch.empty(total_bytes, dtype=torch.uint8, pin_memory=use_pinned)
+            if total_bytes > 0
+            else torch.empty(0, dtype=torch.uint8)
+        )
+
+        self.gpu_stands: List[Dict[str, torch.Tensor]] = [
+            self.layout.bind_slot_views(self.gpu_arena, i, dtype=dtype)
+            for i in range(num_stands)
+        ]
+        self.pinned_ram_stands: List[Dict[str, torch.Tensor]] = [
+            self.layout.bind_slot_views(self.pinned_arena, i, dtype=dtype)
+            for i in range(num_stands)
+        ]
 
         self.active_stand_idx: int = 0
-        self.stand_nbytes = sum(t.nbytes for t in self.gpu_stands[0].values())
+        self.stand_nbytes = self.layout.slot_stride
         self.lfru = ColibriLFRUCache(num_slots=num_stands, num_experts=32)
 
     def place_on_stand(
@@ -216,12 +239,21 @@ class MemoryStandPool:
         subtensors: Dict[str, torch.Tensor],
         stand_idx: int,
         stream: Optional[torch.cuda.Stream] = None
-    ) -> None:
+    ) -> Dict[str, torch.Tensor]:
+        if self.gpu_arena is None or self.pinned_arena is None or not self.gpu_stands:
+            raise RuntimeError("MemoryStandPool is closed; cannot place_on_stand.")
+
         gpu_stand = self.gpu_stands[stand_idx]
         ram_stand = self.pinned_ram_stands[stand_idx]
 
+        normalized_items: List[Tuple[str, torch.Tensor]] = []
         for k, v in subtensors.items():
-            short_k = k.split(".", 3)[-1]
+            short_k = k.split(".", 3)[-1] if k.startswith("model.layers.") else k
+            normalized_items.append((short_k, v))
+        _validate_single_attention_branch([sk for sk, _ in normalized_items])
+
+        active_gpu_stand: Dict[str, torch.Tensor] = {}
+        for short_k, v in normalized_items:
             if short_k in ram_stand:
                 ram_stand[short_k].copy_(v)
                 if stream is not None and self.device.type == "cuda":
@@ -229,9 +261,11 @@ class MemoryStandPool:
                         gpu_stand[short_k].copy_(ram_stand[short_k], non_blocking=True)
                 else:
                     gpu_stand[short_k].copy_(ram_stand[short_k], non_blocking=False)
+                active_gpu_stand[short_k] = gpu_stand[short_k]
+        return active_gpu_stand
 
     def close(self) -> None:
-        """Освобождает GPU-подставки и pinned RAM-подставки."""
+        """Освобождает GPU-подставки, pinned RAM-подставки и единые арены."""
         if self.device.type == "cuda" and torch.cuda.is_available():
             try:
                 torch.cuda.synchronize()
@@ -239,6 +273,8 @@ class MemoryStandPool:
                 pass
         self.gpu_stands.clear()
         self.pinned_ram_stands.clear()
+        self.gpu_arena = None
+        self.pinned_arena = None
         if self.device.type == "cuda" and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -319,15 +355,20 @@ class DynamicTieredCache:
         self.vram_resident_layers: Dict[int, Dict[str, torch.Tensor]] = {}
         self.ram_resident_layers: Dict[int, Dict[str, torch.Tensor]] = {}
 
-        # Двойной буфер для потоковых (нерезидентных в VRAM) слоёв
-        template_layer = weight_map.layers[0]
-        template_tensors = {}
-        with safetensors.safe_open(template_layer.file_path, framework="pt", device="cpu") as f:
-            for k in template_layer.active_keys:
-                template_tensors[k] = f.get_slice(k)[:]
+        # Двойной буфер для потоковых (нерезидентных в VRAM) слоёв:
+        # строим перекрытый шаблон по метаданным обоих типов слоёв (linear_attn + self_attn) без чтения диска.
+        template_tensors: Dict[str, Tuple[int, ...]] = {}
+        seen_layer_types: Set[str] = set()
+        for l_idx in sorted(weight_map.layers.keys()):
+            desc = weight_map.layers[l_idx]
+            if desc.layer_type in seen_layer_types:
+                continue
+            seen_layer_types.add(desc.layer_type)
+            for k in desc.active_keys:
+                meta = desc.subtensors[k]
+                template_tensors[meta.short_name] = tuple(meta.shape)
 
         self.streaming_pool = MemoryStandPool(template_tensors, device=self.device, num_stands=2)
-        del template_tensors
         self.streaming_slot_bytes = self.streaming_pool.stand_nbytes * 2
 
         # Стримы CUDA для асинхронного перекрытия
@@ -428,9 +469,11 @@ class DynamicTieredCache:
         # СЛУЧАЙ 2: Слой в Host RAM (Zero Disk, быстрая передача по PCIe)
         if layer_idx in self.ram_resident_layers and self.ram_resident_layers[layer_idx]:
             ram_tensors = self.ram_resident_layers[layer_idx]
+            _validate_single_attention_branch(ram_tensors.keys())
             gpu_stand = self.streaming_pool.gpu_stands[stand_idx]
             pinned_stand = self.streaming_pool.pinned_ram_stands[stand_idx]
             transfer_bytes = 0
+            active_gpu_stand: Dict[str, torch.Tensor] = {}
 
             # Копируем в закрепленный буфер для истинного DMA по PCIe
             for short_k, t in ram_tensors.items():
@@ -444,14 +487,16 @@ class DynamicTieredCache:
                         if short_k in pinned_stand and short_k in gpu_stand:
                             gpu_stand[short_k].copy_(pinned_stand[short_k], non_blocking=True)
                             transfer_bytes += pinned_stand[short_k].nbytes
+                            active_gpu_stand[short_k] = gpu_stand[short_k]
             else:
                 for short_k in ram_tensors.keys():
                     if short_k in pinned_stand and short_k in gpu_stand:
                         gpu_stand[short_k].copy_(pinned_stand[short_k], non_blocking=False)
                         transfer_bytes += pinned_stand[short_k].nbytes
+                        active_gpu_stand[short_k] = gpu_stand[short_k]
 
             self.total_pcie_transfer_bytes += transfer_bytes
-            return gpu_stand, 0, transfer_bytes
+            return active_gpu_stand, 0, transfer_bytes
 
         # СЛУЧАЙ 3: Cold Miss с SSD (только если не влезло ни в VRAM, ни в RAM)
         desc = self.weight_map.layers[layer_idx]
@@ -464,8 +509,8 @@ class DynamicTieredCache:
                 disk_bytes += t.nbytes
 
         self.total_disk_read_bytes += disk_bytes
-        self.streaming_pool.place_on_stand(subtensors, stand_idx=stand_idx)
-        return self.streaming_pool.gpu_stands[stand_idx], disk_bytes, disk_bytes
+        active_gpu_stand = self.streaming_pool.place_on_stand(subtensors, stand_idx=stand_idx)
+        return active_gpu_stand, disk_bytes, disk_bytes
 
     def close(self) -> None:
         """Освобождает резидентные слои VRAM/RAM и стриминговый пул."""
@@ -567,15 +612,19 @@ class AirColibriEngine:
             act = torch.nn.functional.silu(gate) * up
             mlp_out = torch.matmul(act, stand["mlp.down_proj.weight"].T)
 
-            # Проекция внимания
-            if "linear_attn.out_proj.weight" in stand:
+            # Проекция внимания строго по типу слоя (исключаем чтение устаревшего overlay-алиаса)
+            layer_desc = self.weight_map.layers[i]
+            if layer_desc.layer_type == "linear_attention":
+                if "linear_attn.out_proj.weight" not in stand:
+                    raise KeyError(f"Layer {i} (linear_attention) missing 'linear_attn.out_proj.weight'")
                 attn_out = torch.matmul(normed, stand["linear_attn.out_proj.weight"].T)
-                x = x + attn_out + mlp_out
-            elif "self_attn.o_proj.weight" in stand:
+            elif layer_desc.layer_type == "full_attention":
+                if "self_attn.o_proj.weight" not in stand:
+                    raise KeyError(f"Layer {i} (full_attention) missing 'self_attn.o_proj.weight'")
                 attn_out = torch.matmul(normed, stand["self_attn.o_proj.weight"].T)
-                x = x + attn_out + mlp_out
             else:
-                x = x + mlp_out
+                raise ValueError(f"Unsupported layer_type {layer_desc.layer_type!r} for layer {i}")
+            x = x + attn_out + mlp_out
 
         if self.device.type == "cuda":
             torch.cuda.synchronize()

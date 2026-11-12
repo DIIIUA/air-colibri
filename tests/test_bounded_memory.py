@@ -124,6 +124,10 @@ class TestBoundedMemory(unittest.TestCase):
         self.assertEqual(set(ret_self.keys()), {"mlp.weight", "self_attn.q_proj.weight"})
         self.assertEqual(ret_self["self_attn.q_proj.weight"][0, 0].item(), 5.0)
 
+        pool.close()
+        with self.assertRaises(RuntimeError):
+            pool.copy_into_slot(0, {"mlp.weight": torch.zeros((1024, 1024), dtype=torch.bfloat16)})
+
 
 if __name__ == "__main__":
     unittest.main()

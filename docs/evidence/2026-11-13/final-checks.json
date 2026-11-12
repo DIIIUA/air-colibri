@@ -1,0 +1,18 @@
+[
+  {
+    "case": "tiered-isolated",
+    "returncode": 0
+  },
+  {
+    "case": "final-contract",
+    "returncode": 0
+  },
+  {
+    "case": "cli-final-q4",
+    "returncode": 0
+  },
+  {
+    "case": "cli-final-moe",
+    "returncode": 0
+  }
+]

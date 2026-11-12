@@ -1,0 +1,21 @@
+AirColibri
+Copyright 2026 AirColibri contributors
+
+AirColibri is an independent experimental integration maintained at
+https://github.com/DIIIUA/air-colibri .
+
+AirLLM is developed by Gavin Li (lyogavin) and contributors.
+https://github.com/lyogavin/airllm
+
+Colibrì is developed by Vincenzo Fornaro (JustVugg) and contributors.
+Copyright 2026 Vincenzo Fornaro, as stated in the upstream license.
+https://github.com/JustVugg/colibri
+
+The integration calls the original AirLLM reader and compiles a thin shim
+against Colibrì's original tier.h. Upstream sources are not vendored here.
+Their licenses and notices continue to apply to those dependencies.
+
+The AirColibri project mark is an AI-assisted visual adaptation inspired by
+AirLLM's rocket and Colibrì's pixel hummingbird. Original marks and names
+remain associated with their respective authors. This integration and its
+mark do not imply upstream endorsement. See assets/README.md for sources.

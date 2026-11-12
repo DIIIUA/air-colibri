@@ -1,0 +1,22 @@
+[
+  {
+    "model": "dense",
+    "status": "PASS",
+    "injected": "read failure",
+    "reuse_rejected": true,
+    "close_twice": true,
+    "reopened_exact_logits_and_state": true,
+    "allocated_after_failure": 0,
+    "allocated_after_reopen": 8519680
+  },
+  {
+    "model": "moe",
+    "status": "PASS",
+    "injected": "KeyboardInterrupt",
+    "reuse_rejected": true,
+    "close_twice": true,
+    "reopened_exact_logits_and_state": true,
+    "allocated_after_failure": 8519680,
+    "allocated_after_reopen": 8519680
+  }
+]

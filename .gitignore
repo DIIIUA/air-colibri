@@ -10,3 +10,26 @@ __pycache__/
 .pytest_cache/
 models/
 .relay/
+data/native/*.dll
+data/native/*.obj
+data/native/*.exp
+data/native/*.lib
+data/native/build_tier.cmd
+data/integration-20261112/*-logits.pt
+data/integration-20261112/before-changes.zip
+
+# Local checkpoints, lab outputs and private research/chat archive.
+/history/
+/aircolibri.local.json
+/AIRCOLIBRI_KNOWLEDGE.txt
+/docs/knowledge-base-20261112/
+/docs/AIRCOLIBRI_IMPLEMENTATION_REPORT_20261113.html
+/docs/AIRCOLIBRI_INTEGRATION_PLAN.html
+/data/integration-20261112/
+/data/publication-20261113/
+/data/native/
+/data/q4-g64-cache/
+/data/latest-run.json
+/data/checkpoint-manifest.json
+/scripts/build_implementation_report.py
+/scripts/record_provenance.py

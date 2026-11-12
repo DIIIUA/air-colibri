@@ -3,6 +3,7 @@
 import gc
 import os
 import unittest
+import safetensors
 import torch
 from src.aircolibri_engine import (
     AirColibriEngine,
@@ -124,8 +125,72 @@ class TestTieredCacheAndReUse(unittest.TestCase):
             self.assertFalse(torch.isnan(x).any(), "Output tensor must not contain NaNs")
             print(f"[Full Resident Token {tok}] Step: {step_ms:.1f} ms | Disk Read: {disk_read_mb:.1f} MB | PCIe Transfer: {pcie_mb:.1f} MB")
 
+    @staticmethod
+    def _reference_layer_step(x: torch.Tensor, layer_idx: int) -> torch.Tensor:
+        layer_path = os.path.join(MODEL_DIR, f"model-{layer_idx:05d}.safetensors")
+        prefix = f"model.layers.{layer_idx}."
+        attn_k = "self_attn.o_proj.weight" if (layer_idx % 4 == 3) else "linear_attn.out_proj.weight"
+        keys = [
+            "input_layernorm.weight",
+            "mlp.gate_proj.weight",
+            "mlp.up_proj.weight",
+            "mlp.down_proj.weight",
+            attn_k,
+        ]
+        w = {}
+        with safetensors.safe_open(layer_path, framework="pt", device="cpu") as f:
+            for k in keys:
+                w[k] = f.get_tensor(prefix + k).to(device=x.device, dtype=torch.float16)
+        normed = torch.nn.functional.rms_norm(x, (4096,), w["input_layernorm.weight"])
+        gate = torch.matmul(normed, w["mlp.gate_proj.weight"].T)
+        up = torch.matmul(normed, w["mlp.up_proj.weight"].T)
+        mlp = torch.matmul(torch.nn.functional.silu(gate) * up, w["mlp.down_proj.weight"].T)
+        attn = torch.matmul(normed, w[attn_k].T)
+        return x + attn + mlp
+
+    def test_self_attn_streaming_equivalence_vram_vs_ram(self):
+        """Проверяет эквивалентность self_attn-слоя: VRAM-резидент vs RAM-стрим после linear_attn-слоя."""
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if device.type != "cuda":
+            self.skipTest("CUDA not available")
+
+        # При vram_budget_gb=1.0 только ~1 слой влезает в VRAM; layer 3 (self_attn) идёт через RAM-стрим
+        engine = AirColibriEngine(
+            MODEL_DIR,
+            vram_budget_gb=1.0,
+            ram_budget_gb=4.0,
+            preload_at_init=True
+        )
+        try:
+            self.assertIn(3, engine.cache.ram_resident_layers)
+            self.assertNotIn(3, engine.cache.vram_resident_layers)
+
+            # Сначала прогоняем layer 0 (linear_attn) в stand 0, затем layer 3 (self_attn) в тот же stand 0
+            s0, _, _ = engine.cache.get_layer_tensors(0, stand_idx=0)
+            self.assertIn("linear_attn.out_proj.weight", s0)
+            s3, _, _ = engine.cache.get_layer_tensors(3, stand_idx=0)
+            self.assertIn("self_attn.o_proj.weight", s3)
+            self.assertNotIn("linear_attn.out_proj.weight", s3)
+
+            torch.manual_seed(123)
+            x_in = torch.randn(1, 1, 4096, dtype=torch.float16, device=device)
+
+            # RAM-stream forward на слое 3 (использует s3, полученный после s0 на том же стенде)
+            normed = torch.nn.functional.rms_norm(x_in, (4096,), s3["input_layernorm.weight"])
+            gate = torch.matmul(normed, s3["mlp.gate_proj.weight"].T)
+            up = torch.matmul(normed, s3["mlp.up_proj.weight"].T)
+            mlp = torch.matmul(torch.nn.functional.silu(gate) * up, s3["mlp.down_proj.weight"].T)
+            attn = torch.matmul(normed, s3["self_attn.o_proj.weight"].T)
+            x_ram_cpu = (x_in + attn + mlp).cpu()
+        finally:
+            engine.close()
+
+        # Независимый VRAM-референс слоя 3 напрямую из safetensors
+        x_vram_cpu = self._reference_layer_step(x_in.clone(), 3).cpu()
+        self.assertTrue(torch.equal(x_ram_cpu, x_vram_cpu), "RAM-streamed self_attn output must match VRAM reference bit-for-bit")
+
     def test_partial_vram_budget_streaming(self):
-        """Test with constrained 2GB VRAM + 5GB RAM: 19 layers cached in memory, 13 layers streamed."""
+        """Test with constrained 2GB VRAM + 5GB RAM: 19 layers cached in memory, 13 layers streamed + exact logits check."""
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         engine = AirColibriEngine(
             MODEL_DIR,
@@ -135,12 +200,35 @@ class TestTieredCacheAndReUse(unittest.TestCase):
         )
         self.addCleanup(engine.close)
 
-        x = torch.randn(1, 1, 4096, dtype=torch.float16, device=device)
-        x, step_ms, disk_read_mb, pcie_mb = engine.execute_token_step(x, token_idx=0)
-        # Exactly 13 layers * ~320 MB = ~4160 MB read from SSD, rest from memory
+        ram_self = [i for i in engine.cache.ram_resident_layers if i % 4 == 3]
+        self.assertGreater(len(ram_self), 0, "Expected non-resident self_attn layers under 2GB VRAM budget")
+
+        torch.manual_seed(42)
+        x_init = torch.randn(1, 1, 4096, dtype=torch.float16, device=device)
+        x_out, step_ms, disk_read_mb, pcie_mb = engine.execute_token_step(x_init.clone(), token_idx=0)
+        x_out_cpu = x_out.cpu()
+        engine.close()
+
+        # Exactly 13+ layers read from SSD, rest from memory
         self.assertGreater(disk_read_mb, 0.0)
         self.assertLess(disk_read_mb, 10240.0)
-        print(f"[Partial Stream Token 0] Step: {step_ms:.1f} ms | Disk Read: {disk_read_mb:.1f} MB | PCIe Transfer: {pcie_mb:.1f} MB")
+        self.assertFalse(torch.isnan(x_out_cpu).any())
+
+        # Verify mathematical correctness against independent layer-by-layer reference
+        x_ref = x_init.clone()
+        for layer_idx in range(32):
+            x_ref = self._reference_layer_step(x_ref, layer_idx)
+        x_ref_cpu = x_ref.cpu()
+
+        cos = torch.nn.functional.cosine_similarity(
+            x_out_cpu.float().flatten(), x_ref_cpu.float().flatten(), dim=0
+        ).item()
+        self.assertGreaterEqual(cos, 0.9999, f"Streaming output diverged from reference (cos={cos:.6f})")
+        self.assertTrue(torch.allclose(x_out_cpu, x_ref_cpu, rtol=1e-2, atol=1e-2))
+        print(
+            f"[Partial Stream Token 0] Step: {step_ms:.1f} ms | Disk Read: {disk_read_mb:.1f} MB | "
+            f"PCIe Transfer: {pcie_mb:.1f} MB | Ref cos={cos:.6f}"
+        )
 
 
 if __name__ == "__main__":

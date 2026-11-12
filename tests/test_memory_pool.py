@@ -54,9 +54,14 @@ class TestLFRUCache(unittest.TestCase):
         for _ in range(10):
             cache.access_expert(0)
 
-        # Access 2 -> miss, should evict slot 1 (expert 1 was cold, expert 0 is hot)
+        # A cold miss executes transiently and must not defeat admission.
         slot2, is_hit = cache.access_expert(2)
         self.assertFalse(is_hit)
+        self.assertIsNone(slot2)
+        self.assertTrue(cache.is_resident(1))
+        self.assertFalse(cache.is_resident(2))
+        for _ in range(7):
+            slot2, is_hit = cache.access_expert(2)
         self.assertEqual(slot2, 1)
         self.assertTrue(cache.is_resident(0))
         self.assertTrue(cache.is_resident(2))

@@ -152,6 +152,17 @@ class TestGPURingPipeline(unittest.TestCase):
             self.assertEqual(comp.tensors[key][0, 0].item(), val)
             pipe.release_slot_after_compute(comp)
 
+        mixed_slot = pipe.get_slot_for_loading(1)
+        with self.assertRaises(ValueError):
+            pipe.load_tensors_async(
+                mixed_slot,
+                {
+                    "mlp.weight": torch.zeros((1024, 1024), dtype=self.dtype),
+                    "linear_attn.proj.weight": torch.zeros((2048, 1024), dtype=self.dtype),
+                    "self_attn.q_proj.weight": torch.zeros((1024, 1024), dtype=self.dtype),
+                },
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

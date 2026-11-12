@@ -225,7 +225,8 @@ class RingPoolWithCache:
             DeviceSlot(i, expert_shape, dtype, device)
             for i in range(num_expert_slots)
         ]
-        self.expert_nbytes = self.expert_slots[0].buffer.nbytes
+        self.transient_expert = DeviceSlot(num_expert_slots, expert_shape, dtype, device)
+        self.expert_nbytes = self.transient_expert.buffer.nbytes
 
         # Colibri LFRU Cache Manager
         self.lfru = ColibriLFRUCache(num_slots=num_expert_slots, num_experts=num_total_experts)
@@ -249,7 +250,7 @@ class RingPoolWithCache:
             (tensor, is_hit): VRAM buffer for the expert, and whether it was a cache hit.
         """
         slot_idx, is_hit = self.lfru.access_expert(expert_id)
-        slot = self.expert_slots[slot_idx]
+        slot = self.transient_expert if slot_idx is None else self.expert_slots[slot_idx]
 
         if is_hit:
             self.cache_hits += 1
@@ -260,11 +261,13 @@ class RingPoolWithCache:
         self.total_expert_bytes_transferred += self.expert_nbytes
 
         if self.is_cuda:
+            consumer = torch.cuda.current_stream(self.device)
+            self.expert_stream.wait_stream(consumer)
             with torch.cuda.stream(self.expert_stream):
                 slot.buffer.copy_(host_expert_tensor, non_blocking=True)
                 self.expert_event.record(self.expert_stream)
             # Wait for transfer before returning buffer for computation
-            self.expert_stream.wait_event(self.expert_event)
+            consumer.wait_event(self.expert_event)
         else:
             slot.buffer.copy_(host_expert_tensor, non_blocking=False)
 

@@ -27,19 +27,46 @@ import torch
 import safetensors
 import safetensors.torch
 
+from src.quantization_q4 import (
+    Q4_GROUP_SIZE,
+    is_q4_quantizable,
+    q4_subkey_names,
+    q4_tensor_specs,
+    quantize_tensor_q4,
+)
+
 
 class BoundedRAMCache:
     """Кэш в оперативной памяти с жестким ограничением объема (LRU или Static Pinned)."""
 
-    def __init__(self, max_cached_layers: int = 8, policy: str = "static_pinned"):
+    def __init__(self, max_cached_layers: int = 8, policy: str = "static_pinned", max_bytes: Optional[int] = None):
+        if max_cached_layers < 0 or (max_bytes is not None and max_bytes < 0):
+            raise ValueError("Cache budgets must be nonnegative")
+        if policy not in ("static_pinned", "lru", "mmap_direct"):
+            raise ValueError("Unsupported RAM cache policy")
         self.max_cached_layers = max_cached_layers
+        self.max_bytes = max_bytes
         self.policy = policy
         self.cache: collections.OrderedDict[int, Dict[str, torch.Tensor]] = collections.OrderedDict()
         self.hits = 0
         self.misses = 0
         self.evictions = 0
+        self.rejected_admissions = 0
+        self.admission = None
+        self.on_access = None
+        self.on_placement = None
+        self.generation = 0
+        self.peak_bytes = 0
+        self.placement_events = collections.deque(maxlen=1024)
+        self.placement_counts = collections.Counter()
+
+    @property
+    def current_bytes(self) -> int:
+        return sum(t.numel() * t.element_size() for ts in self.cache.values() for t in ts.values())
 
     def get(self, layer_idx: int) -> Optional[Dict[str, torch.Tensor]]:
+        if self.on_access is not None:
+            self.on_access(layer_idx)
         if layer_idx in self.cache:
             self.hits += 1
             if self.policy == "lru":
@@ -49,29 +76,75 @@ class BoundedRAMCache:
         return None
 
     def put(self, layer_idx: int, tensors: Dict[str, torch.Tensor]) -> None:
-        if layer_idx in self.cache:
-            if self.policy == "lru":
-                self.cache.move_to_end(layer_idx)
-            self.cache[layer_idx] = tensors
+        size = sum(t.numel() * t.element_size() for t in tensors.values())
+        before = self.current_bytes
+        victims = []
+        def reject(reason):
+            self.rejected_admissions += 1
+            self._placement_ack(layer_idx, "rejected", [], before, reason)
+        if not self.max_cached_layers or self.policy == "mmap_direct":
+            reject("residency_disabled")
             return
-
-        if self.policy == "static_pinned":
-            # При static_pinned кэшируем только первые max_cached_layers слоев
-            # Они остаются в памяти навсегда и никогда не вытесняются
-            if len(self.cache) < self.max_cached_layers:
-                self.cache[layer_idx] = tensors
+        if self.max_bytes is not None and size > self.max_bytes:
+            reject("object_exceeds_byte_budget")
             return
-
-        # LRU режим
-        if len(self.cache) >= self.max_cached_layers:
-            evicted_idx, evicted_tensors = self.cache.popitem(last=False)
-            del evicted_tensors
+        if self.admission is not None:
+            accepted, victim = self.admission(layer_idx, list(self.cache))
+            if not accepted:
+                reject("native_admission_margin")
+                return
+            if victim is not None:
+                if victim not in self.cache or victim == layer_idx:
+                    raise ValueError("Invalid admission victim")
+                victims.append(victim)
+        old_size = sum(t.numel() * t.element_size() for t in self.cache.get(layer_idx, {}).values())
+        projected = before - old_size + size
+        for victim in victims:
+            projected -= sum(t.numel() * t.element_size() for t in self.cache[victim].values())
+        remaining = [key for key in self.cache if key != layer_idx and key not in victims]
+        def over_budget():
+            return len(remaining) + 1 > self.max_cached_layers or (self.max_bytes is not None and projected > self.max_bytes)
+        if self.policy == "static_pinned" and over_budget():
+            reject("static_residents_reserved")
+            return
+        # Native admission authorizes exactly its victim. A differently-sized
+        # newcomer must not silently trigger extra, unplanned evictions.
+        if victims and over_budget():
+            reject("native_replacement_exceeds_budget")
+            return
+        while over_budget() and remaining:
+            victim = remaining.pop(0)
+            victims.append(victim)
+            projected -= sum(t.numel() * t.element_size() for t in self.cache[victim].values())
+        if over_budget():
+            reject("byte_budget")
+            return
+        # All checks precede mutation; rejected replacements retain old data.
+        for victim in victims:
+            del self.cache[victim]
             self.evictions += 1
-
+        self.cache.pop(layer_idx, None)
         self.cache[layer_idx] = tensors
+        self.peak_bytes = max(self.peak_bytes, self.current_bytes)
+        self._placement_ack(layer_idx, "applied", victims, before, "admitted")
+
+    def _placement_ack(self, layer, status, victims, before, reason):
+        self.generation += 1
+        event = dict(generation=self.generation, tier="ram", layer=layer,
+                     status=status, victims=list(victims), reason=reason,
+                     bytes_before=before, bytes_after=self.current_bytes,
+                     budget_bytes=self.max_bytes)
+        self.placement_counts[status] += 1
+        self.placement_events.append(event)
+        if self.on_placement is not None:
+            self.on_placement(dict(event))
 
     def clear(self) -> None:
+        before = self.current_bytes
+        victims = list(self.cache)
         self.cache.clear()
+        if victims:
+            self._placement_ack(None, "released", victims, before, "close_or_clear")
 
     @property
     def current_layers_count(self) -> int:
@@ -97,6 +170,7 @@ class TensorArenaSpec:
     offset_bytes: int
     nbytes: int
     region: str  # "shared" | "linear_attn" | "self_attn"
+    dtype: torch.dtype = torch.bfloat16
 
 
 class SlotArenaLayout:
@@ -130,6 +204,14 @@ class SlotArenaLayout:
         return "shared"
 
     @classmethod
+    def _parse_template_entry(cls, spec_val: Any, default_dtype: torch.dtype) -> Tuple[Tuple[int, ...], torch.dtype]:
+        if isinstance(spec_val, torch.Tensor):
+            return tuple(spec_val.shape), spec_val.dtype
+        if isinstance(spec_val, tuple) and len(spec_val) == 2 and isinstance(spec_val[1], torch.dtype):
+            return tuple(spec_val[0]), spec_val[1]
+        return tuple(spec_val), default_dtype
+
+    @classmethod
     def from_templates(
         cls,
         template_tensors: Dict[str, Any],
@@ -137,31 +219,34 @@ class SlotArenaLayout:
         slot_alignment: int = ARENA_ALIGN_BYTES,
         tensor_alignment: int = TENSOR_ALIGN_BYTES,
     ) -> "SlotArenaLayout":
-        elem_size = torch.empty((), dtype=dtype).element_size()
-        grouped: Dict[str, List[Tuple[str, Tuple[int, ...]]]] = {
+        elem_sizes: Dict[torch.dtype, int] = {}
+        grouped: Dict[str, List[Tuple[str, Tuple[int, ...], torch.dtype]]] = {
             "shared": [],
             "linear_attn": [],
             "self_attn": [],
         }
 
         for name, spec_val in template_tensors.items():
-            shape = tuple(spec_val.shape) if isinstance(spec_val, torch.Tensor) else tuple(spec_val)
-            grouped[cls._classify_region(name)].append((name, shape))
+            shape, t_dtype = cls._parse_template_entry(spec_val, dtype)
+            if t_dtype not in elem_sizes:
+                elem_sizes[t_dtype] = torch.empty((), dtype=t_dtype).element_size()
+            grouped[cls._classify_region(name)].append((name, shape, t_dtype))
 
         specs: Dict[str, TensorArenaSpec] = {}
         cursor = 0
         shared_logical = 0
         max_end = 0
 
-        for name, shape in grouped["shared"]:
+        for name, shape, t_dtype in grouped["shared"]:
             numel = math.prod(shape) if shape else 1
-            nbytes = numel * elem_size
+            nbytes = numel * elem_sizes[t_dtype]
             specs[name] = TensorArenaSpec(
                 name=name,
                 shape=shape,
                 offset_bytes=cursor,
                 nbytes=nbytes,
                 region="shared",
+                dtype=t_dtype,
             )
             shared_logical += nbytes
             end = cursor + nbytes
@@ -179,15 +264,16 @@ class SlotArenaLayout:
                 continue
             v_cursor = attn_offset
             v_logical = 0
-            for name, shape in items:
+            for name, shape, t_dtype in items:
                 numel = math.prod(shape) if shape else 1
-                nbytes = numel * elem_size
+                nbytes = numel * elem_sizes[t_dtype]
                 specs[name] = TensorArenaSpec(
                     name=name,
                     shape=shape,
                     offset_bytes=v_cursor,
                     nbytes=nbytes,
                     region=region_name,
+                    dtype=t_dtype,
                 )
                 v_logical += nbytes
                 v_end = v_cursor + nbytes
@@ -215,15 +301,16 @@ class SlotArenaLayout:
         dtype: Optional[torch.dtype] = None,
     ) -> Dict[str, torch.Tensor]:
         """Создает zero-copy тензорные view слота внутри единой арены uint8."""
-        view_dtype = dtype or self.dtype
+        fallback_dtype = dtype or self.dtype
         base = slot_idx * self.slot_stride
         views: Dict[str, torch.Tensor] = {}
         for name, spec in self.specs.items():
+            t_dtype = spec.dtype if spec.dtype is not None else fallback_dtype
             if spec.nbytes == 0:
-                views[name] = torch.empty(spec.shape, dtype=view_dtype, device=arena.device)
+                views[name] = torch.empty(spec.shape, dtype=t_dtype, device=arena.device)
             else:
                 start = base + spec.offset_bytes
-                views[name] = arena[start : start + spec.nbytes].view(view_dtype).view(spec.shape)
+                views[name] = arena[start : start + spec.nbytes].view(t_dtype).view(spec.shape)
         return views
 
 
@@ -293,6 +380,21 @@ class BoundedPinnedBufferPool:
         Возвращает только view, соответствующие ключам src_tensors (без неактивного overlay-алиаса),
         чтобы асинхронный DMA не затирал активную ветку attention.
         """
+        if self.arena is None or not self.slots:
+            raise RuntimeError("BoundedPinnedBufferPool is closed; cannot copy_into_slot.")
+
+        if any(k.startswith("linear_attn.") for k in src_tensors) and any(k.startswith("self_attn.") for k in src_tensors):
+            raise ValueError("Cannot write both attention variants into an overlay slot")
+        if not src_tensors:
+            raise ValueError("Empty pinned payload")
+        # Validate the entire payload before the first write (copy_ can broadcast).
+        for name, src_t in src_tensors.items():
+            target = self.slots[0].get(name)
+            if target is None or not isinstance(src_t, torch.Tensor):
+                raise ValueError(f"Unknown pinned tensor: {name}")
+            if src_t.shape != target.shape or src_t.dtype != target.dtype or src_t.device.type != "cpu":
+                raise ValueError(f"Pinned tensor shape/dtype/device mismatch: {name}")
+
         idx = slot_idx % self.num_slots
 
         # Защита от гонки: ждем, пока GPU DMA закончит чтение предыдущего пакета из этого pinned-буфера
@@ -350,8 +452,46 @@ class LazyGlobalsMap(collections.abc.MutableMapping):
             self._handle = safetensors.safe_open(self._globals_path, framework="pt", device="cpu")
         return self._handle
 
+    def release_handle(self) -> None:
+        """Drop the globals mapping after staged copies, retain lazy key metadata.
+
+        Reopening for embedding rows prevents already-copied lm_head pages from
+        staying mapped for the whole inference lifetime. Materialized tensors,
+        when explicitly requested by callers, retain their own storage owner.
+        """
+        self._handle = None
+
     def _read_tensor(self, key: str) -> torch.Tensor:
-        return self._ensure_handle().get_slice(key)[:].to(dtype=self._dtype)
+        sl = self._ensure_handle().get_slice(key)
+        shape = sl.get_shape()
+        if len(shape) >= 2 and shape[0] > 4096:
+            out = torch.empty(shape, dtype=self._dtype, device="cpu")
+            for r0 in range(0, shape[0], 4096):
+                r1 = min(r0 + 4096, shape[0])
+                out[r0:r1].copy_(sl[r0:r1])
+            return out
+        return sl[:].to(dtype=self._dtype)
+
+    def get_tensor_slice(self, key: str) -> Any:
+        """Возвращает ленивый safetensors slice без материализации всего тензора в RAM."""
+        if key not in self._keys:
+            raise KeyError(key)
+        return self._ensure_handle().get_slice(key)
+
+    def lookup_rows(self, key: str, indices: torch.Tensor, dtype: Optional[torch.dtype] = None) -> torch.Tensor:
+        """Читает только нужные строки embedding-таблицы без загрузки 1.94 ГБ в RAM."""
+        if key not in self._keys:
+            raise KeyError(key)
+        target_dtype = dtype or self._dtype
+        if key in self._materialized:
+            return self._materialized[key][indices].to(dtype=target_dtype)
+        sl = self._ensure_handle().get_slice(key)
+        flat_ids = indices.reshape(-1).tolist()
+        if not flat_ids:
+            cols = sl.get_shape()[1]
+            return torch.empty((*indices.shape, cols), dtype=target_dtype)
+        rows = torch.cat([sl[int(i) : int(i) + 1] for i in flat_ids], dim=0).to(dtype=target_dtype)
+        return rows.view(*indices.shape, -1)
 
     def __getitem__(self, key: str) -> torch.Tensor:
         if key not in self._keys:
@@ -416,25 +556,61 @@ class StableWeightManager:
         max_ram_layers: int = 8,
         num_pinned_slots: int = 2,
         cache_policy: str = "static_pinned",
-        dtype: torch.dtype = torch.bfloat16
+        dtype: torch.dtype = torch.bfloat16,
+        weight_format: str = "bf16",
+        q4_group_size: int = Q4_GROUP_SIZE,
+        q4_cache_dir: Optional[str] = None,
+        checkpoint_manifest: Optional[str] = None,
+        max_ram_bytes: Optional[int] = None,
+        max_mmap_handles: int = 2,
+        weight_reader=None,
     ):
         self.model_dir = model_dir
         self.dtype = dtype
         self.cache_policy = cache_policy
-        self.ram_cache = BoundedRAMCache(max_cached_layers=max_ram_layers, policy=cache_policy)
+        if weight_format not in ("bf16", "q4", "q4_g16_asym", "q4_g32_asym", "q4_g64_asym"):
+            raise ValueError("Unsupported weight format")
+        self.is_q4 = weight_format.startswith("q4")
+        self.weight_format = f"q4_g{q4_group_size}_asym" if self.is_q4 else "bf16"
+        self.q4_group_size = q4_group_size
+        self.ram_cache = BoundedRAMCache(max_cached_layers=max_ram_layers, policy=cache_policy, max_bytes=max_ram_bytes)
+        if max_mmap_handles < 1:
+            raise ValueError("Need at least one mmap handle")
+        self.max_mmap_handles = max_mmap_handles
+        self.weight_reader = weight_reader
+        self.prepacked_cache = None
+        self.quantization_calls = 0
+        self._closed = False
+        if q4_cache_dir is not None:
+            if not self.is_q4 or checkpoint_manifest is None:
+                raise ValueError("Q4 cache requires Q4 format and a checkpoint manifest")
+            from src.prepacked_q4_cache import PrepackedLayerCache
+            self.prepacked_cache = PrepackedLayerCache(model_dir, q4_cache_dir, checkpoint_manifest,
+                dtype=dtype, group_size=q4_group_size, reader=weight_reader)
 
         # Постоянные открытые mmap-дескрипторы файлов safetensors
-        self.mmap_handles: Dict[int, Any] = {}
+        self.mmap_handles: Dict[int, Any] = collections.OrderedDict()
 
         # Читаем только метаданные форм весов (без чтения тензоров с диска) для linear_attn и self_attn
-        template: Dict[str, Tuple[int, ...]] = {}
+        template: Dict[str, Any] = {}
         for l_idx in [0, 3]:
             l_file = os.path.join(model_dir, f"model-{l_idx:05d}.safetensors")
             if os.path.exists(l_file):
                 f = self._get_mmap_handle(l_idx)
                 for k in f.keys():
                     short_k = k.replace(f"model.layers.{l_idx}.", "")
-                    template[short_k] = tuple(f.get_slice(k).get_shape())
+                    shape = tuple(f.get_slice(k).get_shape())
+                    if self.is_q4 and is_q4_quantizable(short_k, shape, group_size=self.q4_group_size):
+                        template.update(
+                            q4_tensor_specs(
+                                short_k,
+                                shape,
+                                group_size=self.q4_group_size,
+                                compute_dtype=self.dtype,
+                            )
+                        )
+                    else:
+                        template[short_k] = (shape, self.dtype)
 
         self.pinned_pool = BoundedPinnedBufferPool(
             template_tensors=template,
@@ -452,24 +628,66 @@ class StableWeightManager:
         if layer_idx not in self.mmap_handles:
             layer_file = os.path.join(self.model_dir, f"model-{layer_idx:05d}.safetensors")
             self.mmap_handles[layer_idx] = safetensors.safe_open(layer_file, framework="pt", device="cpu")
+        self.mmap_handles.move_to_end(layer_idx)
+        while len(self.mmap_handles) > self.max_mmap_handles:
+            self.mmap_handles.popitem(last=False)
         return self.mmap_handles[layer_idx]
 
     def _load_globals(self) -> None:
         globals_path = os.path.join(self.model_dir, "model-globals.safetensors")
         self.globals = LazyGlobalsMap(globals_path, dtype=self.dtype)
 
+    def read_layer_tensors(
+        self,
+        layer_idx: int,
+        target_device: Optional[torch.device] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Читает веса слоя из mmap и при weight_format='q4_g64_asym' квантует 2D-проекции в W4A16."""
+        if self._closed:
+            raise RuntimeError("Weight manager is closed")
+        if self.prepacked_cache is not None:
+            tensors = self.prepacked_cache.get_or_build(layer_idx,
+                lambda: self._read_uncached(layer_idx, torch.device("cpu")))
+            dst = target_device or torch.device("cpu")
+            return {k: t.to(dst) for k, t in tensors.items()}
+        return self._read_uncached(layer_idx, target_device)
+
+    def _read_uncached(self, layer_idx, target_device=None):
+        dst = target_device or torch.device("cpu")
+        f = self._get_mmap_handle(layer_idx)
+        names = list(f.keys())
+        loaded = (self.weight_reader(self.model_dir, f"model-{layer_idx:05d}", names)
+                  if self.weight_reader is not None else None)
+        tensors: Dict[str, torch.Tensor] = {}
+        prefix = f"model.layers.{layer_idx}."
+        for k in names:
+            if not k.startswith(prefix):
+                raise ValueError(f"Foreign tensor in layer shard: {k}")
+            short_k = k[len(prefix):]
+            t = loaded[k] if loaded is not None else f.get_tensor(k)
+            if self.is_q4 and is_q4_quantizable(short_k, tuple(t.shape), group_size=self.q4_group_size):
+                self.quantization_calls += 1
+                q_k, s_k, z_k = q4_subkey_names(short_k)
+                qweight, scales, zeros = quantize_tensor_q4(
+                    t,
+                    group_size=self.q4_group_size,
+                    compute_dtype=self.dtype,
+                    target_device=dst,
+                )
+                tensors[q_k] = qweight
+                tensors[s_k] = scales
+                tensors[z_k] = zeros
+            else:
+                tensors[short_k] = t.to(device=dst, dtype=self.dtype)
+        return tensors
+
     def load_layer_to_pinned_slot(self, layer_idx: int, target_slot_idx: int) -> Dict[str, torch.Tensor]:
         """Загружает веса слоя в закрепленный слот для отправки на GPU по DMA."""
         # 1. Проверяем RAM-кэш
         cached = self.ram_cache.get(layer_idx)
         if cached is None:
-            # 2. Читаем через постоянный открытый mmap-дескриптор
-            f = self._get_mmap_handle(layer_idx)
-            cached = {}
-            prefix = f"model.layers.{layer_idx}."
-            for k in f.keys():
-                short_k = k.replace(prefix, "")
-                cached[short_k] = f.get_tensor(k).to(dtype=self.dtype)
+            # 2. Читаем через постоянный открытый mmap-дескриптор (и квантуем в Q4 при необходимости)
+            cached = self.read_layer_tensors(layer_idx, target_device=torch.device("cpu"))
 
             # Сохраняем в RAM-кэш в соответствии с выбранной политикой
             self.ram_cache.put(layer_idx, cached)
@@ -480,6 +698,7 @@ class StableWeightManager:
 
     def close(self) -> None:
         """Освобождает дескрипторы, кэш RAM, глобалы и pinned-буферы."""
+        self._closed = True
         self.mmap_handles.clear()
         self.ram_cache.clear()
         if hasattr(self, "globals") and self.globals is not None:
