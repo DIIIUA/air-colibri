@@ -16,7 +16,8 @@ measurements. A small measured speed difference is not a general guarantee.
 
 ## Next decisions
 
-1. Close strict Q4 quality acceptance before promoting Q4 beyond experimental.
+1. Localize the measured [Q4-g64 quality failure](docs/Q4_RESULTS_2026-11-13.md)
+   on separate development data before fresh held-out acceptance; keep Q4 experimental.
 2. Measure expert reuse, physical I/O and cache-size sensitivity.
 3. Extend actual byte/lifetime reservations and ACKs to GPU placement.
 4. Verify a model-specific native executor seam and CUDA ownership separately.

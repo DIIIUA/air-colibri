@@ -11,13 +11,14 @@
 | P4 — original native mechanism | Original C `tier.h` affects real RAM retention | Complete native CUDA executor/interoperability |
 | P5 — common placement | One global RAM admission policy and backend ACKs | General dynamic VRAM placement and cancellation |
 | P6 — full MoE | OLMoE BF16 with real router and original forward | Other families and checkpoints |
-| P7 — quality | BF16 baseline retained; tokenizer IDs checked | Strict Q4 acceptance and held-out quality evaluation |
+| P7 — quality | BF16 repeatability; 960-position Q4-g64 evaluation failed strict acceptance | Localize quantization error; improve on separate development data; fresh held-out reevaluation |
 | P8 — practical benefit | Five repeated local policy A/B pairs | Physical I/O, cold/warm, TTFT, standalone comparisons |
 | P9 — product path | One experimental CLI, provenance and resource guards | Independent setup, larger models, packaging and API |
 
 ## Order of work
 
-1. Resolve Q4 quality on a sufficiently large, held-out teacher-forcing set.
+1. Resolve the measured Q4-g64 quality failure using separate development data,
+   then confirm on a fresh held-out teacher-forcing set.
 2. Measure expert reuse and physical I/O before changing residency policy.
 3. Introduce GPU byte/lifetime reservations in shadow mode; apply only after
    actual backend ACKs and off/on output/state parity.

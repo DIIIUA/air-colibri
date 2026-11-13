@@ -22,15 +22,22 @@ def compare_logits(reference, candidate):
     for bf, q4 in zip(reference.double(), candidate.double()):
         bv, bi = bf.topk(5)
         _, qi = q4.topk(5)
+        # Match the runtime's greedy decoder. topk may return a different
+        # ordering among equal logits, which is not a real token change.
+        bf_top1 = int(bf.argmax())
+        q4_top1 = int(q4.argmax())
         margin = (bv[0] - bv[1]).item()
         span = (bf.max() - bf.min()).item()
         logp, logq = bf.log_softmax(-1), q4.log_softmax(-1)
         records.append(dict(
-            bf16_id=bi[0].item(), candidate_id=qi[0].item(),
-            top1_match=bi[0].item() == qi[0].item(),
-            in_top3=qi[0].item() in bi[:3].tolist(),
+            bf16_id=bf_top1, candidate_id=q4_top1,
+            top1_match=bf_top1 == q4_top1,
+            in_top3=bool(bf[q4_top1] >= bv[2]),
+            ordered_topk_top1_match=bi[0].item() == qi[0].item(),
+            ordered_topk_in_top3=qi[0].item() in bi[:3].tolist(),
+            candidate_top1_ties=int((q4 == q4[q4_top1]).sum()),
             top5_overlap=len(set(bi.tolist()) & set(qi.tolist())),
-            rank=int((q4 > q4[bi[0]]).sum()) + 1,
+            rank=int((q4 > q4[bf_top1]).sum()) + 1,
             margin=margin, norm_margin=margin / span if span else 0.0,
             kl_forward=max(0.0, (logp.exp() * (logp - logq)).sum().item()),
             kl_reverse=max(0.0, (logq.exp() * (logq - logp)).sum().item()),
@@ -49,6 +56,9 @@ def summarize(records):
     mean = lambda key: statistics.mean(r[key] for r in records)
     quantile = lambda key, q: torch.quantile(torch.tensor([r[key] for r in records], dtype=torch.float64), q).item()
     result = dict(positions=n, confident_count=len(confident), confident_flips=len(flips),
+        ordered_topk_confident_flips=sum(not r["ordered_topk_top1_match"] for r in confident),
+        ordered_topk_top1_pct=100 * sum(r["ordered_topk_top1_match"] for r in records) / n,
+        ordered_topk_top3_pct=100 * sum(r["ordered_topk_in_top3"] for r in records) / n,
         top1_pct=100 * sum(r["top1_match"] for r in records) / n,
         top3_pct=100 * sum(r["in_top3"] for r in records) / n,
         top5_mean=mean("top5_overlap"),

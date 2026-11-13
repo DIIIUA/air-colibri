@@ -77,8 +77,8 @@ def main():
     result = dict(status="STARTED", mode=a.mode, requested_steps=a.steps,
                   group_size=a.group_size if a.mode=="q4" else None,
                   quantize_lm_head=False, seed=1234, rows=[], steps=[],
-                  protocol="fixed-text-chunks-v1",
-                  method="Same original text tokens in BF16 and Q4; observe all original lm_head logits; no padding or generated/EOS repetition",
+                  protocol="fixed-text-chunks-v2",
+                  method="Same original text tokens in BF16 and Q4; all original lm_head logits; greedy argmax and tie-inclusive top-3; no padding or generated/EOS repetition",
                   checkpoint_hash_scope="Historical trusted layer SHA manifest plus current metadata/stat identity; no fresh full weight rehash")
     dest = a.output/"result.json"
     save_json(dest, result)

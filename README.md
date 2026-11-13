@@ -89,7 +89,8 @@ GGUF, Vulkan, arbitrary models, an API server or interactive chat service.
 * Expert CPU→GPU bytes were unchanged. This small **2.42% local timing change**
   is not a general speed promise; OS file-cache state was uncontrolled.
 * Q4/off–on correctness does **not** mean Q4/BF16 quality acceptance. BF16 is
-  the default; the strict Q4 quality gate remains open.
+  the default. A [960-position quality evaluation](docs/Q4_RESULTS_2026-11-13.md)
+  confirmed bitwise BF16 repeatability; Q4-g64 **failed** the strict gate.
 
 See the [full experiment report](docs/EXPERIMENTS_2026-11-13.md) for workloads,
 test failures and reruns, source revisions, measurements and limitations.
@@ -135,7 +136,7 @@ or the explicit `--report` path.
 
 * [Integration experiment report and machine-readable evidence](docs/EXPERIMENTS_2026-11-13.md).
 * [Follow-up CUDA ordering fixes and 3,072 slot reuses](docs/TESTING_2026-11-13.md).
-* [Strict Q4/BF16 quality protocol](docs/QUALITY_EVALUATION.md) — full fixed-text result pending.
+* [Strict Q4/BF16 quality protocol](docs/QUALITY_EVALUATION.md) and [completed results](docs/Q4_RESULTS_2026-11-13.md) — Q4-g64 did not pass acceptance.
 * [Developer setup, layouts and validation commands](docs/DEVELOPMENT.md).
 * [Original architecture audit](docs/audit_and_design.md) — historical design context.
 * [Current engineering strategy](Strategy.md).

@@ -138,6 +138,11 @@ at least 300 confident positions; thresholds were not relaxed. A new complete
 Q4 quality/held-out evaluation was not performed in this integration pass.
 BF16 remains the default. Q4 is an explicitly selected experiment.
 
+The subsequent [fixed-text evaluation](Q4_RESULTS_2026-11-13.md) completed on
+960 positions / 623 confident positions. BF16 repeated bit for bit; Q4-g64
+failed the unchanged numeric acceptance thresholds. That follow-up also
+corrected tie handling in the scorer and preserved the original results.
+
 ## Research direction
 
 The observed benefit is retention of reusable expert weights, not reduced

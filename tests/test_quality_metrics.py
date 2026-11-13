@@ -52,3 +52,25 @@ def test_shape_mismatch_and_empty_results_rejected():
         compare_logits(confident_rows(2), confident_rows(1))
     with pytest.raises(ValueError):
         summarize([])
+
+
+def test_equal_logits_follow_greedy_argmax_not_topk_tie_order(monkeypatch):
+    original_topk = torch.Tensor.topk
+    def different_valid_tie_order(tensor, k, *args, **kwargs):
+        values, indices = original_topk(tensor, k, *args, **kwargs)
+        if bool((values == values[0]).all()):
+            return values.flip(-1), indices.flip(-1)
+        return values, indices
+    monkeypatch.setattr(torch.Tensor, "topk", different_valid_tie_order)
+    ref = torch.tensor([[8., 1., 0., -1., -2., -3., -4., -5.]])
+    candidate = torch.full_like(ref, 8.)
+    row = compare_logits(ref, candidate)[0]
+    assert row["candidate_id"] == candidate.argmax().item() == 0
+    assert row["top1_match"] and not row["ordered_topk_top1_match"]
+    assert row["candidate_top1_ties"] == 8
+
+
+def test_top3_includes_equal_probability_at_cutoff():
+    ref = torch.tensor([[8., 6., 5., 5., 0., -1.]])
+    candidate = torch.tensor([[0., 1., 2., 8., 0., -1.]])
+    assert compare_logits(ref, candidate)[0]["in_top3"]
