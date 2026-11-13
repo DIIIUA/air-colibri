@@ -1,7 +1,7 @@
 """OLMoE adapter preserving the installed Transformers eager mathematical graph.
 
-Only the expert weight indexing surface is adapted. Original AirLLM subset
-reads supply selected experts; original Colibri C decides bounded RAM admission.
+Original AirLLM subset reads supply weights; original Colibri C decides bounded
+expert RAM admission. Optional Dense/expert streaming shares the existing Ring.
 This does not claim native Colibri CUDA math or a new fused MoE kernel.
 """
 from collections import defaultdict, deque
@@ -22,10 +22,13 @@ from src.upstream_bridge import AirLLMReader, NativeTierPolicy
 
 class IndexedAirLLMProvider:
     """Map checkpoint-index keys to original AirLLM load_layer_subset calls."""
-    def __init__(self, model_dir, source):
+    def __init__(self, model_dir, source, io_backend=None):
         self.folder = Path(model_dir)
         self.index = json.loads((self.folder / "model.safetensors.index.json").read_text())["weight_map"]
-        self.reader = AirLLMReader(source)
+        # Windows mmap/get_tensor produced native access violations before
+        # tensors could be cloned. Select safetensors' existing per-tensor
+        # pread backend while keeping the original AirLLM subset function.
+        self.reader = AirLLMReader(source, io_backend=io_backend or ("pread" if os.name=="nt" else "mmap"))
 
     def read(self, keys):
         by_shard = defaultdict(list)
@@ -44,7 +47,7 @@ class IndexedAirLLMProvider:
 
 
 class ExpertStore:
-    def __init__(self, provider, config, device, dtype, ram_bytes, native_dll=None, native_mode="apply"):
+    def __init__(self, provider, config, device, dtype, ram_bytes, native_dll=None, native_mode="apply", resources=None):
         self.provider, self.config = provider, config
         self.device, self.dtype = device, dtype
         self.expert_bytes = 3 * config.hidden_size * config.intermediate_size * torch.empty((), dtype=dtype).element_size()
@@ -57,6 +60,8 @@ class ExpertStore:
             self.cache.on_placement = self.policy.acknowledge
         self.active_key = None
         self.active = None
+        self.resources = resources
+        self.lease = None
         self.reads = self.logical_h2d_bytes = self.expert_calls = 0
         self.on_access = None
 
@@ -83,6 +88,15 @@ class ExpertStore:
         if self.on_access:
             self.on_access(layer, expert)
         host = self.host_weights(layer, expert)
+        if self.resources is not None:
+            payload = {"expert.gate_up_proj":torch.cat((host["gate_proj"], host["up_proj"]), dim=0),
+                       "expert.down_proj":host["down_proj"]}
+            self.lease, views = self.resources.acquire(1, ("expert", layer, expert), payload)
+            self.active = {name.removeprefix("expert."):value for name, value in views.items()}
+            self.active_key = (layer, expert)
+            self.expert_calls += 1
+            self.logical_h2d_bytes += self.expert_bytes
+            return
         # Copies and consumers use the same current stream. No slot is
         # overwritten; PyTorch owns allocations until queued consumers finish.
         gate = host["gate_proj"].to(self.device)
@@ -103,6 +117,9 @@ class ExpertStore:
     def release(self):
         self.active = None
         self.active_key = None
+        if self.lease is not None:
+            self.resources.release(self.lease)
+            self.lease = None
 
     def close(self):
         if self.device.type == "cuda":
@@ -130,11 +147,18 @@ def install_expert_views(experts, store, layer):
 
 class AirColibriOLMoE:
     def __init__(self, model_dir, airllm_source, native_dll=None, ram_bytes=256 * 2**20,
-                 device="cuda", dtype=torch.bfloat16, full_expert_baseline=False, native_mode="apply"):
+                 device="cuda", dtype=torch.bfloat16, full_expert_baseline=False, native_mode="apply",
+                 stream_dense=False, io_backend=None):
+        if stream_dense and full_expert_baseline:
+            raise ValueError("Full-expert oracle and shared streaming are distinct modes")
         self.native_mode = native_mode
+        self.stream_dense = stream_dense
         self.device, self.dtype = torch.device(device), dtype
         self.handles = []
         self.model = self.store = None
+        self.resources = None
+        self.dense_lease = None
+        self.dense_specs = []
         self.failed = False
         try:
             self.config = AutoConfig.from_pretrained(model_dir)
@@ -142,12 +166,26 @@ class AirColibriOLMoE:
                 raise ValueError("OLMoE checkpoint required")
             self.config._experts_implementation = "eager"
             self.config._attn_implementation = "eager"
-            self.provider = IndexedAirLLMProvider(model_dir, airllm_source)
+            self.provider = IndexedAirLLMProvider(model_dir, airllm_source, io_backend=io_backend)
             self.tokenizer = AutoTokenizer.from_pretrained(model_dir)
             with init_empty_weights():
                 self.model = AutoModelForCausalLM.from_config(self.config)
             self.model.eval()
-            self.store = ExpertStore(self.provider, self.config, self.device, dtype, ram_bytes, native_dll, native_mode)
+            if stream_dense:
+                from src.shared_resources import SharedWeightResources
+                templates = {}
+                for layer in self.model.model.layers:
+                    specs = {name:tuple(p.shape) for name,p in layer.named_parameters() if ".experts." not in name}
+                    if self.dense_specs and specs != self.dense_specs[0]:
+                        raise ValueError("Shared OLMoE Ring requires homogeneous Dense layouts")
+                    self.dense_specs.append(specs)
+                templates.update({"dense."+name:(shape,dtype) for name,shape in self.dense_specs[0].items()})
+                c = self.config
+                templates.update({"expert.gate_up_proj":((2*c.intermediate_size,c.hidden_size),dtype),
+                                  "expert.down_proj":((c.hidden_size,c.intermediate_size),dtype)})
+                self.resources = SharedWeightResources(templates, self.device, dtype)
+            self.store = ExpertStore(self.provider, self.config, self.device, dtype, ram_bytes, native_dll, native_mode,
+                                     resources=self.resources)
             self.trace = TraceContract(self.config.num_hidden_layers)
             self.store.on_access = lambda layer, expert: self.trace.component_called(layer, f"expert:{expert}", expert=expert)
             self._router_choices = deque(maxlen=4096)
@@ -157,13 +195,19 @@ class AirColibriOLMoE:
             for name, parameter in list(self.model.named_parameters()):
                 if ".experts." in name:
                     continue
+                if stream_dense and name.startswith("model.layers."):
+                    continue
                 value = self.provider.read([name])[name].to(device=self.device, dtype=dtype)
                 set_module_tensor_to_device(self.model, name, self.device, value=value, clear_cache=False)
             del value
             for i, layer in enumerate(self.model.model.layers):
                 self.handles.append(layer.register_forward_pre_hook(lambda m, a, idx=i: self.trace.enter_layer(idx)))
+                if stream_dense:
+                    self.handles.append(layer.register_forward_pre_hook(lambda m, a, idx=i: self._load_dense(m, idx)))
                 def leave(m, a, o, idx=i):
                     self.store.release()
+                    if self.stream_dense:
+                        self._release_dense(m, idx)
                     self.trace.leave_layer(idx)
                 self.handles.append(layer.register_forward_hook(leave))
                 def routed(m, a, output, idx=i):
@@ -185,6 +229,21 @@ class AirColibriOLMoE:
     def router_choices(self):
         """Bounded diagnostic tail; aggregate counts remain in the trace."""
         return list(self._router_choices)
+
+    def _load_dense(self, layer, index):
+        prefix = f"model.layers.{index}."
+        raw = self.provider.read([prefix+name for name in self.dense_specs[index]])
+        # Own a bounded transient payload; never retain multi-GB mapping views.
+        payload = {"dense."+name:raw[prefix+name].to(dtype=self.dtype, copy=True) for name in self.dense_specs[index]}
+        self.dense_lease, views = self.resources.acquire(0, ("dense", index), payload)
+        for name in self.dense_specs[index]:
+            set_module_tensor_to_device(layer, name, self.device, value=views["dense."+name], dtype=self.dtype, clear_cache=False)
+
+    def _release_dense(self, layer, index):
+        for name in self.dense_specs[index]:
+            set_module_tensor_to_device(layer, name, "meta", clear_cache=False)
+        self.resources.release(self.dense_lease)
+        self.dense_lease = None
 
     def _materialize_all(self, module, layer):
         c = self.config
@@ -224,6 +283,9 @@ class AirColibriOLMoE:
         if self.store:
             self.store.close()
         self.model = None
+        self.dense_lease = None
+        if self.resources:
+            self.resources.close()
         gc.collect()
         if self.device.type == "cuda":
             torch.cuda.empty_cache()

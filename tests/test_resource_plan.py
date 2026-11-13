@@ -26,3 +26,13 @@ def test_impossible_budget_rejected_before_model_allocation():
     p=make_plan(ROOT/"models/deepseek-v4-9b-colibri",weight_format="bf16",slots=3,ram_gib=1,vram_gib=1)
     with pytest.raises(MemoryError):
         p.validate(available_vram=8*GIB,available_ram=8*GIB,commit_available=32*GIB)
+
+
+def test_shared_moe_plan_fits_budget_that_rejects_resident_dense():
+    model=ROOT/"models/OLMoE-1B-7B-0125-Instruct"
+    shared=make_plan(model,vram_gib=1.2,cache_mib=64,moe_placement="streamed")
+    resident=make_plan(model,vram_gib=1.2,cache_mib=64,moe_placement="resident")
+    shared.validate(available_vram=8*GIB,available_ram=8*GIB,commit_available=32*GIB)
+    with pytest.raises(MemoryError,match="VRAM"):
+        resident.validate(available_vram=8*GIB,available_ram=8*GIB,commit_available=32*GIB)
+    assert shared.pinned_bytes>0 and shared.gpu_weight_bytes<resident.gpu_weight_bytes

@@ -10,19 +10,20 @@
 | P3 — full Dense | Qwen 9B tested with logits and recurrent/KV state | Independent reference against the current revision; longer prefill/decode and contexts |
 | P4 — original native mechanism | Original C `tier.h` affects real RAM retention | Complete native CUDA executor/interoperability |
 | P5 — common placement | Native RAM admission across the cache of one runtime, with backend ACKs | Catalog-to-plan-to-actuation loop; shared Dense/expert/state byte budgets; GPU residency and cancellation |
-| P6 — full MoE | OLMoE BF16 with real router and original forward; non-expert weights resident on GPU | Stream the Dense trunk and experts in the same model through shared resource ownership; other families |
+| P6 — full MoE | OLMoE BF16 Dense trunk and experts share a two-slot Ring/ACK path; short independent-reference parity under a constrained allocator budget | Dynamic residency, growing state accounting, long-run reliability; other families |
 | P7 — quality | BF16 repeatability; 960-position Q4-g64 evaluation failed strict acceptance | Localize quantization error; improve on separate development data; fresh held-out reevaluation |
 | P8 — practical benefit | Five repeated local policy A/B pairs | Physical I/O, cold/warm, TTFT, standalone comparisons |
 | P9 — product path | One experimental CLI, provenance and resource guards | Largest-object limits, larger checkpoints, hardware portability, packaging and API |
 
 ## Order of work
 
-1. Validate the current revision against an independent reference. Historical
-   three-prompt HF comparisons and current same-runtime BF16 repeatability are
-   different evidence; neither substitutes for a current matched reference run.
-2. Unify resource ownership for the Dense trunk and experts within one supported
-   MoE model. Use a constrained VRAM budget that actually requires trunk streaming.
-   Reuse the existing readers and lifetime mechanisms; preserve router choices.
+1. Extend independent-reference coverage: the new OLMoE shared path has exact
+   logits/router/KV parity on two short contexts. Qwen and long contexts remain
+   open. Historical same-runtime repeatability is a separate check.
+2. Build on the verified two-slot Dense/expert ownership path. Account for
+   globals, growing state, host transients and queues before dynamic placement.
+   Perform longer pressure tests of the pread mitigation for two mmap reader
+   crashes; successful reruns do not establish the underlying native defect.
 3. Measure expert reuse, memory and physical I/O. Introduce common byte/lifetime
    reservations and plan generations in shadow mode, then apply one real GPU
    placement operation with backend ACKs and off/on logits/state parity.
@@ -39,11 +40,12 @@
 The original goal extends beyond two model adapters behind one launcher.
 These items remain explicit work, rather than capabilities inferred from names:
 
-- **One Dense/MoE resource backend.** The OLMoE adapter currently loads every
-  non-expert parameter onto the GPU. Expert `prepare()` uses `.to()` and
-  `torch.cat`; it does not use the Dense GPU Ring or its GPU lease ACK adapter.
-  Its RAM cache does not avoid repeated expert H2D. A hot GPU expert cache needs
-  its own verified reservations, eviction and last-consumer fences.
+- **One Dense/MoE resource backend: first slice implemented.** OLMoE now reuses
+  the pinned pool, GPU Ring and lease ACK adapter for both layer Dense weights
+  and experts. A Dense lease and one expert lease coexist in a fixed two-slot
+  arena. Globals remain resident; expert RAM admission remains separate from
+  transient Dense staging. Repeated expert H2D is still present. A hot GPU cache
+  needs verified placement decisions, eviction and last-consumer fences.
 - **A closed placement loop.** `catalog_bridge` reuses `CrossLayerPlanMap` for
   metadata and observations. It explicitly reports no physical residency change.
   `shadow_policy.shadow_replan` is outside the CLI import graph; CLI `--policy
@@ -75,9 +77,10 @@ system hard quota or a complete live ledger of RAM, pinned, VRAM, native
 allocations, activations and growing state. An independent setup and hardware
 matrix, including smaller GPUs, remain necessary before broader claims.
 
-The review used the existing source corpus and current code/evidence. It did
-not run another GPU experiment. Historical reports and private chat material
-remain local; published findings are limited to implementation scope and gates.
+The historical review itself used existing evidence. Its first implementation
+follow-up ran new real OLMoE/CUDA tests, documented in the
+[shared MoE report](SHARED_MOE_RESULTS_2026-11-13.md). Historical reports and
+private chat material remain local; earlier PASS/FAIL/crash records are retained.
 
 MTP, GGUF, Vulkan, arbitrary models and an OpenAI-compatible service are
 possible future directions, **not current AirColibri capabilities**. Upstream

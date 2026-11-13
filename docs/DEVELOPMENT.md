@@ -72,6 +72,19 @@ admission, `apply` actual native admission. Dense additionally accepts
 MoE currently requires sequential/enforce. Raw prompts are used; no chat
 template is added automatically.
 
+OLMoE defaults to `--moe-placement streamed`: two slots from one existing GPU
+Ring hold the current Dense trunk and current expert, with the same pinned pool
+and CUDA lease ACKs. Layer parameters return to meta after their consumers.
+Embedding, final norm and output head stay resident. `--moe-placement resident`
+selects the previous Dense-resident/expert-copy path for comparisons. The
+low-level `AirColibriOLMoE` API retains its previous default; pass
+`stream_dense=True` explicitly outside the CLI.
+
+Windows OLMoE defaults to safetensors `pread` after native crashes were localized
+to mmap storage construction. `--moe-read-backend auto|pread|mmap` controls this;
+auto uses mmap on other platforms. The original AirLLM function is bound to a
+private backend configuration, without changing upstream source or globals.
+
 The startup plan estimates cache, pinned/transient weights and runtime/state/scratch
 space; it is not a live reservation ledger. Startup requires at least 2.8 GiB
 available RAM, plus the plan's requirements and Windows commit headroom.
@@ -118,3 +131,13 @@ scripts use the documented local fixture layout and may need path adaptation.
 They are research probes, not general model-management tools.
 Raw logits and local outputs remain under ignored `data` paths;
 selected portable summaries are published under `docs/evidence`.
+
+Shared-resource tests are in `tests/test_shared_resources.py`. The independent
+reference in `scripts/reference_olmoe.py` reads safetensors directly and stages
+all experts of one layer in original HF modules; it imports no AirColibri
+reader, cache or Ring. It is a verification harness, not a production loader.
+Run `scripts/verify_shared_moe.py` in separate processes with `--mode reference`,
+`resident` and `streamed`, unique `--case` names, explicit model/source paths and
+an adequate `--vram-gib`. `--native` applies to candidate modes. Compare completed
+artifacts using `scripts/compare_shared_moe.py`; a partial run cannot pass.
+Use Python `-X faulthandler` and preserve logs when investigating native faults.

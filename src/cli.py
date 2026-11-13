@@ -35,6 +35,10 @@ def main():
     p.add_argument("--ram-gib", type=float, default=4)
     p.add_argument("--vram-gib", type=float, default=5)
     p.add_argument("--cache-mib", type=int, default=256)
+    p.add_argument("--moe-placement", choices=["streamed","resident"], default="streamed",
+                   help="OLMoE: shared Dense/expert Ring, or historical resident Dense baseline")
+    p.add_argument("--moe-read-backend", choices=["auto","mmap","pread"], default="auto",
+                   help="OLMoE safetensors reads: auto selects pread on Windows, mmap elsewhere")
     p.add_argument("--prompt", default="Hello")
     p.add_argument("--max-new-tokens", type=int, default=8)
     p.add_argument("--airllm-source", default=default_airllm_source())
@@ -71,13 +75,15 @@ def main():
     ids = tokenizer(args.prompt, return_tensors="pt")["input_ids"]
     slots = {"sequential":1, "double_buffer":2, "triple_ring_prefetch":3}[args.pipeline]
     plan = make_plan(model_dir, args.weight_format, args.group_size, slots,
-        args.ram_gib,args.vram_gib,args.cache_mib,args.policy,ids.shape[1]+args.max_new_tokens)
+        args.ram_gib,args.vram_gib,args.cache_mib,args.policy,ids.shape[1]+args.max_new_tokens,
+        moe_placement=args.moe_placement)
     if args.action == "plan":
         print(json.dumps(plan.as_dict(),indent=2)); return
     report = dict(status="STARTED", plan=plan.as_dict(), prompt=args.prompt, input_ids=ids.tolist(),
                   weight_format=args.weight_format, policy=args.policy, control=args.control,
                   capabilities=dict(native_c_ram_admission=args.policy!="off", native_colibri_model_math=False,
-                    original_airllm_subset_reader=True, dynamic_vram_placement=False, asynchronous_prefetch_cancel=False),
+                    original_airllm_subset_reader=True, dynamic_vram_placement=False, asynchronous_prefetch_cancel=False,
+                    shared_dense_expert_ring=args.model=="olmoe" and args.moe_placement=="streamed"),
                   q4_quality="EXPERIMENTAL; historical strict BF16 quality gate not passed" if args.weight_format=="q4" else "unquantized BF16 compute; Qwen checkpoint F16, OLMoE checkpoint BF16")
     report["provenance"] = dict(
         model_dir=str(model_dir),
@@ -116,8 +122,11 @@ def main():
             from src.olmoe_integrated import AirColibriOLMoE
             runtime=AirColibriOLMoE(model_dir,args.airllm_source,
                 native_dll=args.native_library if args.policy!="off" else None,
-                native_mode=args.policy if args.policy!="off" else "apply",ram_bytes=plan.ram_cache_bytes)
+                native_mode=args.policy if args.policy!="off" else "apply",ram_bytes=plan.ram_cache_bytes,
+                stream_dense=args.moe_placement=="streamed",
+                io_backend=None if args.moe_read_backend=="auto" else args.moe_read_backend)
             cache=runtime.store.cache
+            report["airllm_io_backend"]=runtime.provider.reader.io_backend
         report["initialization_seconds"]=time.perf_counter()-start
         active_policy = runtime.native_policy if args.model=="qwen9b" else runtime.store.policy
         if active_policy:
@@ -158,8 +167,11 @@ def main():
                 report["lease_event_counts"]=dict(runtime.ack_adapter.event_counts)
             if runtime.native_policy:
                 report["native_policy"]=runtime.native_policy.stats
-        elif runtime.store.policy:
-            report["native_policy"]=runtime.store.policy.stats
+        else:
+            if runtime.store.policy:
+                report["native_policy"]=runtime.store.policy.stats
+            if runtime.resources:
+                report["shared_resources"] = runtime.resources.snapshot()
     except KeyboardInterrupt:
         report.update(status="CANCELLED",reason="User interrupted at current operation")
     except Exception as exc:

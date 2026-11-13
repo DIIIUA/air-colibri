@@ -56,7 +56,7 @@ Bounded RAM cache ◄──── original Colibrì C tier.h policy
           │                   │
           │              admission + ACK
           ▼
-Dense: pinned slots / GPU Ring     MoE: selected expert weights
+Dense: pinned slots / GPU Ring     MoE: shared Ring for trunk + experts
           │                                   │
           └──────── original Transformers forward ────────┘
                               │
@@ -72,7 +72,7 @@ the full native Colibrì CUDA executor is **not** the integrated math backend.
 | Path | Implemented and locally checked | Boundary |
 |---|---|---|
 | Dense Qwen3.5-9B | Full forward, BF16 / experimental Q4, 1–3 ring slots, tail-to-head prefetch | Only the tested `qwen3_5_text` checkpoint/layout |
-| OLMoE-1B-7B | Original router and eager expert forward; selective expert reads | BF16, sequential expert adapter |
+| OLMoE-1B-7B | Original router/forward; Dense trunk and selected experts share pinned slots, GPU Ring and lease ACKs | BF16, fixed two-slot sequential placement; globals remain resident |
 | Native Colibrì C | ABI-v1 bridge to original `tier.h`; bounded global RAM admission | Not native model math or general GPU residency |
 | Lifecycle | CUDA fences, pre-write guards, byte budgets, placement ACKs, error/reopen checks | No integrated asynchronous prefetch cancellation |
 | CLI | `doctor`, `plan`, `run`; policy off/shadow/apply; JSON report | Research/developer interface, not a packaged service |
@@ -82,6 +82,11 @@ GGUF, Vulkan, arbitrary models, an API server or interactive chat service.
 
 ### Latest measured snapshot — 13 November 2026
 
+* A [shared Dense/expert Ring](docs/SHARED_MOE_RESULTS_2026-11-13.md) matched an
+  independent direct-safetensors/HF reference: all **301,824 logits**, router
+  choices and KV-state hashes were exact across six forwards in two short contexts.
+  Torch peak allocated memory was **496.25 MiB**, versus **940.42 MiB** in the
+  resident-Dense adapter. This is an allocator-memory result, not a speed claim.
 * Full logits and recurrent/KV state matched bit-for-bit between the tested
   off/observe/apply configurations. MoE router choices also matched the reference.
 * In five paired MoE runs of eight steps, native admission reduced expert reads
@@ -125,15 +130,17 @@ or the explicit `--report` path.
 - [x] Verify full Dense 9B and MoE 7B logits, state and actual routing.
 - [x] Add a single experimental CLI, budgets, lifecycle guards and repeatable probes.
 - [ ] Pass strict Q4 quality acceptance on a sufficient held-out set.
-- [ ] Stream the Dense trunk and selected experts of one MoE through shared resource ownership.
+- [x] Stream the Dense trunk and selected experts of OLMoE through a shared Ring and lease ACKs.
 - [ ] Integrate a general byte/lifetime planner for GPU residency and cancellation.
 - [ ] Connect and verify the complete native Colibrì executor where compatible.
 - [ ] Measure cold/warm I/O, startup latency, long runs and standalone baselines.
 - [ ] Validate larger checkpoints and an independent setup.
 
-The current MoE adapter keeps non-expert weights resident on GPU and copies
-experts on demand. Native admission controls RAM retention; it does not yet
-provide a hot-expert GPU cache. Progressive CPU/GPU migration and phase-based
+The default MoE CLI path streams layer Dense weights and experts through two
+shared slots. Embeddings, final norm and output head remain resident. The
+historical adapter is available with `--moe-placement resident` for comparisons.
+Native admission controls expert RAM retention; it does not yet provide a
+hot-expert GPU cache. Progressive CPU/GPU migration and phase-based
 placement remain research work. The [roadmap](docs/ROADMAP.md) records these
 original goals separately from the integration already tested.
 

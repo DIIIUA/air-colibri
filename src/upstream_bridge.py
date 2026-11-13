@@ -10,10 +10,14 @@ import hashlib
 import importlib
 import json
 import sys
+from functools import partial
+from types import FunctionType
 
 
 class AirLLMReader:
-    def __init__(self, source):
+    def __init__(self, source, io_backend=None):
+        if io_backend not in (None, "mmap", "pread"):
+            raise ValueError("Unsupported safetensors I/O backend")
         self.source = Path(source).resolve()
         package = self.source / "air_llm"
         if not (package / "airllm/utils.py").is_file():
@@ -26,6 +30,20 @@ class AirLLMReader:
         if Path(module.__file__).resolve() != (package / "airllm/utils.py").resolve():
             raise RuntimeError("A different AirLLM version is already loaded")
         self.read = module.load_layer_subset
+        self.io_backend = io_backend or "upstream-default"
+        if io_backend is not None:
+            # Keep upstream bytecode and source intact. Bind safe_open in a
+            # private function namespace, so other readers/threads are not
+            # affected by process-global monkeypatching. No parsing or tensor
+            # loading algorithm is reimplemented here.
+            original = self.read
+            if not isinstance(original, FunctionType) or "safe_open" not in original.__code__.co_names:
+                raise TypeError("Expected original Python subset reader using safe_open")
+            namespace = dict(original.__globals__)
+            namespace["safe_open"] = partial(namespace["safe_open"], backend=io_backend)
+            self.read = FunctionType(original.__code__, namespace, original.__name__,
+                                     original.__defaults__, original.__closure__)
+            self.read.__kwdefaults__ = original.__kwdefaults__
         self.calls = 0
         self.logical_bytes = 0
 

@@ -73,6 +73,7 @@ class RuntimePlan:
     ram_estimate_bytes: int
     vram_estimate_bytes: int
     policy: str
+    weight_placement: str = "dense-ring"
 
     def as_dict(self):
         return asdict(self)
@@ -93,7 +94,8 @@ class RuntimePlan:
 
 
 def make_plan(model_dir, weight_format="bf16", group_size=64, slots=1,
-              ram_gib=4, vram_gib=5, cache_mib=256, policy="off", sequence_tokens=64):
+              ram_gib=4, vram_gib=5, cache_mib=256, policy="off", sequence_tokens=64,
+              moe_placement="streamed"):
     folder = Path(model_dir).resolve()
     config = json.loads((folder / "config.json").read_text(encoding="utf-8"))
     kind = config["model_type"]
@@ -148,15 +150,41 @@ def make_plan(model_dir, weight_format="bf16", group_size=64, slots=1,
     else:
         if weight_format != "bf16":
             raise ValueError("OLMoE adapter supports original BF16 weights")
+        if moe_placement not in ("streamed", "resident"):
+            raise ValueError("Unsupported OLMoE weight placement")
         pinned = 0
         dense_bytes = 0
+        globals_bytes = 0
+        layer_bytes = {}
+        templates = {}
         for f in files:
             for name,meta in tensor_headers(f).items():
                 if ".experts." not in name:
-                    dense_bytes += math.prod(meta["shape"])*2
+                    size = math.prod(meta["shape"])*2
+                    dense_bytes += size
+                    if name.startswith("model.layers."):
+                        _, _, index, local = name.split(".", 3)
+                        layer_bytes[index] = layer_bytes.get(index, 0)+size
+                        key = "dense."+local
+                        shape = tuple(meta["shape"])
+                        if key in templates and templates[key] != shape:
+                            raise ValueError("Heterogeneous OLMoE Dense layouts are unsupported")
+                        templates[key] = shape
+                    else:
+                        globals_bytes += size
         expert_bytes = 3*config["hidden_size"]*config["intermediate_size"]*2
-        gpu_weights = dense_bytes+expert_bytes*2
+        if moe_placement == "streamed":
+            from src.bounded_memory_manager import SlotArenaLayout
+            import torch
+            templates.update({"expert.gate_up_proj":(2*config["intermediate_size"], config["hidden_size"]),
+                              "expert.down_proj":(config["hidden_size"], config["intermediate_size"])})
+            pinned = 2*SlotArenaLayout.from_templates(templates, dtype=torch.bfloat16).slot_stride
+            gpu_weights = globals_bytes+pinned
+        else:
+            gpu_weights = dense_bytes+expert_bytes*2
         host_transient = max(expert_bytes*2,config["vocab_size"]*config["hidden_size"]*2)
+        host_transient = max(host_transient, max(layer_bytes.values(),default=0))
     ram_estimate = runtime+cache+pinned+host_transient
     return RuntimePlan(kind,config["num_hidden_layers"],total,largest,int(ram_gib*GIB),int(vram_gib*GIB),
-        cache,pinned,gpu_weights,host_transient,runtime,scratch,ram_estimate,gpu_weights+scratch,policy)
+        cache,pinned,gpu_weights,host_transient,runtime,scratch,ram_estimate,gpu_weights+scratch,policy,
+        "shared-dense-expert-ring" if kind=="olmoe" and moe_placement=="streamed" else "resident-dense-expert-copies" if kind=="olmoe" else "dense-ring")
