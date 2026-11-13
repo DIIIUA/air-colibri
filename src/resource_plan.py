@@ -74,6 +74,8 @@ class RuntimePlan:
     vram_estimate_bytes: int
     policy: str
     weight_placement: str = "dense-ring"
+    gpu_expert_slots: int = 0
+    gpu_expert_reservation_bytes: int = 0
 
     def as_dict(self):
         return asdict(self)
@@ -95,12 +97,16 @@ class RuntimePlan:
 
 def make_plan(model_dir, weight_format="bf16", group_size=64, slots=1,
               ram_gib=4, vram_gib=5, cache_mib=256, policy="off", sequence_tokens=64,
-              moe_placement="streamed"):
+              moe_placement="streamed", gpu_expert_slots=0):
     folder = Path(model_dir).resolve()
     config = json.loads((folder / "config.json").read_text(encoding="utf-8"))
     kind = config["model_type"]
     if kind not in ("qwen3_5_text", "olmoe"):
         raise ValueError("Supported architectures: qwen3_5_text and olmoe")
+    if gpu_expert_slots not in (0,1,2):
+        raise ValueError("GPU expert slots must be 0, 1 or 2")
+    if gpu_expert_slots and (kind!="olmoe" or moe_placement!="streamed"):
+        raise ValueError("GPU expert residency requires shared OLMoE streaming")
     if min(ram_gib, vram_gib) <= 0 or cache_mib < 0 or not 1 <= slots <= 4 or sequence_tokens < 1:
         raise ValueError("Invalid resource budget")
     files = list(folder.glob("model-*.safetensors"))
@@ -114,6 +120,7 @@ def make_plan(model_dir, weight_format="bf16", group_size=64, slots=1,
     attention_bytes = config["num_attention_heads"]*sequence_tokens*sequence_tokens*4
     scratch = max(512*MIB, logits_bytes*2+attention_bytes+128*MIB)
     cache = int(cache_mib*MIB)
+    gpu_expert_reservation = 0
     if kind == "qwen3_5_text":
         if weight_format not in ("bf16", "q4") or group_size not in (16,32,64):
             raise ValueError("Unsupported Qwen weight format/group")
@@ -178,7 +185,9 @@ def make_plan(model_dir, weight_format="bf16", group_size=64, slots=1,
             import torch
             templates.update({"expert.gate_up_proj":(2*config["intermediate_size"], config["hidden_size"]),
                               "expert.down_proj":(config["hidden_size"], config["intermediate_size"])})
-            pinned = 2*SlotArenaLayout.from_templates(templates, dtype=torch.bfloat16).slot_stride
+            stride = SlotArenaLayout.from_templates(templates, dtype=torch.bfloat16).slot_stride
+            pinned = (2+gpu_expert_slots)*stride
+            gpu_expert_reservation = gpu_expert_slots*stride
             gpu_weights = globals_bytes+pinned
         else:
             gpu_weights = dense_bytes+expert_bytes*2
@@ -187,4 +196,5 @@ def make_plan(model_dir, weight_format="bf16", group_size=64, slots=1,
     ram_estimate = runtime+cache+pinned+host_transient
     return RuntimePlan(kind,config["num_hidden_layers"],total,largest,int(ram_gib*GIB),int(vram_gib*GIB),
         cache,pinned,gpu_weights,host_transient,runtime,scratch,ram_estimate,gpu_weights+scratch,policy,
-        "shared-dense-expert-ring" if kind=="olmoe" and moe_placement=="streamed" else "resident-dense-expert-copies" if kind=="olmoe" else "dense-ring")
+        "shared-dense-expert-ring" if kind=="olmoe" and moe_placement=="streamed" else "resident-dense-expert-copies" if kind=="olmoe" else "dense-ring",
+        gpu_expert_slots,gpu_expert_reservation)

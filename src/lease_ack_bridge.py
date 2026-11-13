@@ -41,7 +41,8 @@ class ExistingRingAcknowledgementAdapter:
     if unfinished, because the ORIGINAL transfer stream waits on that event.
     """
     METHOD_NAMES = ("get_slot_for_loading", "load_tensors_async",
-                    "acquire_slot_for_compute", "release_slot_after_compute")
+                    "acquire_slot_for_compute", "release_slot_after_compute",
+                    "acquire_resident_for_compute")
 
     def __init__(self, backend: GPURingPipeline,
                  on_event: Callable[[dict], None] | None = None):
@@ -139,6 +140,7 @@ class ExistingRingAcknowledgementAdapter:
             self.backend.load_tensors_async = self.load_tensors_async
             self.backend.acquire_slot_for_compute = self.acquire_slot_for_compute
             self.backend.release_slot_after_compute = self.release_slot_after_compute
+            self.backend.acquire_resident_for_compute = self.acquire_resident_for_compute
             self._attached = True
             return self
 
@@ -265,6 +267,27 @@ class ExistingRingAcknowledgementAdapter:
                 lease.compute_done_confirmed = True
                 lease.phase = "FREE"
                 self._write_event("cpu_compute_released", lease)
+
+    def acquire_resident_for_compute(self, layer_idx: int, previous_layer_idx: int):
+        with self._lock:
+            lease, slot = self._resolve(layer_idx)
+            self.poll(lease.slot_id)
+            if (lease.phase not in ("FREE", "RELEASE_QUEUED")
+                    or lease.layer_idx != previous_layer_idx or not slot.loaded_keys):
+                self._reject("Resident acquire requires matching released content")
+            if self.backend.device.type == "cuda" and not (lease.dma_event_issued and lease.compute_event_issued):
+                self._reject("Resident acquire requires real DMA and previous consumer fences")
+            actual = self.originals["acquire_resident_for_compute"](layer_idx, previous_layer_idx)
+            if actual is not slot:
+                self._reject("Foreign resident slot")
+            lease.generation += 1
+            lease.layer_idx = layer_idx
+            lease.phase = "COMPUTING"
+            lease.compute_wait_issued = True
+            lease.compute_event_issued = False
+            lease.compute_done_confirmed = False
+            self._write_event("resident_compute_dependency_enqueued", lease, new_dma=False)
+            return actual
 
     def snapshot(self):
         with self._lock:

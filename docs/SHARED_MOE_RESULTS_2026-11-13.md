@@ -1,5 +1,9 @@
 # Shared OLMoE Dense/expert resources — 13 November 2026
 
+This is the first-stage snapshot. A later [bounded GPU expert cache experiment](GPU_EXPERT_CACHE_RESULTS_2026-11-13.md)
+adds optional retention and measures excluded H2D; the original results below
+remain the history of the two-slot implementation.
+
 **Experimental integration.** The default OLMoE CLI path now streams the Dense
 weights of each decoder layer and its selected experts through the existing
 AirColibri pinned pool, GPU Ring and CUDA lease acknowledgement adapter.

@@ -45,7 +45,7 @@ automatic conversion of arbitrary Qwen layouts is not provided here.
 Choose `--model-dir` explicitly. The lab-compatible default Qwen directory
 has an old DeepSeek name; the runtime checks the architecture in config.
 
-## Native RAM policy
+## Native admission policy
 
 Build the small bridge with installed MSVC Build Tools and `vswhere`:
 
@@ -56,7 +56,8 @@ Build the small bridge with installed MSVC Build Tools and `vswhere`:
 This compiles a thin shim against the original `c/tier.h`, not a replacement
 implementation or the full CUDA engine. The output DLL and SHA/ABI provenance
 manifest live in `data/native`. Keep both together. No binary is distributed.
-`--policy off` does not require the bridge; `shadow` and `apply` do.
+`--policy off` does not require the bridge when GPU retention is also disabled;
+RAM `shadow`/`apply` and any nonzero `--gpu-expert-slots` require it.
 
 ## Run
 
@@ -79,6 +80,24 @@ Embedding, final norm and output head stay resident. `--moe-placement resident`
 selects the previous Dense-resident/expert-copy path for comparisons. The
 low-level `AirColibriOLMoE` API retains its previous default; pass
 `stream_dense=True` explicitly outside the CLI.
+
+Optional `--gpu-expert-slots 1|2` adds dedicated expert slots to this same Ring.
+The default is `0`. It requires streamed OLMoE and the native tier library, even
+when RAM `--policy` is off. GPU admission uses a separate policy instance.
+`--gpu-cache-mode shadow` evolves a virtual resident set while streaming every
+expert; `apply` reuses retained tensors and skips their host supplier and DMA.
+Both modes reserve the extra GPU and pinned slots for a matched memory layout.
+Each slot currently reserves a full 46 MiB union stride for a 12 MiB expert;
+two slots add **92 MiB GPU plus 92 MiB pinned RAM**. Startup plans include this
+physical cost. This is not an automatic cache-size or global placement policy.
+
+```powershell
+.\.venv\Scripts\python.exe aircolibri.py run --model olmoe --policy apply --cache-mib 64 --ram-gib 4 --vram-gib 1.2 --gpu-expert-slots 2 --gpu-cache-mode apply --max-new-tokens 2 --report data/gpu-cache-run.json
+```
+
+Supply your model/source paths as above. `tests/test_gpu_expert_residency.py`
+covers skipped host reads/DMA, shadow behavior, stale/active leases, malformed
+admission proposals, completion ACKs and cross-stream eviction dependencies.
 
 Windows OLMoE defaults to safetensors `pread` after native crashes were localized
 to mmap storage construction. `--moe-read-backend auto|pread|mmap` controls this;
@@ -141,3 +160,7 @@ Run `scripts/verify_shared_moe.py` in separate processes with `--mode reference`
 an adequate `--vram-gib`. `--native` applies to candidate modes. Compare completed
 artifacts using `scripts/compare_shared_moe.py`; a partial run cannot pass.
 Use Python `-X faulthandler` and preserve logs when investigating native faults.
+For GPU cache comparisons, use streamed candidates with zero slots, then
+`--gpu-expert-slots 2 --gpu-cache-mode shadow` and `apply`, keeping all other
+inputs and budgets identical. With hits, `loads + resident_acquires == computes`;
+the old equality between loads and computes no longer applies.

@@ -87,16 +87,24 @@ class ExpertStore:
         self.release()
         if self.on_access:
             self.on_access(layer, expert)
-        host = self.host_weights(layer, expert)
         if self.resources is not None:
-            payload = {"expert.gate_up_proj":torch.cat((host["gate_proj"], host["up_proj"]), dim=0),
-                       "expert.down_proj":host["down_proj"]}
-            self.lease, views = self.resources.acquire(1, ("expert", layer, expert), payload)
+            def payload_supplier():
+                host = self.host_weights(layer, expert)
+                return {"expert.gate_up_proj":torch.cat((host["gate_proj"], host["up_proj"]), dim=0),
+                        "expert.down_proj":host["down_proj"]}
+            key = ("expert",layer,expert)
+            if self.resources.residency:
+                self.lease,views,h2d = self.resources.residency.acquire(
+                    layer*self.config.num_experts+expert,key,payload_supplier)
+            else:
+                self.lease,views = self.resources.acquire(1,key,payload_supplier())
+                h2d = self.expert_bytes
             self.active = {name.removeprefix("expert."):value for name, value in views.items()}
             self.active_key = (layer, expert)
             self.expert_calls += 1
-            self.logical_h2d_bytes += self.expert_bytes
+            self.logical_h2d_bytes += h2d
             return
+        host = self.host_weights(layer, expert)
         # Copies and consumers use the same current stream. No slot is
         # overwritten; PyTorch owns allocations until queued consumers finish.
         gate = host["gate_proj"].to(self.device)
@@ -148,9 +156,13 @@ def install_expert_views(experts, store, layer):
 class AirColibriOLMoE:
     def __init__(self, model_dir, airllm_source, native_dll=None, ram_bytes=256 * 2**20,
                  device="cuda", dtype=torch.bfloat16, full_expert_baseline=False, native_mode="apply",
-                 stream_dense=False, io_backend=None):
+                 stream_dense=False, io_backend=None, gpu_expert_slots=0, gpu_cache_mode="apply", gpu_native_dll=None):
         if stream_dense and full_expert_baseline:
             raise ValueError("Full-expert oracle and shared streaming are distinct modes")
+        if gpu_expert_slots not in (0,1,2) or gpu_cache_mode not in ("apply","shadow"):
+            raise ValueError("Unsupported GPU expert residency configuration")
+        if gpu_expert_slots and not stream_dense:
+            raise ValueError("GPU expert residency requires shared streaming")
         self.native_mode = native_mode
         self.stream_dense = stream_dense
         self.device, self.dtype = torch.device(device), dtype
@@ -183,7 +195,13 @@ class AirColibriOLMoE:
                 c = self.config
                 templates.update({"expert.gate_up_proj":((2*c.intermediate_size,c.hidden_size),dtype),
                                   "expert.down_proj":((c.hidden_size,c.intermediate_size),dtype)})
-                self.resources = SharedWeightResources(templates, self.device, dtype)
+                self.resources = SharedWeightResources(templates, self.device, dtype, num_slots=2+gpu_expert_slots)
+                if gpu_expert_slots:
+                    dll = gpu_native_dll or native_dll
+                    if dll is None:
+                        raise ValueError("GPU expert residency requires the native tier library")
+                    gpu_policy = NativeTierPolicy(dll,c.num_hidden_layers*c.num_experts,gpu_expert_slots,mode="apply")
+                    self.resources.enable_expert_residency(gpu_policy,gpu_cache_mode)
             self.store = ExpertStore(self.provider, self.config, self.device, dtype, ram_bytes, native_dll, native_mode,
                                      resources=self.resources)
             self.trace = TraceContract(self.config.num_hidden_layers)

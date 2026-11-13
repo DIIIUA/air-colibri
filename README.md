@@ -63,7 +63,8 @@ Dense: pinned slots / GPU Ring     MoE: shared Ring for trunk + experts
                        logits + KV/state
 ```
 
-The C bridge makes real RAM-cache admission decisions. Computation still uses
+The C bridge makes real RAM-cache admission decisions and can separately control
+an optional bounded GPU expert cache. Computation still uses
 **PyTorch/Transformers**. An isolated Colibrì CUDA-library probe passed, but
 the full native Colibrì CUDA executor is **not** the integrated math backend.
 
@@ -72,8 +73,8 @@ the full native Colibrì CUDA executor is **not** the integrated math backend.
 | Path | Implemented and locally checked | Boundary |
 |---|---|---|
 | Dense Qwen3.5-9B | Full forward, BF16 / experimental Q4, 1–3 ring slots, tail-to-head prefetch | Only the tested `qwen3_5_text` checkpoint/layout |
-| OLMoE-1B-7B | Original router/forward; Dense trunk and selected experts share pinned slots, GPU Ring and lease ACKs | BF16, fixed two-slot sequential placement; globals remain resident |
-| Native Colibrì C | ABI-v1 bridge to original `tier.h`; bounded global RAM admission | Not native model math or general GPU residency |
+| OLMoE-1B-7B | Original router/forward; Dense trunk and selected experts share pinned slots, GPU Ring and lease ACKs; optional 1–2 retained experts | BF16, sequential placement; globals remain resident; GPU cache off by default |
+| Native Colibrì C | ABI-v1 bridge to original `tier.h`; RAM admission and separate bounded GPU expert admission | Not native model math or a global placement planner |
 | Lifecycle | CUDA fences, pre-write guards, byte budgets, placement ACKs, error/reopen checks | No integrated asynchronous prefetch cancellation |
 | CLI | `doctor`, `plan`, `run`; policy off/shadow/apply; JSON report | Research/developer interface, not a packaged service |
 
@@ -82,6 +83,10 @@ GGUF, Vulkan, arbitrary models, an API server or interactive chat service.
 
 ### Latest measured snapshot — 13 November 2026
 
+* Optional [GPU expert retention](docs/GPU_EXPERT_CACHE_RESULTS_2026-11-13.md)
+  passed off/shadow/apply reference parity. Apply excluded **4 H2D transfers /
+  48 MiB** across 1,180 expert requests, while adding **92 MiB GPU + 92 MiB pinned
+  RAM** reservation. It stays **off by default**; acceleration is not established.
 * A [shared Dense/expert Ring](docs/SHARED_MOE_RESULTS_2026-11-13.md) matched an
   independent direct-safetensors/HF reference: all **301,824 logits**, router
   choices and KV-state hashes were exact across six forwards in two short contexts.
@@ -91,7 +96,7 @@ GGUF, Vulkan, arbitrary models, an API server or interactive chat service.
   off/observe/apply configurations. MoE router choices also matched the reference.
 * In five paired MoE runs of eight steps, native admission reduced expert reads
   from **1,024 to 983 (4.00%)**. Median forward time was **18.004 → 17.569 s**.
-* Expert CPU→GPU bytes were unchanged. This small **2.42% local timing change**
+* In that earlier RAM-only test, expert CPU→GPU bytes were unchanged. Its **2.42% local timing change**
   is not a general speed promise; OS file-cache state was uncontrolled.
 * Q4/off–on correctness does **not** mean Q4/BF16 quality acceptance. BF16 is
   the default. A [960-position quality evaluation](docs/Q4_RESULTS_2026-11-13.md)
@@ -131,6 +136,7 @@ or the explicit `--report` path.
 - [x] Add a single experimental CLI, budgets, lifecycle guards and repeatable probes.
 - [ ] Pass strict Q4 quality acceptance on a sufficient held-out set.
 - [x] Stream the Dense trunk and selected experts of OLMoE through a shared Ring and lease ACKs.
+- [x] Add optional bounded GPU expert retention with shadow/apply and completion ACKs.
 - [ ] Integrate a general byte/lifetime planner for GPU residency and cancellation.
 - [ ] Connect and verify the complete native Colibrì executor where compatible.
 - [ ] Measure cold/warm I/O, startup latency, long runs and standalone baselines.
@@ -139,8 +145,11 @@ or the explicit `--report` path.
 The default MoE CLI path streams layer Dense weights and experts through two
 shared slots. Embeddings, final norm and output head remain resident. The
 historical adapter is available with `--moe-placement resident` for comparisons.
-Native admission controls expert RAM retention; it does not yet provide a
-hot-expert GPU cache. Progressive CPU/GPU migration and phase-based
+`--gpu-expert-slots 1|2` additionally enables bounded expert retention through
+the same Ring; the default is zero. A separate native policy proposes GPU
+admissions, and `--gpu-cache-mode shadow|apply` selects virtual or physical
+retention. This is still an experiment with significant arena overhead.
+Progressive CPU/GPU migration and phase-based
 placement remain research work. The [roadmap](docs/ROADMAP.md) records these
 original goals separately from the integration already tested.
 
@@ -148,6 +157,7 @@ original goals separately from the integration already tested.
 
 ## 📚 Research & Reproducibility
 
+* [Bounded GPU expert cache: correctness, actual H2D reduction and memory cost](docs/GPU_EXPERT_CACHE_RESULTS_2026-11-13.md).
 * [Integration experiment report and machine-readable evidence](docs/EXPERIMENTS_2026-11-13.md).
 * [Follow-up CUDA ordering fixes and 3,072 slot reuses](docs/TESTING_2026-11-13.md).
 * [Strict Q4/BF16 quality protocol](docs/QUALITY_EVALUATION.md) and [completed results](docs/Q4_RESULTS_2026-11-13.md) — Q4-g64 did not pass acceptance.

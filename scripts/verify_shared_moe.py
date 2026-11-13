@@ -45,12 +45,16 @@ def main():
     p.add_argument("--airllm", help="Original AirLLM checkout; otherwise use the CLI local configuration")
     p.add_argument("--native", action="store_true")
     p.add_argument("--read-backend",choices=["mmap","pread"])
+    p.add_argument("--gpu-expert-slots",type=int,choices=[0,1,2],default=0)
+    p.add_argument("--gpu-cache-mode",choices=["shadow","apply"],default="apply")
     p.add_argument("--vram-gib", type=float, default=3)
     p.add_argument("--cache-mib", type=int, default=64)
     p.add_argument("--output", default=str(ROOT / "data/shared-moe-20261113"))
     a = p.parse_args()
     if not a.case or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-_" for c in a.case) or a.vram_gib <= 0:
         p.error("Invalid case/budget")
+    if a.gpu_expert_slots and a.mode!="streamed":
+        p.error("GPU cache requires streamed mode")
     dest = Path(a.output); dest.mkdir(parents=True, exist_ok=True)
     path = dest / (a.case + ".json")
     if path.exists():
@@ -92,7 +96,8 @@ def main():
             extra = {"stream_dense":True} if a.mode == "streamed" else {}
             runtime = AirColibriOLMoE(a.model, a.airllm or default_airllm_source(), ram_bytes=a.cache_mib*2**20,
                 native_dll=ROOT/"data/native/colibri_tier.dll" if a.native else None,
-                io_backend=a.read_backend, **extra)
+                io_backend=a.read_backend,gpu_expert_slots=a.gpu_expert_slots,gpu_cache_mode=a.gpu_cache_mode,
+                gpu_native_dll=ROOT/"data/native/colibri_tier.dll" if a.gpu_expert_slots else None, **extra)
             report["airllm_io_backend"]=runtime.provider.reader.io_backend
         report["initialization_seconds"] = time.perf_counter()-started
         rows, values = [], []

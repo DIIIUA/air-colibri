@@ -158,6 +158,7 @@ class GPURingPipeline:
         # Статистика конвейера
         self.total_loads = 0
         self.total_computes = 0
+        self.total_resident_acquires = 0
         self.tail_prefetches = 0
         self.h2d_overlap_time_ms = 0.0
 
@@ -263,6 +264,27 @@ class GPURingPipeline:
 
         slot.state = SlotState.FREE
         self.total_computes += 1
+
+    def acquire_resident_for_compute(self, layer_idx: int, previous_layer_idx: int) -> RingSlot:
+        """Reuse retained bytes with a fresh consumer ticket and no H2D.
+
+        Serializing successive readers through their completion events makes
+        the last consumer's fence sufficient for a subsequent overwrite.
+        """
+        slot = self.slots[layer_idx % self.num_slots]
+        if (slot.state != SlotState.FREE or slot.current_layer_idx != previous_layer_idx
+                or not slot.loaded_keys):
+            raise RuntimeError("Resident acquire requires matching released content")
+        if self.device.type == "cuda":
+            consumer = torch.cuda.current_stream(self.device)
+            consumer.wait_event(slot.transfer_done_event)
+            consumer.wait_event(slot.compute_done_event)
+            slot.consumer_stream = consumer
+            self.compute_stream = consumer
+        slot.current_layer_idx = layer_idx
+        slot.state = SlotState.COMPUTING
+        self.total_resident_acquires += 1
+        return slot
 
     def prefetch_tail_to_head(
         self,
