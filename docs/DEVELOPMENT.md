@@ -73,9 +73,12 @@ admission, `apply` actual native admission. Dense additionally accepts
 MoE currently requires sequential/enforce. Raw prompts are used; no chat
 template is added automatically.
 
-OLMoE defaults to `--moe-placement streamed`: two slots from one existing GPU
-Ring hold the current Dense trunk and current expert, with the same pinned pool
-and CUDA lease ACKs. Layer parameters return to meta after their consumers.
+OLMoE defaults to `--moe-placement streamed --moe-slot-layout compact`: two
+role-specific slots from one existing GPU Ring hold the current Dense trunk
+and current expert, with the same pinned pool and CUDA lease ACKs. On the tested
+checkpoint these slots reserve 34 and 12 MiB. Layer parameters return to meta
+after their consumers. `--moe-slot-layout union` selects the historical layout
+where every slot reserves the full 46 MiB union of both resource templates.
 Embedding, final norm and output head stay resident. `--moe-placement resident`
 selects the previous Dense-resident/expert-copy path for comparisons. The
 low-level `AirColibriOLMoE` API retains its previous default; pass
@@ -87,9 +90,10 @@ when RAM `--policy` is off. GPU admission uses a separate policy instance.
 `--gpu-cache-mode shadow` evolves a virtual resident set while streaming every
 expert; `apply` reuses retained tensors and skips their host supplier and DMA.
 Both modes reserve the extra GPU and pinned slots for a matched memory layout.
-Each slot currently reserves a full 46 MiB union stride for a 12 MiB expert;
-two slots add **92 MiB GPU plus 92 MiB pinned RAM**. Startup plans include this
-physical cost. This is not an automatic cache-size or global placement policy.
+Each compact expert slot reserves 12 MiB; two slots add **24 MiB GPU plus
+24 MiB pinned RAM**. The complete four-slot arena is 70 MiB on each side,
+compared with 184 MiB in union mode. Startup plans use the same layout builder
+as runtime allocations. This is not an automatic cache-size or global policy.
 
 ```powershell
 .\.venv\Scripts\python.exe aircolibri.py run --model olmoe --policy apply --cache-mib 64 --ram-gib 4 --vram-gib 1.2 --gpu-expert-slots 2 --gpu-cache-mode apply --max-new-tokens 2 --report data/gpu-cache-run.json
@@ -164,3 +168,14 @@ For GPU cache comparisons, use streamed candidates with zero slots, then
 `--gpu-expert-slots 2 --gpu-cache-mode shadow` and `apply`, keeping all other
 inputs and budgets identical. With hits, `loads + resident_acquires == computes`;
 the old equality between loads and computes no longer applies.
+`--workload extended` uses one 128-token prefill and 16 fixed teacher-forced
+decode steps (144 tokens final context), with a separate independent reference
+run on the same inputs. It is a longer-context probe, not a soak or generation
+quality test. Reports include per-step state hashes, allocations and cache
+counters. Comparisons reject bytewise logit differences and known source
+identity mismatches; missing historical source metadata remains explicit.
+
+The Ring and pinned pool still each use one allocation. Their `slot_layouts`,
+`slot_offsets` and `slot_strides` describe actual storage. `slot_stride` is null
+for nonuniform slot sizes; do not infer arena bytes by multiplying one stride.
+The original uniform constructor path and Qwen attention overlays are preserved.

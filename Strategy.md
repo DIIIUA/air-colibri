@@ -15,10 +15,20 @@ one or two expert slots, with a separate native admission policy, shadow/apply
 modes and DMA-confirmed ACKs. Globals remain resident and native RAM admission
 still covers experts. This is not a global dynamic planner.
 
-The [bounded GPU cache result](docs/GPU_EXPERT_CACHE_RESULTS_2026-11-13.md)
-shows 4 hits out of 1,180 expert requests: 48 MiB H2D excluded for an extra
-92 MiB GPU and 92 MiB pinned reservation. It remains off by default; correctness
-and physical reuse are established for this workload, acceleration is not.
+The [compact-slot result](docs/COMPACT_MOE_RESULTS_2026-11-13.md) reduces the
+four-slot arena from 184 to 70 MiB in both GPU and pinned memory. It preserves
+the short trace's four hits / 48 MiB H2D reduction. The extended 128+16 trace
+matches 855,168 logits, routes and KV hashes, but has zero hits out of 2,950
+expert requests. GPU retention remains off by default; acceleration is not
+established. One incomplete reference process exit remains unexplained.
+
+The [original topology audit](docs/ORIGINALS_TOPOLOGY_RU.md) separates original
+AirLLM hooks, native Colibrì family/backend paths and our integration. The next
+integration step must first align events, candidate scope and decay cadence:
+calling original `tier.h` does not by itself reproduce the original scheduler.
+The [functional overlay and temporal integration plan](docs/INTEGRATION_INTERSECTIONS_PLAN_RU.md)
+assign common object/lifetime contracts and a single placement owner, while
+keeping backend/state migration behind its own acceptance gate.
 
 The [shared MoE result](docs/SHARED_MOE_RESULTS_2026-11-13.md) matched an independent
 direct-safetensors/HF reference in two short contexts and fit a 0.75 GiB Torch
@@ -32,12 +42,14 @@ measurements. A small measured speed difference is not a general guarantee.
 
 ## Next decisions
 
-1. Extend independent-reference coverage beyond the short OLMoE test to Qwen
-   and longer state growth. Stress the pread mitigation and preserve native
+1. Use the original source maps to select a precise family/backend/format/state
+   seam and compare policy traces. Extend independent-reference coverage beyond
+   OLMoE's tested 144-token context to Qwen and longer state growth.
+   Stress the pread mitigation and preserve native
    crash evidence; successful reruns do not establish the underlying defect.
 2. Assess whether measured reuse can justify GPU residency: the bounded cache
-   now has real placement/consumer ACKs, but the union arena is wasteful for
-   small experts. Measure physical I/O, full memory and cache-size sensitivity;
+   now has real placement/consumer ACKs and compact per-role slots. Measure
+   physical I/O, full memory and cache-size sensitivity;
    connect the catalog to common byte/lifetime reservations.
 3. In a separate quality track, localize the measured
    [Q4-g64 failure](docs/Q4_RESULTS_2026-11-13.md) on development data before a

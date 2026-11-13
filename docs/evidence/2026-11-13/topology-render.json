@@ -1,0 +1,85 @@
+{
+  "status": "RENDERED",
+  "renderer": "@mermaid-js/mermaid-cli 12.2.0",
+  "diagram_count": 19,
+  "diagrams": [
+    {
+      "file": "docs/assets/topology/overview-1.svg",
+      "sha256": "7ece703544f98678e4a7a420c88b574ae7930123367f895dd39276465de827ed"
+    },
+    {
+      "file": "docs/assets/topology/airllm-1.svg",
+      "sha256": "bc98753373f9d7316c2cc41d0aa10d4015558641bcd8e8e16419aa39b9927ebc"
+    },
+    {
+      "file": "docs/assets/topology/airllm-2.svg",
+      "sha256": "6c8768d6e2ec678caaea57e0e670288bf7551d1e4723aabf7a106a843b01474b"
+    },
+    {
+      "file": "docs/assets/topology/airllm-3.svg",
+      "sha256": "f097d113b10d230c25fd6d6cb71978c6c4ee346116bc68c23e49eb061b666734"
+    },
+    {
+      "file": "docs/assets/topology/airllm-4.svg",
+      "sha256": "0a87e952843fe4094336e5ba3d53e545dbd5e7bb40d7b2655265c42a599a41bb"
+    },
+    {
+      "file": "docs/assets/topology/airllm-5.svg",
+      "sha256": "92d909b04541eb6506512bceb39c728c57b3e21d01dcc2cf8ece1d7e51783562"
+    },
+    {
+      "file": "docs/assets/topology/colibri-1.svg",
+      "sha256": "41fe7eb61b5512e534b8115d9b8f25c1155fd5959982c3cb042d1e02d37f4d40"
+    },
+    {
+      "file": "docs/assets/topology/colibri-2.svg",
+      "sha256": "b6ff84ffc236dcb9f24e55f494d9a59173a6e8ad51b586cf4d8fc7803ce44700"
+    },
+    {
+      "file": "docs/assets/topology/colibri-3.svg",
+      "sha256": "8ccfa41c20d6c46259cf5700d66aa3bcc970ba27a7c5945f731b9b48407328f8"
+    },
+    {
+      "file": "docs/assets/topology/colibri-4.svg",
+      "sha256": "21fec8969ebfa3ebbceaedeea04344ee76ce164c85e96f09a398455dd534bc30"
+    },
+    {
+      "file": "docs/assets/topology/colibri-5.svg",
+      "sha256": "11179dfbeef0cd3f7ea02a79ac426289c3588749089e9f7edaba7e377f26df1c"
+    },
+    {
+      "file": "docs/assets/topology/colibri-6.svg",
+      "sha256": "d0b3f58c2b26755d1871a68454bfa444f29fad9c4eeaa7ada72a46036f68ae24"
+    },
+    {
+      "file": "docs/assets/topology/colibri-7.svg",
+      "sha256": "5bcae226596229ecaa03e88c8c86e2109118b4bf7676cc15d0c08af59e4c64c3"
+    },
+    {
+      "file": "docs/assets/topology/colibri-8.svg",
+      "sha256": "4288cfcf5a38a2ecd2352f980a39fe623d2af030fea1aef8b4be2020f11ff532"
+    },
+    {
+      "file": "docs/assets/topology/colibri-9.svg",
+      "sha256": "324b2f2115f639d4c1f1a83d581dede051aa227cdd8075458e6aef6291cdd33a"
+    },
+    {
+      "file": "docs/assets/topology/overlap-1.svg",
+      "sha256": "344b0f6f0d188c68633c12dbca4c29b6acf43f0153810298e92c0df56c8267a1"
+    },
+    {
+      "file": "docs/assets/topology/overlap-2.svg",
+      "sha256": "527c6cabd21370cab5645aef4178068e8ca77f6592525fa8ce66eaf59cd48c41"
+    },
+    {
+      "file": "docs/assets/topology/plan-1.svg",
+      "sha256": "1a7d6e6391d27aaeaf1c5f80d71d0acbeeae04488a3d14752611f38fb3df1980"
+    },
+    {
+      "file": "docs/assets/topology/plan-2.svg",
+      "sha256": "158ebc600cee27db46ff5ffc03d6436c4243646b384dac4d95c6ee11701d294d"
+    }
+  ],
+  "html_sha256": "c1e7a5e17aeed14be171ef1055f6f0173d4e36f7f80f5d0d0491ae0430661181",
+  "note": "Rendered source diagrams, not runtime execution evidence."
+}

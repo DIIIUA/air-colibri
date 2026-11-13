@@ -4,22 +4,27 @@
 
 | Package | Current state | Remaining work |
 |---|---|---|
-| P0 — baseline | Source revisions, local backups and evidence captured | Independent installation and reproducible checkpoint/cache preparation |
+| P0 — baseline | Pinned revisions, history and separate original lifecycle/source maps captured | Independent installation and reproducible checkpoint/cache preparation |
 | P1 — shared path | Dense contracts, original readers, GPU Ring and persistent Q4 cache integrated | Common resource catalog; expose cache disk quota; broader format/provider coverage |
 | P2 — ownership | Per-slot stream/initialization fences; 3,072 reuses and in-flight prefetch teardown tested | Common resource reservations, long-duration pressure/soak, asynchronous prefetch cancellation |
 | P3 — full Dense | Qwen 9B tested with logits and recurrent/KV state | Independent reference against the current revision; longer prefill/decode and contexts |
-| P4 — original native mechanism | Original C `tier.h` affects real RAM retention | Complete native CUDA executor/interoperability |
+| P4 — original native mechanism | Original C `tier.h` affects real RAM retention; original caller topology documented | Align event units, comparison scope and decay cadence; native CUDA executor/interoperability |
 | P5 — common placement | Native RAM admission; separate optional GPU expert admission with shadow/apply and physical completion ACKs | Catalog-to-plan-to-actuation loop; shared Dense/expert/state byte budgets; global placement and cancellation |
-| P6 — full MoE | OLMoE BF16 Dense trunk and experts share Ring/ACK; optional 1–2 retained experts; short independent-reference parity under a constrained allocator budget | Efficient cache layouts, growing state accounting, long-run reliability; other families |
+| P6 — full MoE | OLMoE BF16 Dense trunk and experts share Ring/ACK; optional 1–2 retained experts; compact per-role slots | Capacity/reuse sensitivity, growing state accounting, long-run reliability; other families |
 | P7 — quality | BF16 repeatability; 960-position Q4-g64 evaluation failed strict acceptance | Localize quantization error; improve on separate development data; fresh held-out reevaluation |
 | P8 — practical benefit | Five repeated local policy A/B pairs | Physical I/O, cold/warm, TTFT, standalone comparisons |
 | P9 — product path | One experimental CLI, provenance and resource guards | Largest-object limits, larger checkpoints, hardware portability, packaging and API |
 
 ## Order of work
 
-1. Extend independent-reference coverage: the new OLMoE shared path has exact
-   logits/router/KV parity on two short contexts. Qwen and long contexts remain
-   open. Historical same-runtime repeatability is a separate check.
+The detailed next-stage plan is [E0–E9 with temporal windows T0–T6](INTEGRATION_INTERSECTIONS_PLAN_RU.md),
+derived from the original source topologies and functional overlay.
+
+1. Start from the [separate original topologies](ORIGINALS_TOPOLOGY_RU.md), choose
+   an exact family/backend/state seam and compare policy event semantics.
+   Independent OLMoE parity now covers two short contexts and a 128+16 trace;
+   Qwen and long contexts remain open. Historical same-runtime repeatability
+   is a separate check.
 2. Build on the verified two-slot Dense/expert ownership path. Account for
    globals, growing state, host transients and queues before dynamic placement.
    Perform longer pressure tests of the pread mitigation for two mmap reader
@@ -47,7 +52,8 @@ These items remain explicit work, rather than capabilities inferred from names:
   arena. Globals remain resident; expert RAM admission remains separate from
   transient Dense staging. Optional GPU expert retention now skips H2D on hits
   through fresh consumer leases, eviction dependencies and completion ACKs.
-  Its full-stride memory overhead and small capacity require further work.
+  Compact per-role slots remove the union-template overhead. Small capacity
+  and workload-dependent reuse still require further measurement.
 - **A closed placement loop.** `catalog_bridge` reuses `CrossLayerPlanMap` for
   metadata and observations. It explicitly reports no physical residency change.
   `shadow_policy.shadow_replan` is outside the CLI import graph; CLI `--policy
@@ -86,6 +92,9 @@ private chat material remain local; earlier PASS/FAIL/crash records are retained
 The subsequent [GPU cache experiment](GPU_EXPERT_CACHE_RESULTS_2026-11-13.md)
 connects one real placement operation but keeps it off by default: four hits
 on the tested trace do not justify its extra arena memory as a general default.
+The [compact follow-up](COMPACT_MOE_RESULTS_2026-11-13.md) lowers that reservation
+to 24 MiB per arena but has zero cache hits on the 128+16 trace. Useful placement
+is still an open question; correct lifetimes alone do not establish benefit.
 
 MTP, GGUF, Vulkan, arbitrary models and an OpenAI-compatible service are
 possible future directions, **not current AirColibri capabilities**. Upstream

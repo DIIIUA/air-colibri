@@ -1,0 +1,1043 @@
+{
+  "kind": "graphify-topology-crosscheck-v1",
+  "date": "2026-11-13",
+  "tool": "graphifyy 0.9.18",
+  "mode": "code-only, no-cluster, max-workers=2, separate outputs",
+  "graphs": {
+    "airllm": {
+      "nodes": 715,
+      "edges": 1467,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "graph_sha256": "396de7f35e13a3e1f3dbde4d4293096c9fbe9fdeb25e87c7ec8ed06f67db41e4",
+      "relations": {
+        "imports_from": 160,
+        "imports": 205,
+        "contains": 208,
+        "inherits": 25,
+        "method": 301,
+        "indirect_call": 37,
+        "calls": 307,
+        "rationale_for": 121,
+        "references": 48,
+        "re_exports": 5,
+        "uses": 50
+      },
+      "diagnostic": {
+        "node_count": 715,
+        "unverified_node_count": 0,
+        "raw_edge_count": 1467,
+        "non_object_edges": 0,
+        "missing_endpoint_edges": 0,
+        "dangling_endpoint_edges": 283,
+        "self_loop_edges": 0,
+        "valid_candidate_edges": 1184,
+        "exact_duplicate_edges": 0,
+        "directed_unique_endpoint_pairs": 1159,
+        "directed_same_endpoint_collapsed_edges": 25,
+        "undirected_unique_endpoint_pairs": 1147,
+        "undirected_same_endpoint_collapsed_edges": 37,
+        "same_endpoint_group_count": 25,
+        "relation_variant_groups": 25,
+        "source_file_variant_groups": 0,
+        "source_location_variant_groups": 0,
+        "context_variant_groups": 0,
+        "post_build_graph_type": "DiGraph",
+        "post_build_node_count": 715,
+        "post_build_edge_count": 1176,
+        "post_build_error": "",
+        "effective_directed": true
+      },
+      "local_graph": "data/shared-moe-20261113/topology-graphify/airllm/graphify-out/graph.json"
+    },
+    "colibri": {
+      "nodes": 24210,
+      "edges": 69599,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "graph_sha256": "fc15c56a87b5edb6c472a86ddff5358c05c89af6f1a51fb310eaf0804140256c",
+      "relations": {
+        "contains": 14040,
+        "defines": 742,
+        "calls": 31955,
+        "references": 7312,
+        "imports": 5907,
+        "imports_from": 877,
+        "inherits": 125,
+        "rationale_for": 2418,
+        "method": 4634,
+        "indirect_call": 554,
+        "extends": 27,
+        "re_exports": 1,
+        "uses": 1007
+      },
+      "diagnostic": {
+        "node_count": 24210,
+        "unverified_node_count": 0,
+        "raw_edge_count": 69599,
+        "non_object_edges": 0,
+        "missing_endpoint_edges": 0,
+        "dangling_endpoint_edges": 5519,
+        "self_loop_edges": 0,
+        "valid_candidate_edges": 64080,
+        "exact_duplicate_edges": 0,
+        "directed_unique_endpoint_pairs": 63937,
+        "directed_same_endpoint_collapsed_edges": 143,
+        "undirected_unique_endpoint_pairs": 63926,
+        "undirected_same_endpoint_collapsed_edges": 154,
+        "same_endpoint_group_count": 143,
+        "relation_variant_groups": 143,
+        "source_file_variant_groups": 0,
+        "source_location_variant_groups": 0,
+        "context_variant_groups": 0,
+        "post_build_graph_type": "DiGraph",
+        "post_build_node_count": 24210,
+        "post_build_edge_count": 64114,
+        "post_build_error": "",
+        "effective_directed": true
+      },
+      "local_graph": "data/shared-moe-20261113/topology-graphify/colibri/graphify-out/graph.json"
+    }
+  },
+  "function_crosswalk": [
+    {
+      "id": "F01",
+      "function": "resolve model",
+      "relationship": "analyst_functional_analogy_not_call_edge",
+      "airllm": [
+        {
+          "id": "air_llm_airllm_auto_model_automodel_from_pretrained",
+          "label": ".from_pretrained()",
+          "file_type": "code",
+          "source_file": "air_llm/airllm/auto_model.py",
+          "source_location": "L63",
+          "_origin": "ast"
+        }
+      ],
+      "colibri": [
+        {
+          "id": "c_family_registry_resolve_model",
+          "label": "resolve_model()",
+          "file_type": "code",
+          "source_file": "c/family_registry.py",
+          "source_location": "L2081",
+          "_origin": "ast"
+        },
+        {
+          "id": "c_coli_engine_for",
+          "label": "engine_for()",
+          "file_type": "code",
+          "source_file": "c/coli",
+          "source_location": "L433",
+          "_origin": "ast"
+        }
+      ]
+    },
+    {
+      "id": "F02",
+      "function": "address weights",
+      "relationship": "analyst_functional_analogy_not_call_edge",
+      "airllm": [
+        {
+          "id": "air_llm_airllm_utils_split_and_save_layers",
+          "label": "split_and_save_layers()",
+          "file_type": "code",
+          "source_file": "air_llm/airllm/utils.py",
+          "source_location": "L544",
+          "_origin": "ast"
+        }
+      ],
+      "colibri": [
+        {
+          "id": "c_st_st_init",
+          "label": "st_init()",
+          "file_type": "code",
+          "source_file": "c/st.h",
+          "source_location": "L963",
+          "_origin": "ast"
+        }
+      ]
+    },
+    {
+      "id": "F03",
+      "function": "read requested payload",
+      "relationship": "analyst_functional_analogy_not_call_edge",
+      "airllm": [
+        {
+          "id": "air_llm_airllm_utils_load_layer_subset",
+          "label": "load_layer_subset()",
+          "file_type": "code",
+          "source_file": "air_llm/airllm/utils.py",
+          "source_location": "L431",
+          "_origin": "ast"
+        }
+      ],
+      "colibri": [
+        {
+          "id": "c_olmoe_load_expert_merged",
+          "label": "load_expert_merged()",
+          "file_type": "code",
+          "source_file": "c/olmoe.c",
+          "source_location": "L1143",
+          "_origin": "ast"
+        }
+      ]
+    },
+    {
+      "id": "F05",
+      "function": "materialize for compute",
+      "relationship": "analyst_functional_analogy_not_call_edge",
+      "airllm": [
+        {
+          "id": "air_llm_airllm_airllm_base_airllmbasemodel_move_layer_to_device",
+          "label": ".move_layer_to_device()",
+          "file_type": "code",
+          "source_file": "air_llm/airllm/airllm_base.py",
+          "source_location": "L600",
+          "_origin": "ast"
+        }
+      ],
+      "colibri": [
+        {
+          "id": "c_olmoe_cuda_chain_occ_start",
+          "label": "occ_start()",
+          "file_type": "code",
+          "source_file": "c/olmoe_cuda_chain.h",
+          "source_location": "L226",
+          "_origin": "ast"
+        },
+        {
+          "id": "c_vk_tier_vkt_note",
+          "label": "vkt_note()",
+          "file_type": "code",
+          "source_file": "c/vk_tier.h",
+          "source_location": "L404",
+          "_origin": "ast"
+        }
+      ]
+    },
+    {
+      "id": "F06",
+      "function": "readiness boundary",
+      "relationship": "analyst_functional_analogy_not_call_edge",
+      "airllm": [
+        {
+          "id": "air_llm_airllm_airllm_base_airllmbasemodel_pre_hook",
+          "label": "._pre_hook()",
+          "file_type": "code",
+          "source_file": "air_llm/airllm/airllm_base.py",
+          "source_location": "L889",
+          "_origin": "ast"
+        }
+      ],
+      "colibri": [
+        {
+          "id": "c_olmoe_expert_get",
+          "label": "expert_get()",
+          "file_type": "code",
+          "source_file": "c/olmoe.c",
+          "source_location": "L1367",
+          "_origin": "ast"
+        }
+      ]
+    },
+    {
+      "id": "F07",
+      "function": "execute model forward",
+      "relationship": "analyst_functional_analogy_not_call_edge",
+      "airllm": [
+        {
+          "id": "air_llm_airllm_airllm_base_airllmbasemodel_forward",
+          "label": ".forward()",
+          "file_type": "code",
+          "source_file": "air_llm/airllm/airllm_base.py",
+          "source_location": "L926",
+          "_origin": "ast"
+        }
+      ],
+      "colibri": [
+        {
+          "id": "c_olmoe_step",
+          "label": "step()",
+          "file_type": "code",
+          "source_file": "c/olmoe.c",
+          "source_location": "L2149",
+          "_origin": "ast"
+        },
+        {
+          "id": "c_olmoe_cuda_chain_occ_forward",
+          "label": "occ_forward()",
+          "file_type": "code",
+          "source_file": "c/olmoe_cuda_chain.h",
+          "source_location": "L542",
+          "_origin": "ast"
+        }
+      ]
+    },
+    {
+      "id": "F08",
+      "function": "expert branch boundary, not same router implementation",
+      "relationship": "analyst_functional_analogy_not_call_edge",
+      "airllm": [
+        {
+          "id": "air_llm_airllm_airllm_base_airllmbasemodel_setup_expert_streaming",
+          "label": "._setup_expert_streaming()",
+          "file_type": "code",
+          "source_file": "air_llm/airllm/airllm_base.py",
+          "source_location": "L779",
+          "_origin": "ast"
+        }
+      ],
+      "colibri": [
+        {
+          "id": "c_olmoe_moe_route_row",
+          "label": "moe_route_row()",
+          "file_type": "code",
+          "source_file": "c/olmoe.c",
+          "source_location": "L1657",
+          "_origin": "ast"
+        }
+      ]
+    },
+    {
+      "id": "F09",
+      "function": "stateful forward boundary",
+      "relationship": "analyst_functional_analogy_not_call_edge",
+      "airllm": [
+        {
+          "id": "air_llm_airllm_airllm_base_airllmbasemodel_forward",
+          "label": ".forward()",
+          "file_type": "code",
+          "source_file": "air_llm/airllm/airllm_base.py",
+          "source_location": "L926",
+          "_origin": "ast"
+        }
+      ],
+      "colibri": [
+        {
+          "id": "c_olmoe_step",
+          "label": "step()",
+          "file_type": "code",
+          "source_file": "c/olmoe.c",
+          "source_location": "L2149",
+          "_origin": "ast"
+        }
+      ]
+    },
+    {
+      "id": "F10",
+      "function": "end consumer lifetime",
+      "relationship": "analyst_functional_analogy_not_call_edge",
+      "airllm": [
+        {
+          "id": "air_llm_airllm_airllm_base_airllmbasemodel_post_hook",
+          "label": "._post_hook()",
+          "file_type": "code",
+          "source_file": "air_llm/airllm/airllm_base.py",
+          "source_location": "L906",
+          "_origin": "ast"
+        }
+      ],
+      "colibri": [
+        {
+          "id": "c_olmoe_expert_put",
+          "label": "expert_put()",
+          "file_type": "code",
+          "source_file": "c/olmoe.c",
+          "source_location": "L1440",
+          "_origin": "ast"
+        },
+        {
+          "id": "c_vk_tier_quiesce",
+          "label": "quiesce()",
+          "file_type": "code",
+          "source_file": "c/vk_tier.c",
+          "source_location": "L559",
+          "_origin": "ast"
+        }
+      ]
+    },
+    {
+      "id": "F11",
+      "function": "future work",
+      "relationship": "analyst_functional_analogy_not_call_edge",
+      "airllm": [
+        {
+          "id": "air_llm_airllm_airllm_base_airllmbasemodel_next_streamed_idx",
+          "label": "._next_streamed_idx()",
+          "file_type": "code",
+          "source_file": "air_llm/airllm/airllm_base.py",
+          "source_location": "L878",
+          "_origin": "ast"
+        },
+        {
+          "id": "air_llm_airllm_airllm_base_airllmbasemodel_pre_hook",
+          "label": "._pre_hook()",
+          "file_type": "code",
+          "source_file": "air_llm/airllm/airllm_base.py",
+          "source_location": "L889",
+          "_origin": "ast"
+        }
+      ],
+      "colibri": [
+        {
+          "id": "c_olmoe_pilot_prefetch",
+          "label": "pilot_prefetch()",
+          "file_type": "code",
+          "source_file": "c/olmoe.c",
+          "source_location": "L2368",
+          "_origin": "ast"
+        }
+      ]
+    },
+    {
+      "id": "F14",
+      "function": "token-loop entry",
+      "relationship": "analyst_functional_analogy_not_call_edge",
+      "airllm": [
+        {
+          "id": "air_llm_airllm_airllm_base_airllmbasemodel_generate",
+          "label": ".generate()",
+          "file_type": "code",
+          "source_file": "air_llm/airllm/airllm_base.py",
+          "source_location": "L923",
+          "_origin": "ast"
+        }
+      ],
+      "colibri": [
+        {
+          "id": "c_olmoe_serve_one_turn",
+          "label": "serve_one_turn()",
+          "file_type": "code",
+          "source_file": "c/olmoe.c",
+          "source_location": "L2957",
+          "_origin": "ast"
+        }
+      ]
+    },
+    {
+      "id": "F16",
+      "function": "cleanup boundary, not equivalent shutdown",
+      "relationship": "analyst_functional_analogy_not_call_edge",
+      "airllm": [
+        {
+          "id": "air_llm_airllm_utils_clean_memory",
+          "label": "clean_memory()",
+          "file_type": "code",
+          "source_file": "air_llm/airllm/utils.py",
+          "source_location": "L78",
+          "_origin": "ast"
+        }
+      ],
+      "colibri": [
+        {
+          "id": "c_vk_tier_vkt_shutdown",
+          "label": "vkt_shutdown()",
+          "file_type": "code",
+          "source_file": "c/vk_tier.h",
+          "source_location": "L399",
+          "_origin": "ast"
+        }
+      ]
+    }
+  ],
+  "selected_extracted_calls": {
+    "airllm": [
+      {
+        "source": "air_llm_airllm_airllm_base_airllmbasemodel_load_streamed_layer",
+        "target": "air_llm_airllm_airllm_base_airllmbasemodel_load_layer_to_cpu",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "air_llm/airllm/airllm_base.py",
+        "source_location": "L886",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "air_llm_airllm_airllm_base_airllmbasemodel_pre_hook",
+        "target": "air_llm_airllm_airllm_base_airllmbasemodel_load_streamed_layer",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "air_llm/airllm/airllm_base.py",
+        "source_location": "L896",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "air_llm_airllm_airllm_base_airllmbasemodel_pre_hook",
+        "target": "air_llm_airllm_airllm_base_airllmbasemodel_move_layer_to_device",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "air_llm/airllm/airllm_base.py",
+        "source_location": "L898",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "air_llm_airllm_airllm_base_airllmbasemodel_pre_hook",
+        "target": "air_llm_airllm_airllm_base_airllmbasemodel_next_streamed_idx",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "air_llm/airllm/airllm_base.py",
+        "source_location": "L901",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "air_llm_airllm_airllm_base_airllmbasemodel_load_streamed_layer",
+        "target": "air_llm_airllm_utils_load_layer_subset",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "confidence_score": 1.0,
+        "source_file": "air_llm/airllm/airllm_base.py",
+        "source_location": "L887",
+        "weight": 1.0,
+        "_origin": "ast"
+      }
+    ],
+    "colibri": [
+      {
+        "source": "c_olmoe_expert_get",
+        "target": "c_olmoe_ehit_mark",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L1370",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_expert_get",
+        "target": "c_olmoe_slot_indexed",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L1371",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_expert_get",
+        "target": "c_olmoe_slot_in_flight",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L1375",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_expert_get",
+        "target": "c_olmoe_slot_ensure_allocated",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L1390",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_expert_get",
+        "target": "c_olmoe_olmoe_victim",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L1394",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_expert_get",
+        "target": "c_olmoe_vkt_ram_first",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L1421",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_expert_get",
+        "target": "c_olmoe_vkt_ram_gave",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L1421",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_expert_get",
+        "target": "c_olmoe_cache_reserve",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L1423",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_expert_get",
+        "target": "c_olmoe_load_expert_merged",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L1427",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_expert_get",
+        "target": "c_olmoe_cache_publish",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L1430",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_step",
+        "target": "c_olmoe_kv_room_fit",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L2151",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_step",
+        "target": "c_olmoe_falloc",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L2164",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_step",
+        "target": "c_olmoe_olm_embed_row",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L2165",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_step",
+        "target": "c_olmoe_layers_forward_range",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L2197",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_step",
+        "target": "c_olmoe_pin_hot_experts",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L2206",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_step",
+        "target": "c_olmoe_olmoe_echo",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L2219",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_step",
+        "target": "c_olmoe_rmsnorm_row",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L2221",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_step",
+        "target": "c_olmoe_now_s",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe.c",
+        "source_location": "L2235",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_olmoe_cuda_chain_occ_geometry_ok",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L235",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_olmoe_cuda_chain_occ_stride",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L269",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_olmoe_cuda_chain_occ_need",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L272",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_olmoe_cuda_chain_occ_rows_env",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L272",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_olmoe_cuda_chain_occ_mat_cat",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L311",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_olmoe_cuda_chain_occ_mat",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L314",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_olmoe_cuda_chain_occ_drop",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L323",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_olmoe_cuda_chain_occ_expert_bytes",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L331",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_olmoe_cuda_chain_occ_entry",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "EXTRACTED",
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L340",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_expert_get",
+        "target": "c_tests_test_qwen36_tier_hold_sleep_ms",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe.c",
+        "source_location": "L1412",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_step",
+        "target": "c_olmoe_chain_olc_forward",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe.c",
+        "source_location": "L2174",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_step",
+        "target": "c_olmoe_chain_olc_fed",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe.c",
+        "source_location": "L2175",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_step",
+        "target": "c_olmoe_chain_olc_host_kv",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe.c",
+        "source_location": "L2178",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_step",
+        "target": "c_olmoe_chain_olc_cpu_step",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe.c",
+        "source_location": "L2179",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_step",
+        "target": "c_olmoe_cuda_chain_occ_forward",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe.c",
+        "source_location": "L2189",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_step",
+        "target": "c_olmoe_cuda_chain_occ_cpu_step",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe.c",
+        "source_location": "L2192",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_step",
+        "target": "c_prompt_break_coli_prompt_broken",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe.c",
+        "source_location": "L2202",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_step",
+        "target": "c_kv_prefix_kv_prefix_record",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe.c",
+        "source_location": "L2211",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_cuda_chain_cc_available",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L240",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_cuda_chain_cc_moe_ready",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L240",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_cuda_chain_cc_fetch_ready",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L240",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_cuda_chain_cc_moe_block_type",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L246",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_ggml_quants_gq_type_name",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L248",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_olmoe_olm_kv16",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L260",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_cuda_chain_cc_kvh_ready",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L260",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_cuda_chain_cc_kv16_ready",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L261",
+        "weight": 1.0,
+        "_origin": "ast"
+      },
+      {
+        "source": "c_olmoe_cuda_chain_occ_start",
+        "target": "c_cuda_chain_h_c_cuda_chain_cc_lost",
+        "relation": "calls",
+        "context": "call",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "c/olmoe_cuda_chain.h",
+        "source_location": "L345",
+        "weight": 1.0,
+        "_origin": "ast"
+      }
+    ]
+  },
+  "excluded_false_edge": {
+    "raw": {
+      "source": "c_olmoe_expert_get",
+      "target": "c_tests_test_qwen36_tier_hold_sleep_ms",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "c/olmoe.c",
+      "source_location": "L1412",
+      "weight": 1.0,
+      "_origin": "ast"
+    },
+    "reason": "olmoe.c L87-91 defines platform macro sleep_ms as Sleep/usleep, not a call into test code"
+  },
+  "limitations": [
+    "Graph includes tests, tooling, configuration and all conditional compile branches, not just active inference.",
+    "AST labels EXTRACTED do not prove correct global symbol resolution.",
+    "Common C header/source names can collapse to a declaration node; verify the implementation separately.",
+    "Dynamic Python hooks and C macro/function-pointer dispatch need source review.",
+    "2 AirLLM and 93 Colibri detected source files produced zero nodes; logs preserve warnings.",
+    "Dangling edges can denote external dependencies; counts are not a completeness certificate.",
+    "No full graph merge or simple-graph reduction was used to infer functional equivalence."
+  ]
+}
