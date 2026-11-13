@@ -12,6 +12,22 @@ from src.gpu_ring_pipeline import GPURingPipeline
 from src.lease_ack_bridge import ExistingRingAcknowledgementAdapter
 
 
+def shared_slot_layouts(templates, dtype, num_slots, slot_layout="union"):
+    """Keep one geometry definition for runtime allocations and startup budgets."""
+    union = SlotArenaLayout.from_templates(templates,dtype=dtype)
+    if slot_layout=="union":
+        return union, (union,)*num_slots
+    if slot_layout!="compact" or not 2 <= num_slots <= 4:
+        raise ValueError("Unsupported shared slot layout")
+    dense = {k:v for k,v in templates.items() if k.startswith("dense.")}
+    expert = {k:v for k,v in templates.items() if k.startswith("expert.")}
+    if not dense or not expert or len(dense)+len(expert)!=len(templates):
+        raise ValueError("Compact slots require separate Dense and expert templates")
+    d = SlotArenaLayout.from_templates(dense,dtype=dtype)
+    e = SlotArenaLayout.from_templates(expert,dtype=dtype)
+    return union, (d,)+(e,)*(num_slots-1)
+
+
 @dataclass(frozen=True)
 class ResourceLease:
     slot_id: int
@@ -20,7 +36,7 @@ class ResourceLease:
 
 
 class SharedWeightResources:
-    def __init__(self, templates, device, dtype, num_slots=2):
+    def __init__(self, templates, device, dtype, num_slots=2, slot_layout="union"):
         if not isinstance(num_slots, int) or not 1 <= num_slots <= 4:
             raise ValueError("Resource slot count must be between 1 and 4")
         self.active = {}
@@ -35,9 +51,10 @@ class SharedWeightResources:
         self.events = deque(maxlen=4096)
         self.peak_active_slots = 0
         try:
-            self.layout = SlotArenaLayout.from_templates(templates, dtype=dtype)
-            self.pool = BoundedPinnedBufferPool(num_slots=num_slots, dtype=dtype, arena_layout=self.layout)
-            self.ring = GPURingPipeline(num_slots=num_slots, device=torch.device(device), dtype=dtype, arena_layout=self.layout)
+            self.slot_layout = slot_layout
+            self.layout, layouts = shared_slot_layouts(templates,dtype,num_slots,slot_layout)
+            self.pool = BoundedPinnedBufferPool(num_slots=num_slots, dtype=dtype, arena_layout=self.layout,slot_layouts=layouts)
+            self.ring = GPURingPipeline(num_slots=num_slots, device=torch.device(device), dtype=dtype, arena_layout=self.layout,slot_layouts=layouts)
             self.ack = ExistingRingAcknowledgementAdapter(self.ring).install()
         except BaseException:
             self.close()
@@ -111,10 +128,11 @@ class SharedWeightResources:
 
     def snapshot(self):
         ack = self.ack.snapshot() if self.ack else {}
-        return dict(kind="shared-dense-expert-ring-v2", counts=dict(self.counts),
+        return dict(kind="shared-dense-expert-ring-v3", counts=dict(self.counts),slot_layout=self.slot_layout,
             logical_h2d_bytes=dict(self.logical_h2d_bytes), active_slots=len(self.active),
-            peak_active_slots=self.peak_active_slots, slot_stride=self.layout.slot_stride,
-            gpu_arena_bytes=self.ring.num_slots*self.layout.slot_stride,
+            peak_active_slots=self.peak_active_slots, slot_stride=self.ring.slot_stride,
+            slot_strides=list(self.ring.slot_strides),slot_offsets=list(self.ring.slot_offsets),
+            gpu_arena_bytes=sum(self.ring.slot_strides),
             pinned_arena_bytes=self.pool.total_pinned_bytes, loads=self.ring.total_loads,
             computes=self.ring.total_computes, lease_event_counts=ack.get("event_counts", {}),
             violations=ack.get("violations_rejected", 0), leases=ack.get("leases", []),
@@ -240,8 +258,8 @@ class ExpertResidency:
         return dict(mode=self.mode,capacity=len(self.slots),stats=dict(self.stats),
             resident_experts=list(self.entries) if self.mode=="apply" else [],
             virtual_experts=list(self.entries) if self.mode=="shadow" else [],
-            reserved_gpu_bytes=len(self.slots)*self.resources.layout.slot_stride,
-            reserved_pinned_bytes=len(self.slots)*self.resources.layout.slot_stride,
+            reserved_gpu_bytes=sum(self.resources.ring.slot_strides[s] for s in self.slots),
+            reserved_pinned_bytes=sum(self.resources.pool.slot_strides[s] for s in self.slots),
             native_policy=dict(self.policy.stats),events=list(self.events))
 
     def clear(self):

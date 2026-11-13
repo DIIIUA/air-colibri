@@ -25,8 +25,11 @@ class TestAdmission:
         self.stats["backend_admissions"]+=event["status"]=="applied"
 
 
-def backend(device,capacity=2,mode="apply",replace=True,count=16):
-    r=SharedWeightResources({"expert.w":((count,),torch.float32)},device,torch.float32,num_slots=2+capacity)
+def backend(device,capacity=2,mode="apply",replace=True,count=16,compact=False):
+    templates={"expert.w":((count,),torch.float32)}
+    if compact:templates["dense.w"]=((3*2**19,),torch.float32)
+    r=SharedWeightResources(templates,device,torch.float32,num_slots=2+capacity,
+                           slot_layout="compact" if compact else "union")
     r.enable_expert_residency(TestAdmission(capacity,replace),mode)
     return r
 
@@ -130,11 +133,14 @@ def test_admission_ack_requires_observed_dma_completion(monkeypatch):
 
 
 @pytest.mark.parametrize("device",["cpu","cuda"])
-def test_real_native_policy_rejects_then_physically_evicts(device):
+@pytest.mark.parametrize("compact",[False,True])
+def test_real_native_policy_rejects_then_physically_evicts(device,compact):
     dll=Path(__file__).resolve().parents[1]/"data/native/colibri_tier.dll"
     if not dll.exists():pytest.skip("Build native tier bridge first")
     if device=="cuda" and not torch.cuda.is_available():pytest.skip("CUDA unavailable")
-    r=SharedWeightResources({"expert.w":((16,),torch.float32)},device,torch.float32,num_slots=3)
+    templates={"expert.w":((16,),torch.float32)}
+    if compact:templates["dense.w"]=((3*2**19,),torch.float32)
+    r=SharedWeightResources(templates,device,torch.float32,num_slots=3,slot_layout="compact" if compact else "union")
     policy=NativeTierPolicy(dll,4,1)
     r.enable_expert_residency(policy,"apply")
     try:
@@ -158,8 +164,9 @@ def test_real_native_policy_rejects_then_physically_evicts(device):
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(),reason="CUDA unavailable")
-def test_cached_read_chains_consumers_before_eviction(monkeypatch):
-    r=backend("cuda",capacity=1,count=4096)
+@pytest.mark.parametrize("compact",[False,True])
+def test_cached_read_chains_consumers_before_eviction(monkeypatch,compact):
+    r=backend("cuda",capacity=1,count=4096,compact=compact)
     streams=[torch.cuda.Stream() for _ in range(3)]
     waits=[]
     event=r.ring.slots[2].compute_done_event

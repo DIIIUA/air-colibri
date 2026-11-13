@@ -24,9 +24,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import torch
 
 try:
-    from src.bounded_memory_manager import SlotArenaLayout
+    from src.bounded_memory_manager import SlotArenaLayout, slot_arena_geometry
 except ImportError:
-    from bounded_memory_manager import SlotArenaLayout
+    from bounded_memory_manager import SlotArenaLayout, slot_arena_geometry
 
 
 class SlotState(enum.Enum):
@@ -47,6 +47,7 @@ class RingSlot:
         dtype: torch.dtype = torch.bfloat16,
         arena: Optional[torch.Tensor] = None,
         arena_layout: Optional[SlotArenaLayout] = None,
+        arena_offset_bytes: Optional[int] = None,
     ):
         self.slot_id = slot_id
         self.device = device or torch.device("cpu")
@@ -58,7 +59,7 @@ class RingSlot:
         self._owned_arena: Optional[torch.Tensor] = None
 
         if arena is not None and arena_layout is not None:
-            self.tensors = arena_layout.bind_slot_views(arena, slot_id, dtype=dtype)
+            self.tensors = arena_layout.bind_slot_views(arena, slot_id, dtype=dtype,base_offset_bytes=arena_offset_bytes)
             self.slot_bytes = arena_layout.slot_stride
             self.payload_bytes = arena_layout.payload_bytes
         else:
@@ -108,6 +109,7 @@ class GPURingPipeline:
         dtype: torch.dtype = torch.bfloat16,
         tail_to_head_prefetch: bool = False,
         arena_layout: Optional[SlotArenaLayout] = None,
+        slot_layouts: Optional[List[SlotArenaLayout]] = None,
     ):
         self.num_slots = max(1, min(num_slots, 4))
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -123,8 +125,9 @@ class GPURingPipeline:
         else:
             raise ValueError("Either template_tensors or arena_layout must be provided")
 
-        self.slot_stride = self.layout.slot_stride
-        total_bytes = self.num_slots * self.slot_stride
+        self.slot_layouts, self.slot_offsets, total_bytes = slot_arena_geometry(self.layout,self.num_slots,slot_layouts)
+        self.slot_strides = tuple(item.slot_stride for item in self.slot_layouts)
+        self.slot_stride = self.slot_strides[0] if len(set(self.slot_strides))==1 else None
         # Единая неразрывная VRAM-арена на все слоты кольца без фрагментации
         self.arena: Optional[torch.Tensor] = (
             torch.zeros(total_bytes, dtype=torch.uint8, device=self.device)
@@ -132,14 +135,15 @@ class GPURingPipeline:
             else torch.empty(0, dtype=torch.uint8, device=self.device)
         )
 
-        # Создаем кольцевой пул слотов со смещением i * slot_stride
+        # Bind disjoint slot views into the same allocation, including compact layouts.
         self.slots: List[RingSlot] = [
             RingSlot(
                 slot_id=i,
                 device=self.device,
                 dtype=dtype,
                 arena=self.arena,
-                arena_layout=self.layout,
+                arena_layout=self.slot_layouts[i],
+                arena_offset_bytes=self.slot_offsets[i],
             )
             for i in range(self.num_slots)
         ]
@@ -163,11 +167,10 @@ class GPURingPipeline:
         self.h2d_overlap_time_ms = 0.0
 
         total_mb = self.arena.nbytes / (1024**2)
-        stride_mb = self.slot_stride / (1024**2)
-        payload_mb = self.layout.payload_bytes / (1024**2)
+        strides_mb = [round(size / (1024**2),2) for size in self.slot_strides]
         print(
             f"[GPURingPipeline] Initialized {self.num_slots}-slot ring "
-            f"({total_mb:.1f} MB VRAM arena | stride {stride_mb:.1f} MB | payload {payload_mb:.2f} MB) | "
+            f"({total_mb:.1f} MB VRAM arena | slot MiB {strides_mb}) | "
             f"Mode: {'Triple-Ring + Tail-Prefetch' if (self.num_slots >= 3 and tail_to_head_prefetch) else f'{self.num_slots}-Slot Ring'}"
         )
 

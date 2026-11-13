@@ -40,8 +40,10 @@ def main():
     p.add_argument("--moe-read-backend", choices=["auto","mmap","pread"], default="auto",
                    help="OLMoE safetensors reads: auto selects pread on Windows, mmap elsewhere")
     p.add_argument("--gpu-expert-slots",type=int,choices=[0,1,2],default=0,
-                   help="Optional native-controlled GPU expert cache; each slot reserves a full Ring stride")
+                   help="Optional native-controlled GPU expert cache; disabled by default")
     p.add_argument("--gpu-cache-mode",choices=["shadow","apply"],default="apply")
+    p.add_argument("--moe-slot-layout",choices=["compact","union"],default="compact",
+                   help="Compact per-role slots, or the historical full union layout")
     p.add_argument("--prompt", default="Hello")
     p.add_argument("--max-new-tokens", type=int, default=8)
     p.add_argument("--airllm-source", default=default_airllm_source())
@@ -79,7 +81,7 @@ def main():
     slots = {"sequential":1, "double_buffer":2, "triple_ring_prefetch":3}[args.pipeline]
     plan = make_plan(model_dir, args.weight_format, args.group_size, slots,
         args.ram_gib,args.vram_gib,args.cache_mib,args.policy,ids.shape[1]+args.max_new_tokens,
-        moe_placement=args.moe_placement,gpu_expert_slots=args.gpu_expert_slots)
+        moe_placement=args.moe_placement,gpu_expert_slots=args.gpu_expert_slots,moe_slot_layout=args.moe_slot_layout)
     if args.action == "plan":
         print(json.dumps(plan.as_dict(),indent=2)); return
     report = dict(status="STARTED", plan=plan.as_dict(), prompt=args.prompt, input_ids=ids.tolist(),
@@ -130,7 +132,7 @@ def main():
                 stream_dense=args.moe_placement=="streamed",
                 io_backend=None if args.moe_read_backend=="auto" else args.moe_read_backend,
                 gpu_expert_slots=args.gpu_expert_slots,gpu_cache_mode=args.gpu_cache_mode,
-                gpu_native_dll=args.native_library if args.gpu_expert_slots else None)
+                gpu_native_dll=args.native_library if args.gpu_expert_slots else None,slot_layout=args.moe_slot_layout)
             cache=runtime.store.cache
             report["airllm_io_backend"]=runtime.provider.reader.io_backend
             if runtime.resources and runtime.resources.residency:

@@ -299,10 +299,13 @@ class SlotArenaLayout:
         arena: torch.Tensor,
         slot_idx: int,
         dtype: Optional[torch.dtype] = None,
+        base_offset_bytes: Optional[int] = None,
     ) -> Dict[str, torch.Tensor]:
         """Создает zero-copy тензорные view слота внутри единой арены uint8."""
         fallback_dtype = dtype or self.dtype
-        base = slot_idx * self.slot_stride
+        base = slot_idx * self.slot_stride if base_offset_bytes is None else base_offset_bytes
+        if arena.dtype != torch.uint8 or arena.ndim != 1 or base < 0 or base+self.slot_stride > arena.numel():
+            raise ValueError("Slot lies outside its byte arena")
         views: Dict[str, torch.Tensor] = {}
         for name, spec in self.specs.items():
             t_dtype = spec.dtype if spec.dtype is not None else fallback_dtype
@@ -312,6 +315,22 @@ class SlotArenaLayout:
                 start = base + spec.offset_bytes
                 views[name] = arena[start : start + spec.nbytes].view(t_dtype).view(spec.shape)
         return views
+
+
+def slot_arena_geometry(layout, num_slots, slot_layouts=None):
+    """One contiguous arena, with explicit disjoint offsets for each slot."""
+    layouts = tuple(slot_layouts) if slot_layouts is not None else (layout,)*num_slots
+    if num_slots < 1 or len(layouts) != num_slots:
+        raise ValueError("Slot layout count must match the arena")
+    offsets, total = [], 0
+    for item in layouts:
+        if not isinstance(item, SlotArenaLayout) or item.dtype != layout.dtype:
+            raise ValueError("Slot layout dtype mismatch")
+        if not 0 <= item.payload_bytes <= item.slot_stride:
+            raise ValueError("Slot payload exceeds its stride")
+        offsets.append(total)
+        total += item.slot_stride
+    return layouts, tuple(offsets), total
 
 
 class BoundedPinnedBufferPool:
@@ -328,6 +347,7 @@ class BoundedPinnedBufferPool:
         num_slots: int = 2,
         dtype: torch.dtype = torch.bfloat16,
         arena_layout: Optional[SlotArenaLayout] = None,
+        slot_layouts: Optional[List[SlotArenaLayout]] = None,
     ):
         self.num_slots = num_slots
         self.dtype = dtype
@@ -342,8 +362,9 @@ class BoundedPinnedBufferPool:
         else:
             raise ValueError("Either template_tensors or arena_layout must be provided")
 
-        self.slot_stride = self.layout.slot_stride
-        total_bytes = self.num_slots * self.slot_stride
+        self.slot_layouts, self.slot_offsets, total_bytes = slot_arena_geometry(self.layout,num_slots,slot_layouts)
+        self.slot_strides = tuple(item.slot_stride for item in self.slot_layouts)
+        self.slot_stride = self.slot_strides[0] if len(set(self.slot_strides))==1 else None
         use_pinned = self.device.type == "cuda"
         self.arena: Optional[torch.Tensor] = (
             torch.empty(total_bytes, dtype=torch.uint8, pin_memory=use_pinned)
@@ -352,9 +373,9 @@ class BoundedPinnedBufferPool:
         )
         self.total_pinned_bytes = self.arena.nbytes
 
-        # Единый пул на все слоты со смещением s * slot_stride без перекрытия и фрагментации
+        # Slots may have different templates, but still share one allocation.
         self.slots: List[Dict[str, torch.Tensor]] = [
-            self.layout.bind_slot_views(self.arena, s, dtype=dtype)
+            self.slot_layouts[s].bind_slot_views(self.arena, s, dtype=dtype,base_offset_bytes=self.slot_offsets[s])
             for s in range(self.num_slots)
         ]
 
@@ -366,12 +387,11 @@ class BoundedPinnedBufferPool:
             self.dma_events = [None] * num_slots
             self._has_in_flight_dma = [False] * num_slots
 
-        stride_mb = self.slot_stride / (1024**2)
-        payload_mb = self.layout.payload_bytes / (1024**2)
+        strides_mb = [round(size / (1024**2),2) for size in self.slot_strides]
         print(
             f"[BoundedPinnedPool] Allocated {num_slots} pinned DMA slots "
             f"({self.total_pinned_bytes / (1024**2):.1f} MB total arena | "
-            f"stride {stride_mb:.1f} MB | payload {payload_mb:.2f} MB) with zero-race protection"
+            f"slot MiB {strides_mb}) with zero-race protection"
         )
 
     def copy_into_slot(self, slot_idx: int, src_tensors: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -387,15 +407,14 @@ class BoundedPinnedBufferPool:
             raise ValueError("Cannot write both attention variants into an overlay slot")
         if not src_tensors:
             raise ValueError("Empty pinned payload")
+        idx = slot_idx % self.num_slots
         # Validate the entire payload before the first write (copy_ can broadcast).
         for name, src_t in src_tensors.items():
-            target = self.slots[0].get(name)
+            target = self.slots[idx].get(name)
             if target is None or not isinstance(src_t, torch.Tensor):
                 raise ValueError(f"Unknown pinned tensor: {name}")
             if src_t.shape != target.shape or src_t.dtype != target.dtype or src_t.device.type != "cpu":
                 raise ValueError(f"Pinned tensor shape/dtype/device mismatch: {name}")
-
-        idx = slot_idx % self.num_slots
 
         # Защита от гонки: ждем, пока GPU DMA закончит чтение предыдущего пакета из этого pinned-буфера
         if self.device.type == "cuda" and self._has_in_flight_dma[idx]:

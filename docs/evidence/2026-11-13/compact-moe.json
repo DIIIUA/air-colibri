@@ -1,0 +1,1718 @@
+{
+  "status": "PASS",
+  "date": "2026-11-13",
+  "feature": "Compact per-role slots in the existing shared Ring and pinned pool",
+  "runtime_sources": {
+    "src\\__init__.py": "d94617cdb3afc941ddba1cc4d4e5e5504424154443f27a4569a1acf4076d0c21",
+    "src\\adaptive_streaming.py": "c7af42f467a52d3e7b5b95ab1f73ccc206ae7c09e0c56b5faeccbe6643fa97ab",
+    "src\\aircolibri_engine.py": "fb516b63dc2437949d73e80a6e7af0ecf6596a6f5b0f767f009dc680c9343e1e",
+    "src\\aircolibri_integrated.py": "dc5fea7812540b4c6be449d8e625ed458962eaa24357ca471a7aae05a8cee9e8",
+    "src\\benchmark_pool_modes.py": "4e44c405c0699bf2b0b269e08b945e7d9c01bdc60df2555b981d4c25d5199001",
+    "src\\benchmark_real_deepseek.py": "800a631b3554653652b453bd5fbf1419f17b5d54795ee79f4d098cfec38cdd68",
+    "src\\benchmark_ssd_comparison.py": "0c79897f134a836a562cf0947faf234eb03230b135f1563d9de07c66575a7d3c",
+    "src\\bounded_memory_manager.py": "dbdcf544f12a9aaa47bca65badbb115890ebccda0fa0c7fe01a757a8da847486",
+    "src\\catalog_bridge.py": "58b959150df648c235bb59bd90aabe5d68812cd4010d8e42844a7c0e7e064ded",
+    "src\\cli.py": "fcb0e9bbd25b2d21a67da9d98bb424350329c1225204a04aed5f2e8f25c41213",
+    "src\\control_contract.py": "27072df1c9dc3b58fdad44a48ac7adaa52a30ee79272ffff07e1f3606f866cb0",
+    "src\\existing_hooks.py": "e8a07008b1c1b0faed26e4cee6e0a42cca72fe8baebfccf31dc5150f53db1165",
+    "src\\gpu_ring_pipeline.py": "1a4827a937ede7ccf8c57d522584d7fbc1f82b472ae535490b6da7303a10bbc6",
+    "src\\hierarchical_cost_model.py": "60d48771bcc391c0f0ea68af1ef08695b3102c56766132b6dee03b695b63e130",
+    "src\\hybrid_layer_runner.py": "dc8246c7974a37985d8c7b980be5dda0f1cda987eeccb1670fa644566a508d76",
+    "src\\lease_ack_bridge.py": "96a81120c476e79abe3b370541e2dfe0ad37a583f6bcf89011d12b5a40d0c1ae",
+    "src\\lfru_cache.py": "9728ccf4659f3985061ae9618604bb68d7f13bc5c263026d3d8878acd2dd215e",
+    "src\\memory_pool.py": "70d528918a381af30b7446bba4edb7dfbd428b1692603f4fbacc2f01f11b2d72",
+    "src\\moe_selective_router.py": "17f61cf84c88ddb7295bee4fd9b6f902aa447bbd4a5b24940414ab087cddb2a4",
+    "src\\olmoe_integrated.py": "c19f582feb944e96572c56a0d7ad69a22d81f62897b050bad87616bb632f9235",
+    "src\\prepacked_q4_cache.py": "79a156552ddeefcbe58eb285023b9dd1c7f4d3749400944d72051f90379a7b7d",
+    "src\\progressive_acceleration.py": "b324dab34bf33c4b8dcebf0dfa288379db324eac4ee5ea79779ea50388a28d91",
+    "src\\quality_metrics.py": "cae7b5fd23091165caa9afa198f0f564e7b44382892e2ca9752baa4f7955ad35",
+    "src\\quantization_q4.py": "148ea3984cb1ff8c76296d89a2dd7f6f1be9243b1ce53d7df7363b7cdf19ff82",
+    "src\\resource_plan.py": "a9c3850f8d676361beaf4803346c1164330933b7fbe90f160f38e7f0ff943476",
+    "src\\run_aircolibri_nvme.py": "6686bdbd8aca45d2e403a5255ac0e9f21615d708d7bbc4e8ca05f51e459a6196",
+    "src\\shadow_policy.py": "483baf31206db225ca6b54b0f9ce5f4eed781e3d32527d4a149dca3b68ea272d",
+    "src\\shared_resources.py": "0d8a8379e09a1130108dfea9f91006695e3e99934d15a1fa848b01950aec9d2f",
+    "src\\upstream_bridge.py": "420f935a64be5180bbb440ebd724a211f79541c02d01a3ed275003c1ec536263"
+  },
+  "harness_sha256": {
+    "verify_shared_moe.py": "9dfb0ec033814be4854ab7544819875f56041e0a31fc0fb49f1b7543bdb8530c",
+    "compare_shared_moe.py": "9e7ac063f0411deefc399c6e640ded9d2c8a00502e3da6b76ef1aa16de0e76b0",
+    "reference_olmoe.py": "4c772a791981d1a6d02bd2a034315f978cf016838bda2c7ef8579ada99db642b"
+  },
+  "environment": {
+    "torch": "2.6.0+cu124",
+    "transformers": "5.22.2",
+    "platform": "Windows x64",
+    "gpu": "RTX 3060 Ti 8 GiB"
+  },
+  "native": {
+    "abi": 1,
+    "revision": "0a5504a1dc64f86fcd0fe7db298b0448c730e7e6",
+    "tier_sha256": "a48e23cd6c814827aef7c440bc1116a2b7e7a55861eed471bcdd1b9323f31931",
+    "bridge_sha256": "a63c164c417ed8bed9a93f8f19c4ba261a0d8b0cef1a9127513e5dcefeb2874b",
+    "dll_sha256": "671fd83a526c82e5972ae7cb8b063a4a7ca26a8cc19e57f905961f20cba6a93d"
+  },
+  "checkpoint_metadata_sha256": {
+    "config.json": "272998dd7ba4846dcc682f0b5a46144f4bcd9dde8e94d2f17bd8e5cf2f23d6ce",
+    "model.safetensors.index.json": "0e2e1e0d8d357ac7af817cff28410c3dbad398f060c517a433e4076b2aae5579",
+    "tokenizer.json": "d1e645ebd850d79567e531a3c103ac575d8e9cf45fa941420afc584b293438ea"
+  },
+  "checkpoint_shards": {
+    "model-00001-of-00003.safetensors": {
+      "bytes": 4997744872,
+      "mtime_ns": 1794339789861135800
+    },
+    "model-00002-of-00003.safetensors": {
+      "bytes": 4997235176,
+      "mtime_ns": 1794340088547185100
+    },
+    "model-00003-of-00003.safetensors": {
+      "bytes": 3843741912,
+      "mtime_ns": 1794339732343153500
+    }
+  },
+  "comparisons": {
+    "short": {
+      "status": "PASS",
+      "reference": "reference-v1",
+      "reference_forward_count": 6,
+      "reference_peak_vram": 1262971392,
+      "reference_source_sha256": "4c772a791981d1a6d02bd2a034315f978cf016838bda2c7ef8579ada99db642b",
+      "results": [
+        {
+          "case": "compact-short-off-v1",
+          "status": "PASS",
+          "identical_inputs": true,
+          "exact_logits": true,
+          "exact_kv_state_hashes": true,
+          "bitwise_logits": true,
+          "source_identity_matches": {
+            "checkpoint_metadata_sha256": null,
+            "checkpoint_shards": null,
+            "hf_olmoe_source_sha256": null
+          },
+          "exact_router_choices": true,
+          "forward_count": 6,
+          "logit_values": 301824,
+          "max_abs_logit_error": 0.0,
+          "peak_vram": 472116224,
+          "peak_reserved": 488636416,
+          "allocator_budget_gib": 0.75,
+          "allocated_after_close": 8519680,
+          "oracle_source_matches": true,
+          "native": true,
+          "native_policy": {
+            "accesses": 1180,
+            "native_calls": 1176,
+            "accepted": 5,
+            "rejected": 1165,
+            "decisions_returned": 1170,
+            "backend_acks": 1171,
+            "backend_admissions": 5,
+            "backend_rejections": 1165
+          },
+          "airllm_io_backend": "pread",
+          "resources": {
+            "kind": "shared-dense-expert-ring-v3",
+            "counts": {
+              "dense": 96,
+              "expert": 1180
+            },
+            "slot_layout": "compact",
+            "logical_h2d_bytes": {
+              "dense": 3247964160,
+              "expert": 14847836160
+            },
+            "active_slots": 0,
+            "peak_active_slots": 2,
+            "slot_stride": null,
+            "slot_strides": [
+              35651584,
+              12582912
+            ],
+            "slot_offsets": [
+              0,
+              35651584
+            ],
+            "gpu_arena_bytes": 48234496,
+            "pinned_arena_bytes": 48234496,
+            "loads": 1276,
+            "computes": 1276,
+            "lease_event_counts": {
+              "slot_reserved": 1276,
+              "dma_event_recorded": 1276,
+              "compute_dependency_enqueued": 1276,
+              "compute_event_recorded": 1276,
+              "dma_completed_on_gpu": 1276,
+              "compute_completed_on_gpu": 1276
+            },
+            "violations": 0,
+            "resident_acquires": 0,
+            "expert_residency": null,
+            "dynamic_vram_cache": false
+          }
+        },
+        {
+          "case": "compact-short-apply-v1",
+          "status": "PASS",
+          "identical_inputs": true,
+          "exact_logits": true,
+          "exact_kv_state_hashes": true,
+          "bitwise_logits": true,
+          "source_identity_matches": {
+            "checkpoint_metadata_sha256": null,
+            "checkpoint_shards": null,
+            "hf_olmoe_source_sha256": null
+          },
+          "exact_router_choices": true,
+          "forward_count": 6,
+          "logit_values": 301824,
+          "max_abs_logit_error": 0.0,
+          "peak_vram": 497282048,
+          "peak_reserved": 513802240,
+          "allocator_budget_gib": 0.75,
+          "allocated_after_close": 8519680,
+          "oracle_source_matches": true,
+          "native": true,
+          "native_policy": {
+            "accesses": 1176,
+            "native_calls": 1176,
+            "accepted": 5,
+            "rejected": 1165,
+            "decisions_returned": 1170,
+            "backend_acks": 1171,
+            "backend_admissions": 5,
+            "backend_rejections": 1165
+          },
+          "airllm_io_backend": "pread",
+          "resources": {
+            "kind": "shared-dense-expert-ring-v3",
+            "counts": {
+              "dense": 96,
+              "expert": 1180
+            },
+            "slot_layout": "compact",
+            "logical_h2d_bytes": {
+              "dense": 3247964160,
+              "expert": 14797504512
+            },
+            "active_slots": 0,
+            "peak_active_slots": 2,
+            "slot_stride": null,
+            "slot_strides": [
+              35651584,
+              12582912,
+              12582912,
+              12582912
+            ],
+            "slot_offsets": [
+              0,
+              35651584,
+              48234496,
+              60817408
+            ],
+            "gpu_arena_bytes": 73400320,
+            "pinned_arena_bytes": 73400320,
+            "loads": 1272,
+            "computes": 1276,
+            "lease_event_counts": {
+              "slot_reserved": 1272,
+              "dma_event_recorded": 1272,
+              "compute_dependency_enqueued": 1272,
+              "compute_event_recorded": 1276,
+              "dma_completed_on_gpu": 1272,
+              "compute_completed_on_gpu": 1276,
+              "resident_compute_dependency_enqueued": 4
+            },
+            "violations": 0,
+            "resident_acquires": 4,
+            "expert_residency": {
+              "mode": "apply",
+              "capacity": 2,
+              "stats": {
+                "requests": 1180,
+                "admissions_submitted": 2,
+                "admissions_confirmed": 2,
+                "hits": 4,
+                "avoided_h2d_bytes": 50331648
+              },
+              "resident_experts": [
+                17,
+                20
+              ],
+              "virtual_experts": [],
+              "reserved_gpu_bytes": 25165824,
+              "reserved_pinned_bytes": 25165824,
+              "native_policy": {
+                "accesses": 1180,
+                "native_calls": 1185,
+                "accepted": 2,
+                "rejected": 1174,
+                "decisions_returned": 1176,
+                "backend_acks": 1178,
+                "backend_admissions": 2,
+                "backend_rejections": 1174
+              }
+            },
+            "dynamic_vram_cache": true
+          }
+        }
+      ],
+      "input_artifact_sha256": {
+        "reference-v1": "98b744ba66f1f14513cfd93214aa8698413d2414f73d7bf63e1ce96cf25ad311",
+        "compact-short-off-v1": "2746c7d232d93efcf81dddc17efd116dabbe9899c1c0ca03dd8b0577f7076503",
+        "compact-short-apply-v1": "cb3b7f56ee3a9ef56e17b94e45bcafe6e9de2a8b7c1e84e1435e4658b07ccda3"
+      },
+      "workload": "historical-short",
+      "limits": "Same installed Transformers graph; independent loading/materialization only. Workload-scoped parity; no speed, long-context certification or physical-I/O claim."
+    },
+    "extended": {
+      "status": "PASS",
+      "reference": "compact-extended-reference-v3",
+      "reference_forward_count": 17,
+      "reference_peak_vram": 1290091008,
+      "reference_source_sha256": "4c772a791981d1a6d02bd2a034315f978cf016838bda2c7ef8579ada99db642b",
+      "results": [
+        {
+          "case": "compact-extended-off-v1",
+          "status": "PASS",
+          "identical_inputs": true,
+          "exact_logits": true,
+          "exact_kv_state_hashes": true,
+          "bitwise_logits": true,
+          "source_identity_matches": {
+            "checkpoint_metadata_sha256": true,
+            "checkpoint_shards": true,
+            "hf_olmoe_source_sha256": true
+          },
+          "exact_router_choices": true,
+          "forward_count": 17,
+          "logit_values": 855168,
+          "max_abs_logit_error": 0.0,
+          "peak_vram": 499186176,
+          "peak_reserved": 526385152,
+          "allocator_budget_gib": 0.75,
+          "allocated_after_close": 8519680,
+          "oracle_source_matches": true,
+          "native": true,
+          "native_policy": {
+            "accesses": 2950,
+            "native_calls": 2964,
+            "accepted": 5,
+            "rejected": 2935,
+            "decisions_returned": 2940,
+            "backend_acks": 2941,
+            "backend_admissions": 5,
+            "backend_rejections": 2935
+          },
+          "airllm_io_backend": "pread",
+          "resources": {
+            "kind": "shared-dense-expert-ring-v3",
+            "counts": {
+              "dense": 272,
+              "expert": 2950
+            },
+            "slot_layout": "compact",
+            "logical_h2d_bytes": {
+              "dense": 9202565120,
+              "expert": 37119590400
+            },
+            "active_slots": 0,
+            "peak_active_slots": 2,
+            "slot_stride": null,
+            "slot_strides": [
+              35651584,
+              12582912
+            ],
+            "slot_offsets": [
+              0,
+              35651584
+            ],
+            "gpu_arena_bytes": 48234496,
+            "pinned_arena_bytes": 48234496,
+            "loads": 3222,
+            "computes": 3222,
+            "lease_event_counts": {
+              "slot_reserved": 3222,
+              "dma_event_recorded": 3222,
+              "compute_dependency_enqueued": 3222,
+              "compute_event_recorded": 3222,
+              "dma_completed_on_gpu": 3222,
+              "compute_completed_on_gpu": 3222
+            },
+            "violations": 0,
+            "resident_acquires": 0,
+            "expert_residency": null,
+            "dynamic_vram_cache": false
+          }
+        },
+        {
+          "case": "compact-extended-shadow-v1",
+          "status": "PASS",
+          "identical_inputs": true,
+          "exact_logits": true,
+          "exact_kv_state_hashes": true,
+          "bitwise_logits": true,
+          "source_identity_matches": {
+            "checkpoint_metadata_sha256": true,
+            "checkpoint_shards": true,
+            "hf_olmoe_source_sha256": true
+          },
+          "exact_router_choices": true,
+          "forward_count": 17,
+          "logit_values": 855168,
+          "max_abs_logit_error": 0.0,
+          "peak_vram": 524352000,
+          "peak_reserved": 551550976,
+          "allocator_budget_gib": 0.75,
+          "allocated_after_close": 8519680,
+          "oracle_source_matches": true,
+          "native": true,
+          "native_policy": {
+            "accesses": 2950,
+            "native_calls": 2964,
+            "accepted": 5,
+            "rejected": 2935,
+            "decisions_returned": 2940,
+            "backend_acks": 2941,
+            "backend_admissions": 5,
+            "backend_rejections": 2935
+          },
+          "airllm_io_backend": "pread",
+          "resources": {
+            "kind": "shared-dense-expert-ring-v3",
+            "counts": {
+              "dense": 272,
+              "expert": 2950
+            },
+            "slot_layout": "compact",
+            "logical_h2d_bytes": {
+              "dense": 9202565120,
+              "expert": 37119590400
+            },
+            "active_slots": 0,
+            "peak_active_slots": 2,
+            "slot_stride": null,
+            "slot_strides": [
+              35651584,
+              12582912,
+              12582912,
+              12582912
+            ],
+            "slot_offsets": [
+              0,
+              35651584,
+              48234496,
+              60817408
+            ],
+            "gpu_arena_bytes": 73400320,
+            "pinned_arena_bytes": 73400320,
+            "loads": 3222,
+            "computes": 3222,
+            "lease_event_counts": {
+              "slot_reserved": 3222,
+              "dma_event_recorded": 3222,
+              "compute_dependency_enqueued": 3222,
+              "compute_event_recorded": 3222,
+              "dma_completed_on_gpu": 3222,
+              "compute_completed_on_gpu": 3222
+            },
+            "violations": 0,
+            "resident_acquires": 0,
+            "expert_residency": {
+              "mode": "shadow",
+              "capacity": 2,
+              "stats": {
+                "requests": 2950,
+                "shadow_admissions": 2
+              },
+              "resident_experts": [],
+              "virtual_experts": [
+                0,
+                1
+              ],
+              "reserved_gpu_bytes": 25165824,
+              "reserved_pinned_bytes": 25165824,
+              "native_policy": {
+                "accesses": 2950,
+                "native_calls": 2977,
+                "accepted": 2,
+                "rejected": 2948,
+                "decisions_returned": 2950,
+                "backend_acks": 2950,
+                "backend_admissions": 0,
+                "backend_rejections": 0
+              }
+            },
+            "dynamic_vram_cache": false
+          }
+        },
+        {
+          "case": "compact-extended-apply-v1",
+          "status": "PASS",
+          "identical_inputs": true,
+          "exact_logits": true,
+          "exact_kv_state_hashes": true,
+          "bitwise_logits": true,
+          "source_identity_matches": {
+            "checkpoint_metadata_sha256": true,
+            "checkpoint_shards": true,
+            "hf_olmoe_source_sha256": true
+          },
+          "exact_router_choices": true,
+          "forward_count": 17,
+          "logit_values": 855168,
+          "max_abs_logit_error": 0.0,
+          "peak_vram": 524352000,
+          "peak_reserved": 551550976,
+          "allocator_budget_gib": 0.75,
+          "allocated_after_close": 8519680,
+          "oracle_source_matches": true,
+          "native": true,
+          "native_policy": {
+            "accesses": 2950,
+            "native_calls": 2964,
+            "accepted": 5,
+            "rejected": 2935,
+            "decisions_returned": 2940,
+            "backend_acks": 2941,
+            "backend_admissions": 5,
+            "backend_rejections": 2935
+          },
+          "airllm_io_backend": "pread",
+          "resources": {
+            "kind": "shared-dense-expert-ring-v3",
+            "counts": {
+              "dense": 272,
+              "expert": 2950
+            },
+            "slot_layout": "compact",
+            "logical_h2d_bytes": {
+              "dense": 9202565120,
+              "expert": 37119590400
+            },
+            "active_slots": 0,
+            "peak_active_slots": 2,
+            "slot_stride": null,
+            "slot_strides": [
+              35651584,
+              12582912,
+              12582912,
+              12582912
+            ],
+            "slot_offsets": [
+              0,
+              35651584,
+              48234496,
+              60817408
+            ],
+            "gpu_arena_bytes": 73400320,
+            "pinned_arena_bytes": 73400320,
+            "loads": 3222,
+            "computes": 3222,
+            "lease_event_counts": {
+              "slot_reserved": 3222,
+              "dma_event_recorded": 3222,
+              "compute_dependency_enqueued": 3222,
+              "compute_event_recorded": 3222,
+              "dma_completed_on_gpu": 3222,
+              "compute_completed_on_gpu": 3222
+            },
+            "violations": 0,
+            "resident_acquires": 0,
+            "expert_residency": {
+              "mode": "apply",
+              "capacity": 2,
+              "stats": {
+                "requests": 2950,
+                "admissions_submitted": 2,
+                "admissions_confirmed": 2
+              },
+              "resident_experts": [
+                0,
+                1
+              ],
+              "virtual_experts": [],
+              "reserved_gpu_bytes": 25165824,
+              "reserved_pinned_bytes": 25165824,
+              "native_policy": {
+                "accesses": 2950,
+                "native_calls": 2977,
+                "accepted": 2,
+                "rejected": 2948,
+                "decisions_returned": 2950,
+                "backend_acks": 2952,
+                "backend_admissions": 2,
+                "backend_rejections": 2948
+              }
+            },
+            "dynamic_vram_cache": true
+          }
+        }
+      ],
+      "input_artifact_sha256": {
+        "compact-extended-reference-v3": "1eb811fb8cfa1c17ecbe242071669e34eb2abe551ca64dc69474960756511eb3",
+        "compact-extended-off-v1": "4970dfd1efd8e6d77075b2597eac7d784acb4865284a4af8635f0a87541b79f2",
+        "compact-extended-shadow-v1": "67ea7b57b3be9a11c56e01462fa816500cd284c500ed59055d4f0e7c34606bdf",
+        "compact-extended-apply-v1": "02a3e8ac75707ed5f4520c9b2c9e3659fee311e0e232116b71c3ed5ea18262ba"
+      },
+      "workload": "extended",
+      "limits": "Same installed Transformers graph; independent loading/materialization only. Workload-scoped parity; no speed, long-context certification or physical-I/O claim."
+    }
+  },
+  "cases": {
+    "compact-short-off-v1": {
+      "peak_vram": 472116224,
+      "peak_reserved": 488636416,
+      "expert_reads": 1170,
+      "h2d_expert_bytes": 14847836160,
+      "resources": {
+        "kind": "shared-dense-expert-ring-v3",
+        "counts": {
+          "dense": 96,
+          "expert": 1180
+        },
+        "slot_layout": "compact",
+        "logical_h2d_bytes": {
+          "dense": 3247964160,
+          "expert": 14847836160
+        },
+        "active_slots": 0,
+        "peak_active_slots": 2,
+        "slot_stride": null,
+        "slot_strides": [
+          35651584,
+          12582912
+        ],
+        "slot_offsets": [
+          0,
+          35651584
+        ],
+        "gpu_arena_bytes": 48234496,
+        "pinned_arena_bytes": 48234496,
+        "loads": 1276,
+        "computes": 1276,
+        "lease_event_counts": {
+          "slot_reserved": 1276,
+          "dma_event_recorded": 1276,
+          "compute_dependency_enqueued": 1276,
+          "compute_event_recorded": 1276,
+          "dma_completed_on_gpu": 1276,
+          "compute_completed_on_gpu": 1276
+        },
+        "violations": 0,
+        "resident_acquires": 0,
+        "expert_residency": null,
+        "dynamic_vram_cache": false
+      },
+      "step_memory": [
+        {
+          "allocated": 469080576,
+          "reserved": 486539264,
+          "rss": 1622212608,
+          "available_ram": 3997982720,
+          "state_tensor_bytes": 131072,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 469211648,
+          "reserved": 486539264,
+          "rss": 1636741120,
+          "available_ram": 4064407552,
+          "state_tensor_bytes": 262144,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 469342720,
+          "reserved": 486539264,
+          "rss": 1636151296,
+          "available_ram": 4171341824,
+          "state_tensor_bytes": 393216,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 471863296,
+          "reserved": 486539264,
+          "rss": 1653006336,
+          "available_ram": 4037890048,
+          "state_tensor_bytes": 1441792,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 470522368,
+          "reserved": 486539264,
+          "rss": 1653215232,
+          "available_ram": 4155969536,
+          "state_tensor_bytes": 1572864,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 470653440,
+          "reserved": 488636416,
+          "rss": 1653346304,
+          "available_ram": 4142620672,
+          "state_tensor_bytes": 1703936,
+          "gpu_cache_stats": null
+        }
+      ]
+    },
+    "compact-short-apply-v1": {
+      "peak_vram": 497282048,
+      "peak_reserved": 513802240,
+      "expert_reads": 1170,
+      "h2d_expert_bytes": 14797504512,
+      "resources": {
+        "kind": "shared-dense-expert-ring-v3",
+        "counts": {
+          "dense": 96,
+          "expert": 1180
+        },
+        "slot_layout": "compact",
+        "logical_h2d_bytes": {
+          "dense": 3247964160,
+          "expert": 14797504512
+        },
+        "active_slots": 0,
+        "peak_active_slots": 2,
+        "slot_stride": null,
+        "slot_strides": [
+          35651584,
+          12582912,
+          12582912,
+          12582912
+        ],
+        "slot_offsets": [
+          0,
+          35651584,
+          48234496,
+          60817408
+        ],
+        "gpu_arena_bytes": 73400320,
+        "pinned_arena_bytes": 73400320,
+        "loads": 1272,
+        "computes": 1276,
+        "lease_event_counts": {
+          "slot_reserved": 1272,
+          "dma_event_recorded": 1272,
+          "compute_dependency_enqueued": 1272,
+          "compute_event_recorded": 1276,
+          "dma_completed_on_gpu": 1272,
+          "compute_completed_on_gpu": 1276,
+          "resident_compute_dependency_enqueued": 4
+        },
+        "violations": 0,
+        "resident_acquires": 4,
+        "expert_residency": {
+          "mode": "apply",
+          "capacity": 2,
+          "stats": {
+            "requests": 1180,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2,
+            "hits": 4,
+            "avoided_h2d_bytes": 50331648
+          },
+          "resident_experts": [
+            17,
+            20
+          ],
+          "virtual_experts": [],
+          "reserved_gpu_bytes": 25165824,
+          "reserved_pinned_bytes": 25165824,
+          "native_policy": {
+            "accesses": 1180,
+            "native_calls": 1185,
+            "accepted": 2,
+            "rejected": 1174,
+            "decisions_returned": 1176,
+            "backend_acks": 1178,
+            "backend_admissions": 2,
+            "backend_rejections": 1174
+          }
+        },
+        "dynamic_vram_cache": true
+      },
+      "step_memory": [
+        {
+          "allocated": 494246400,
+          "reserved": 511705088,
+          "rss": 1689329664,
+          "available_ram": 4639776768,
+          "state_tensor_bytes": 131072,
+          "gpu_cache_stats": {
+            "requests": 128,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        },
+        {
+          "allocated": 494377472,
+          "reserved": 511705088,
+          "rss": 1704366080,
+          "available_ram": 4619296768,
+          "state_tensor_bytes": 262144,
+          "gpu_cache_stats": {
+            "requests": 256,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2,
+            "hits": 1,
+            "avoided_h2d_bytes": 12582912
+          }
+        },
+        {
+          "allocated": 494508544,
+          "reserved": 511705088,
+          "rss": 1704828928,
+          "available_ram": 4636336128,
+          "state_tensor_bytes": 393216,
+          "gpu_cache_stats": {
+            "requests": 384,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2,
+            "hits": 2,
+            "avoided_h2d_bytes": 25165824
+          }
+        },
+        {
+          "allocated": 497029120,
+          "reserved": 511705088,
+          "rss": 1721741312,
+          "available_ram": 4531601408,
+          "state_tensor_bytes": 1441792,
+          "gpu_cache_stats": {
+            "requests": 924,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2,
+            "hits": 4,
+            "avoided_h2d_bytes": 50331648
+          }
+        },
+        {
+          "allocated": 495688192,
+          "reserved": 511705088,
+          "rss": 1722273792,
+          "available_ram": 4621410304,
+          "state_tensor_bytes": 1572864,
+          "gpu_cache_stats": {
+            "requests": 1052,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2,
+            "hits": 4,
+            "avoided_h2d_bytes": 50331648
+          }
+        },
+        {
+          "allocated": 495819264,
+          "reserved": 513802240,
+          "rss": 1722560512,
+          "available_ram": 4609650688,
+          "state_tensor_bytes": 1703936,
+          "gpu_cache_stats": {
+            "requests": 1180,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2,
+            "hits": 4,
+            "avoided_h2d_bytes": 50331648
+          }
+        }
+      ]
+    },
+    "compact-extended-off-v1": {
+      "peak_vram": 499186176,
+      "peak_reserved": 526385152,
+      "expert_reads": 2940,
+      "h2d_expert_bytes": 37119590400,
+      "resources": {
+        "kind": "shared-dense-expert-ring-v3",
+        "counts": {
+          "dense": 272,
+          "expert": 2950
+        },
+        "slot_layout": "compact",
+        "logical_h2d_bytes": {
+          "dense": 9202565120,
+          "expert": 37119590400
+        },
+        "active_slots": 0,
+        "peak_active_slots": 2,
+        "slot_stride": null,
+        "slot_strides": [
+          35651584,
+          12582912
+        ],
+        "slot_offsets": [
+          0,
+          35651584
+        ],
+        "gpu_arena_bytes": 48234496,
+        "pinned_arena_bytes": 48234496,
+        "loads": 3222,
+        "computes": 3222,
+        "lease_event_counts": {
+          "slot_reserved": 3222,
+          "dma_event_recorded": 3222,
+          "compute_dependency_enqueued": 3222,
+          "compute_event_recorded": 3222,
+          "dma_completed_on_gpu": 3222,
+          "compute_completed_on_gpu": 3222
+        },
+        "violations": 0,
+        "resident_acquires": 0,
+        "expert_residency": null,
+        "dynamic_vram_cache": false
+      },
+      "step_memory": [
+        {
+          "allocated": 498503680,
+          "reserved": 522190848,
+          "rss": 1604931584,
+          "available_ram": 4766490624,
+          "state_tensor_bytes": 16777216,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 485857792,
+          "reserved": 524288000,
+          "rss": 1640075264,
+          "available_ram": 4700229632,
+          "state_tensor_bytes": 16908288,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 485988864,
+          "reserved": 526385152,
+          "rss": 1640243200,
+          "available_ram": 4725121024,
+          "state_tensor_bytes": 17039360,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 486119936,
+          "reserved": 526385152,
+          "rss": 1640357888,
+          "available_ram": 4640612352,
+          "state_tensor_bytes": 17170432,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 486251008,
+          "reserved": 526385152,
+          "rss": 1640480768,
+          "available_ram": 4669739008,
+          "state_tensor_bytes": 17301504,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 486382080,
+          "reserved": 526385152,
+          "rss": 1640615936,
+          "available_ram": 4671528960,
+          "state_tensor_bytes": 17432576,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 486513152,
+          "reserved": 526385152,
+          "rss": 1640742912,
+          "available_ram": 4508561408,
+          "state_tensor_bytes": 17563648,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 486644224,
+          "reserved": 526385152,
+          "rss": 1640849408,
+          "available_ram": 4657704960,
+          "state_tensor_bytes": 17694720,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 486775296,
+          "reserved": 526385152,
+          "rss": 1641021440,
+          "available_ram": 4681879552,
+          "state_tensor_bytes": 17825792,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 486906368,
+          "reserved": 526385152,
+          "rss": 1641123840,
+          "available_ram": 4071317504,
+          "state_tensor_bytes": 17956864,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 487037440,
+          "reserved": 526385152,
+          "rss": 1640075264,
+          "available_ram": 4456284160,
+          "state_tensor_bytes": 18087936,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 487168512,
+          "reserved": 526385152,
+          "rss": 1640140800,
+          "available_ram": 4659331072,
+          "state_tensor_bytes": 18219008,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 487299584,
+          "reserved": 526385152,
+          "rss": 1640144896,
+          "available_ram": 4708302848,
+          "state_tensor_bytes": 18350080,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 487430656,
+          "reserved": 526385152,
+          "rss": 1640214528,
+          "available_ram": 4635381760,
+          "state_tensor_bytes": 18481152,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 487561728,
+          "reserved": 526385152,
+          "rss": 1640284160,
+          "available_ram": 4683841536,
+          "state_tensor_bytes": 18612224,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 487692800,
+          "reserved": 526385152,
+          "rss": 1640329216,
+          "available_ram": 4695875584,
+          "state_tensor_bytes": 18743296,
+          "gpu_cache_stats": null
+        },
+        {
+          "allocated": 487823872,
+          "reserved": 526385152,
+          "rss": 1640468480,
+          "available_ram": 4692013056,
+          "state_tensor_bytes": 18874368,
+          "gpu_cache_stats": null
+        }
+      ]
+    },
+    "compact-extended-shadow-v1": {
+      "peak_vram": 524352000,
+      "peak_reserved": 551550976,
+      "expert_reads": 2940,
+      "h2d_expert_bytes": 37119590400,
+      "resources": {
+        "kind": "shared-dense-expert-ring-v3",
+        "counts": {
+          "dense": 272,
+          "expert": 2950
+        },
+        "slot_layout": "compact",
+        "logical_h2d_bytes": {
+          "dense": 9202565120,
+          "expert": 37119590400
+        },
+        "active_slots": 0,
+        "peak_active_slots": 2,
+        "slot_stride": null,
+        "slot_strides": [
+          35651584,
+          12582912,
+          12582912,
+          12582912
+        ],
+        "slot_offsets": [
+          0,
+          35651584,
+          48234496,
+          60817408
+        ],
+        "gpu_arena_bytes": 73400320,
+        "pinned_arena_bytes": 73400320,
+        "loads": 3222,
+        "computes": 3222,
+        "lease_event_counts": {
+          "slot_reserved": 3222,
+          "dma_event_recorded": 3222,
+          "compute_dependency_enqueued": 3222,
+          "compute_event_recorded": 3222,
+          "dma_completed_on_gpu": 3222,
+          "compute_completed_on_gpu": 3222
+        },
+        "violations": 0,
+        "resident_acquires": 0,
+        "expert_residency": {
+          "mode": "shadow",
+          "capacity": 2,
+          "stats": {
+            "requests": 2950,
+            "shadow_admissions": 2
+          },
+          "resident_experts": [],
+          "virtual_experts": [
+            0,
+            1
+          ],
+          "reserved_gpu_bytes": 25165824,
+          "reserved_pinned_bytes": 25165824,
+          "native_policy": {
+            "accesses": 2950,
+            "native_calls": 2977,
+            "accepted": 2,
+            "rejected": 2948,
+            "decisions_returned": 2950,
+            "backend_acks": 2950,
+            "backend_admissions": 0,
+            "backend_rejections": 0
+          }
+        },
+        "dynamic_vram_cache": false
+      },
+      "step_memory": [
+        {
+          "allocated": 523669504,
+          "reserved": 547356672,
+          "rss": 1673175040,
+          "available_ram": 4688175104,
+          "state_tensor_bytes": 16777216,
+          "gpu_cache_stats": {
+            "requests": 902,
+            "shadow_admissions": 2
+          }
+        },
+        {
+          "allocated": 511023616,
+          "reserved": 549453824,
+          "rss": 1707843584,
+          "available_ram": 4577550336,
+          "state_tensor_bytes": 16908288,
+          "gpu_cache_stats": {
+            "requests": 1030,
+            "shadow_admissions": 2
+          }
+        },
+        {
+          "allocated": 511154688,
+          "reserved": 551550976,
+          "rss": 1708097536,
+          "available_ram": 4677160960,
+          "state_tensor_bytes": 17039360,
+          "gpu_cache_stats": {
+            "requests": 1158,
+            "shadow_admissions": 2
+          }
+        },
+        {
+          "allocated": 511285760,
+          "reserved": 551550976,
+          "rss": 1708285952,
+          "available_ram": 4662779904,
+          "state_tensor_bytes": 17170432,
+          "gpu_cache_stats": {
+            "requests": 1286,
+            "shadow_admissions": 2
+          }
+        },
+        {
+          "allocated": 511416832,
+          "reserved": 551550976,
+          "rss": 1708429312,
+          "available_ram": 4628934656,
+          "state_tensor_bytes": 17301504,
+          "gpu_cache_stats": {
+            "requests": 1414,
+            "shadow_admissions": 2
+          }
+        },
+        {
+          "allocated": 511547904,
+          "reserved": 551550976,
+          "rss": 1708593152,
+          "available_ram": 4640370688,
+          "state_tensor_bytes": 17432576,
+          "gpu_cache_stats": {
+            "requests": 1542,
+            "shadow_admissions": 2
+          }
+        },
+        {
+          "allocated": 511678976,
+          "reserved": 551550976,
+          "rss": 1708728320,
+          "available_ram": 4629884928,
+          "state_tensor_bytes": 17563648,
+          "gpu_cache_stats": {
+            "requests": 1670,
+            "shadow_admissions": 2
+          }
+        },
+        {
+          "allocated": 511810048,
+          "reserved": 551550976,
+          "rss": 1708867584,
+          "available_ram": 4620144640,
+          "state_tensor_bytes": 17694720,
+          "gpu_cache_stats": {
+            "requests": 1798,
+            "shadow_admissions": 2
+          }
+        },
+        {
+          "allocated": 511941120,
+          "reserved": 551550976,
+          "rss": 1709072384,
+          "available_ram": 4628578304,
+          "state_tensor_bytes": 17825792,
+          "gpu_cache_stats": {
+            "requests": 1926,
+            "shadow_admissions": 2
+          }
+        },
+        {
+          "allocated": 512072192,
+          "reserved": 551550976,
+          "rss": 1709199360,
+          "available_ram": 4636946432,
+          "state_tensor_bytes": 17956864,
+          "gpu_cache_stats": {
+            "requests": 2054,
+            "shadow_admissions": 2
+          }
+        },
+        {
+          "allocated": 512203264,
+          "reserved": 551550976,
+          "rss": 1709297664,
+          "available_ram": 4618051584,
+          "state_tensor_bytes": 18087936,
+          "gpu_cache_stats": {
+            "requests": 2182,
+            "shadow_admissions": 2
+          }
+        },
+        {
+          "allocated": 512334336,
+          "reserved": 551550976,
+          "rss": 1709395968,
+          "available_ram": 4631572480,
+          "state_tensor_bytes": 18219008,
+          "gpu_cache_stats": {
+            "requests": 2310,
+            "shadow_admissions": 2
+          }
+        },
+        {
+          "allocated": 512465408,
+          "reserved": 551550976,
+          "rss": 1709432832,
+          "available_ram": 4633231360,
+          "state_tensor_bytes": 18350080,
+          "gpu_cache_stats": {
+            "requests": 2438,
+            "shadow_admissions": 2
+          }
+        },
+        {
+          "allocated": 512596480,
+          "reserved": 551550976,
+          "rss": 1709502464,
+          "available_ram": 4637237248,
+          "state_tensor_bytes": 18481152,
+          "gpu_cache_stats": {
+            "requests": 2566,
+            "shadow_admissions": 2
+          }
+        },
+        {
+          "allocated": 512727552,
+          "reserved": 551550976,
+          "rss": 1709588480,
+          "available_ram": 4651220992,
+          "state_tensor_bytes": 18612224,
+          "gpu_cache_stats": {
+            "requests": 2694,
+            "shadow_admissions": 2
+          }
+        },
+        {
+          "allocated": 512858624,
+          "reserved": 551550976,
+          "rss": 1709715456,
+          "available_ram": 4649439232,
+          "state_tensor_bytes": 18743296,
+          "gpu_cache_stats": {
+            "requests": 2822,
+            "shadow_admissions": 2
+          }
+        },
+        {
+          "allocated": 512989696,
+          "reserved": 551550976,
+          "rss": 1709780992,
+          "available_ram": 4623937536,
+          "state_tensor_bytes": 18874368,
+          "gpu_cache_stats": {
+            "requests": 2950,
+            "shadow_admissions": 2
+          }
+        }
+      ]
+    },
+    "compact-extended-apply-v1": {
+      "peak_vram": 524352000,
+      "peak_reserved": 551550976,
+      "expert_reads": 2940,
+      "h2d_expert_bytes": 37119590400,
+      "resources": {
+        "kind": "shared-dense-expert-ring-v3",
+        "counts": {
+          "dense": 272,
+          "expert": 2950
+        },
+        "slot_layout": "compact",
+        "logical_h2d_bytes": {
+          "dense": 9202565120,
+          "expert": 37119590400
+        },
+        "active_slots": 0,
+        "peak_active_slots": 2,
+        "slot_stride": null,
+        "slot_strides": [
+          35651584,
+          12582912,
+          12582912,
+          12582912
+        ],
+        "slot_offsets": [
+          0,
+          35651584,
+          48234496,
+          60817408
+        ],
+        "gpu_arena_bytes": 73400320,
+        "pinned_arena_bytes": 73400320,
+        "loads": 3222,
+        "computes": 3222,
+        "lease_event_counts": {
+          "slot_reserved": 3222,
+          "dma_event_recorded": 3222,
+          "compute_dependency_enqueued": 3222,
+          "compute_event_recorded": 3222,
+          "dma_completed_on_gpu": 3222,
+          "compute_completed_on_gpu": 3222
+        },
+        "violations": 0,
+        "resident_acquires": 0,
+        "expert_residency": {
+          "mode": "apply",
+          "capacity": 2,
+          "stats": {
+            "requests": 2950,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          },
+          "resident_experts": [
+            0,
+            1
+          ],
+          "virtual_experts": [],
+          "reserved_gpu_bytes": 25165824,
+          "reserved_pinned_bytes": 25165824,
+          "native_policy": {
+            "accesses": 2950,
+            "native_calls": 2977,
+            "accepted": 2,
+            "rejected": 2948,
+            "decisions_returned": 2950,
+            "backend_acks": 2952,
+            "backend_admissions": 2,
+            "backend_rejections": 2948
+          }
+        },
+        "dynamic_vram_cache": true
+      },
+      "step_memory": [
+        {
+          "allocated": 523669504,
+          "reserved": 547356672,
+          "rss": 1672261632,
+          "available_ram": 4666048512,
+          "state_tensor_bytes": 16777216,
+          "gpu_cache_stats": {
+            "requests": 902,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        },
+        {
+          "allocated": 511023616,
+          "reserved": 549453824,
+          "rss": 1707356160,
+          "available_ram": 4648419328,
+          "state_tensor_bytes": 16908288,
+          "gpu_cache_stats": {
+            "requests": 1030,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        },
+        {
+          "allocated": 511154688,
+          "reserved": 551550976,
+          "rss": 1707577344,
+          "available_ram": 4612251648,
+          "state_tensor_bytes": 17039360,
+          "gpu_cache_stats": {
+            "requests": 1158,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        },
+        {
+          "allocated": 511285760,
+          "reserved": 551550976,
+          "rss": 1707745280,
+          "available_ram": 4595634176,
+          "state_tensor_bytes": 17170432,
+          "gpu_cache_stats": {
+            "requests": 1286,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        },
+        {
+          "allocated": 511416832,
+          "reserved": 551550976,
+          "rss": 1708027904,
+          "available_ram": 4596912128,
+          "state_tensor_bytes": 17301504,
+          "gpu_cache_stats": {
+            "requests": 1414,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        },
+        {
+          "allocated": 511547904,
+          "reserved": 551550976,
+          "rss": 1708187648,
+          "available_ram": 4545249280,
+          "state_tensor_bytes": 17432576,
+          "gpu_cache_stats": {
+            "requests": 1542,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        },
+        {
+          "allocated": 511678976,
+          "reserved": 551550976,
+          "rss": 1708331008,
+          "available_ram": 4564770816,
+          "state_tensor_bytes": 17563648,
+          "gpu_cache_stats": {
+            "requests": 1670,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        },
+        {
+          "allocated": 511810048,
+          "reserved": 551550976,
+          "rss": 1708482560,
+          "available_ram": 4592693248,
+          "state_tensor_bytes": 17694720,
+          "gpu_cache_stats": {
+            "requests": 1798,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        },
+        {
+          "allocated": 511941120,
+          "reserved": 551550976,
+          "rss": 1708670976,
+          "available_ram": 4564164608,
+          "state_tensor_bytes": 17825792,
+          "gpu_cache_stats": {
+            "requests": 1926,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        },
+        {
+          "allocated": 512072192,
+          "reserved": 551550976,
+          "rss": 1708802048,
+          "available_ram": 4642463744,
+          "state_tensor_bytes": 17956864,
+          "gpu_cache_stats": {
+            "requests": 2054,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        },
+        {
+          "allocated": 512203264,
+          "reserved": 551550976,
+          "rss": 1708904448,
+          "available_ram": 4651376640,
+          "state_tensor_bytes": 18087936,
+          "gpu_cache_stats": {
+            "requests": 2182,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        },
+        {
+          "allocated": 512334336,
+          "reserved": 551550976,
+          "rss": 1709002752,
+          "available_ram": 4669177856,
+          "state_tensor_bytes": 18219008,
+          "gpu_cache_stats": {
+            "requests": 2310,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        },
+        {
+          "allocated": 512465408,
+          "reserved": 551550976,
+          "rss": 1709023232,
+          "available_ram": 4613480448,
+          "state_tensor_bytes": 18350080,
+          "gpu_cache_stats": {
+            "requests": 2438,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        },
+        {
+          "allocated": 512596480,
+          "reserved": 551550976,
+          "rss": 1709101056,
+          "available_ram": 4611231744,
+          "state_tensor_bytes": 18481152,
+          "gpu_cache_stats": {
+            "requests": 2566,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        },
+        {
+          "allocated": 512727552,
+          "reserved": 551550976,
+          "rss": 1709195264,
+          "available_ram": 4553924608,
+          "state_tensor_bytes": 18612224,
+          "gpu_cache_stats": {
+            "requests": 2694,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        },
+        {
+          "allocated": 512858624,
+          "reserved": 551550976,
+          "rss": 1709264896,
+          "available_ram": 4593438720,
+          "state_tensor_bytes": 18743296,
+          "gpu_cache_stats": {
+            "requests": 2822,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        },
+        {
+          "allocated": 512989696,
+          "reserved": 551550976,
+          "rss": 1709359104,
+          "available_ram": 4569952256,
+          "state_tensor_bytes": 18874368,
+          "gpu_cache_stats": {
+            "requests": 2950,
+            "admissions_submitted": 2,
+            "admissions_confirmed": 2
+          }
+        }
+      ]
+    }
+  },
+  "historical_union_cases": {
+    "gpu-cache-off-v1": {
+      "report_sha256": "5bc7729485d26001a220043923c43820b1eec23d5e72eba8cd95d10b9c69895c",
+      "peak_vram": 520350720,
+      "gpu_arena_bytes": 96468992,
+      "pinned_arena_bytes": 96468992
+    },
+    "gpu-cache-apply-v1": {
+      "report_sha256": "ef28a48248bd82955051d4b8e4f1d15a80f65072aee69f5f6572a20144521a35",
+      "peak_vram": 616819712,
+      "gpu_arena_bytes": 192937984,
+      "pinned_arena_bytes": 192937984
+    }
+  },
+  "extended_workload": {
+    "prefill_tokens": 128,
+    "decode_tokens": 16,
+    "teacher_forced_ids": [
+      13,
+      42,
+      13,
+      42,
+      13,
+      42,
+      13,
+      42,
+      13,
+      42,
+      13,
+      42,
+      13,
+      42,
+      13,
+      42
+    ],
+    "final_context": 144,
+    "forwards": 17,
+    "logit_values": 855168,
+    "reference_layers": 272,
+    "reference_read_bytes": 228657991680,
+    "state_bytes_first": 16777216,
+    "state_bytes_last": 18874368
+  },
+  "cli": {
+    "status": "PASS",
+    "steps": 2,
+    "plan": {
+      "model_type": "olmoe",
+      "layers": 16,
+      "source_weight_bytes": 13838721960,
+      "largest_shard_bytes": 4997744872,
+      "ram_budget_bytes": 4294967296,
+      "vram_budget_bytes": 1073741824,
+      "ram_cache_bytes": 67108864,
+      "pinned_bytes": 73400320,
+      "gpu_weight_bytes": 485494784,
+      "host_transient_bytes": 206045184,
+      "runtime_reserve_bytes": 1073741824,
+      "gpu_state_scratch_reserve_bytes": 536870912,
+      "ram_estimate_bytes": 1420296192,
+      "vram_estimate_bytes": 1022365696,
+      "policy": "apply",
+      "weight_placement": "shared-dense-expert-ring",
+      "gpu_expert_slots": 2,
+      "gpu_expert_reservation_bytes": 25165824,
+      "slot_layout": "compact"
+    },
+    "peak_vram": 494630400,
+    "allocated_after_close": 8519680,
+    "resources": {
+      "kind": "shared-dense-expert-ring-v3",
+      "counts": {
+        "dense": 32,
+        "expert": 256
+      },
+      "slot_layout": "compact",
+      "logical_h2d_bytes": {
+        "dense": 1082654720,
+        "expert": 3208642560
+      },
+      "active_slots": 0,
+      "peak_active_slots": 2,
+      "slot_stride": null,
+      "slot_strides": [
+        35651584,
+        12582912,
+        12582912,
+        12582912
+      ],
+      "slot_offsets": [
+        0,
+        35651584,
+        48234496,
+        60817408
+      ],
+      "gpu_arena_bytes": 73400320,
+      "pinned_arena_bytes": 73400320,
+      "loads": 287,
+      "computes": 288,
+      "lease_event_counts": {
+        "slot_reserved": 287,
+        "dma_event_recorded": 287,
+        "compute_dependency_enqueued": 287,
+        "compute_event_recorded": 288,
+        "dma_completed_on_gpu": 287,
+        "compute_completed_on_gpu": 288,
+        "resident_compute_dependency_enqueued": 1
+      },
+      "violations": 0,
+      "resident_acquires": 1,
+      "expert_residency": {
+        "mode": "apply",
+        "capacity": 2,
+        "stats": {
+          "requests": 256,
+          "admissions_submitted": 2,
+          "admissions_confirmed": 2,
+          "hits": 1,
+          "avoided_h2d_bytes": 12582912
+        },
+        "resident_experts": [
+          17,
+          20
+        ],
+        "virtual_experts": [],
+        "reserved_gpu_bytes": 25165824,
+        "reserved_pinned_bytes": 25165824,
+        "native_policy": {
+          "accesses": 256,
+          "native_calls": 255,
+          "accepted": 2,
+          "rejected": 253,
+          "decisions_returned": 255,
+          "backend_acks": 257,
+          "backend_admissions": 2,
+          "backend_rejections": 253
+        }
+      },
+      "dynamic_vram_cache": true
+    },
+    "report_sha256": "a3994a0f1e34465d8ceb142778ba02b43d688c4f4626140936cbf725f95adf36"
+  },
+  "validation": {
+    "targeted_tests": 82,
+    "seconds": 15.08,
+    "python_syntax_files": 76,
+    "test_log_sha256": "ae80884483c991a30025a047be80247d3de770335d0227e93b537948982b58cc"
+  },
+  "prior_attempts": [
+    {
+      "case": "compact-extended-reference-v1",
+      "status": "SAFE_SKIP",
+      "reason": "Available RAM below unchanged 2.8 GiB gate",
+      "report_sha256": "448e91af83cedb80334dee1ac286183bdc67a3feccdabeab77cea8561fd5713c"
+    },
+    {
+      "case": "compact-extended-reference-v2",
+      "status": "INCOMPLETE_PROCESS_EXIT",
+      "completed_forwards": 4,
+      "shell_exit_code": 1,
+      "python_exit_code": null,
+      "root_cause": "Unknown; no Python traceback or matching Windows fault event found",
+      "raw_report_sha256": "ef84d8c047d7c7e26238593cfe8e1994b4c6cd7df8ab78b49882bdc0a0c67b01"
+    }
+  ],
+  "limits": [
+    "144-token context with fixed inputs is not long-context, quality or soak certification.",
+    "Reference has independent loading/materialization but the same installed HF equations.",
+    "Metadata/shard stat equality is not a complete source-weight rehash.",
+    "Logical H2D counters, not physical PCIe/SSD measurements; no paired timing or speed claim.",
+    "The successful rerun does not establish why the previous reference process ended.",
+    "GPU cache remains optional and disabled by default; no global placement or asynchronous cancellation."
+  ]
+}

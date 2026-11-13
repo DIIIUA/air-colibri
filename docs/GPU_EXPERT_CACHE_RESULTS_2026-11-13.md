@@ -1,5 +1,9 @@
 # Bounded GPU expert retention — 13 November 2026
 
+This report records the initial **union-layout** experiment. The later compact
+slot layout is described in [developer setup](DEVELOPMENT.md); the original
+measurements and their limitations below remain unchanged.
+
 **Experimental, disabled by default.** OLMoE can now retain one or two experts
 in the existing shared GPU Ring. A hit skips the host weight supplier, CPU
 gate/up packing and H2D submission. All three tested modes matched the existing

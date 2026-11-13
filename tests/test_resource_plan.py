@@ -38,11 +38,12 @@ def test_shared_moe_plan_fits_budget_that_rejects_resident_dense():
     assert shared.pinned_bytes>0 and shared.gpu_weight_bytes<resident.gpu_weight_bytes
 
 
-def test_gpu_expert_slots_reserve_full_physical_stride_before_startup():
+@pytest.mark.parametrize("layout,extra_mib,budget",[("union",92,1.05),("compact",24,0.94)])
+def test_gpu_expert_slots_reserve_full_physical_stride_before_startup(layout,extra_mib,budget):
     model=ROOT/"models/OLMoE-1B-7B-0125-Instruct"
-    base=make_plan(model,vram_gib=1.05,cache_mib=64)
-    hot=make_plan(model,vram_gib=1.05,cache_mib=64,gpu_expert_slots=2)
-    assert hot.gpu_expert_reservation_bytes==92*2**20
+    base=make_plan(model,vram_gib=budget,cache_mib=64,moe_slot_layout=layout)
+    hot=make_plan(model,vram_gib=budget,cache_mib=64,gpu_expert_slots=2,moe_slot_layout=layout)
+    assert hot.gpu_expert_reservation_bytes==extra_mib*2**20
     assert hot.pinned_bytes-base.pinned_bytes==hot.gpu_weight_bytes-base.gpu_weight_bytes==hot.gpu_expert_reservation_bytes
     base.validate(available_vram=8*GIB,available_ram=8*GIB,commit_available=32*GIB)
     with pytest.raises(MemoryError,match="VRAM"):

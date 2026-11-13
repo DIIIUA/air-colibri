@@ -156,13 +156,16 @@ def install_expert_views(experts, store, layer):
 class AirColibriOLMoE:
     def __init__(self, model_dir, airllm_source, native_dll=None, ram_bytes=256 * 2**20,
                  device="cuda", dtype=torch.bfloat16, full_expert_baseline=False, native_mode="apply",
-                 stream_dense=False, io_backend=None, gpu_expert_slots=0, gpu_cache_mode="apply", gpu_native_dll=None):
+                 stream_dense=False, io_backend=None, gpu_expert_slots=0, gpu_cache_mode="apply", gpu_native_dll=None,
+                 slot_layout="compact"):
         if stream_dense and full_expert_baseline:
             raise ValueError("Full-expert oracle and shared streaming are distinct modes")
         if gpu_expert_slots not in (0,1,2) or gpu_cache_mode not in ("apply","shadow"):
             raise ValueError("Unsupported GPU expert residency configuration")
         if gpu_expert_slots and not stream_dense:
             raise ValueError("GPU expert residency requires shared streaming")
+        if slot_layout not in ("compact","union"):
+            raise ValueError("Unsupported shared slot layout")
         self.native_mode = native_mode
         self.stream_dense = stream_dense
         self.device, self.dtype = torch.device(device), dtype
@@ -195,7 +198,7 @@ class AirColibriOLMoE:
                 c = self.config
                 templates.update({"expert.gate_up_proj":((2*c.intermediate_size,c.hidden_size),dtype),
                                   "expert.down_proj":((c.hidden_size,c.intermediate_size),dtype)})
-                self.resources = SharedWeightResources(templates, self.device, dtype, num_slots=2+gpu_expert_slots)
+                self.resources = SharedWeightResources(templates, self.device, dtype, num_slots=2+gpu_expert_slots,slot_layout=slot_layout)
                 if gpu_expert_slots:
                     dll = gpu_native_dll or native_dll
                     if dll is None:

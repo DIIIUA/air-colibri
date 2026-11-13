@@ -64,7 +64,8 @@ def make_fixture(tmp_path, monkeypatch, device):
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
 @pytest.mark.parametrize("gpu_mode",[None,"shadow","apply"])
-def test_shared_full_graph_prefill_decode_state_and_router(tmp_path,monkeypatch,device,gpu_mode):
+@pytest.mark.parametrize("slot_layout",["union","compact"])
+def test_shared_full_graph_prefill_decode_state_and_router(tmp_path,monkeypatch,device,gpu_mode,slot_layout):
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA unavailable")
     original = make_fixture(tmp_path,monkeypatch,device)
@@ -75,7 +76,7 @@ def test_shared_full_graph_prefill_decode_state_and_router(tmp_path,monkeypatch,
         monkeypatch.setattr(adapter,"NativeTierPolicy",lambda dll,n,capacity,mode:TestAdmission(capacity,replace=False))
     runtime = adapter.AirColibriOLMoE(tmp_path,"unused",device=device,dtype=torch.float32,
         ram_bytes=2*3*16*16*4,stream_dense=True,gpu_expert_slots=2 if gpu_mode else 0,
-        gpu_cache_mode=gpu_mode or "apply",gpu_native_dll="synthetic" if gpu_mode else None)
+        gpu_cache_mode=gpu_mode or "apply",gpu_native_dll="synthetic" if gpu_mode else None,slot_layout=slot_layout)
     state_a = state_b = None
     try:
         for ids in ([[1,2,3,4]],[[5]],[[6]],[[7]]):

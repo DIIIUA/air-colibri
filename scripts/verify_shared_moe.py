@@ -47,6 +47,8 @@ def main():
     p.add_argument("--read-backend",choices=["mmap","pread"])
     p.add_argument("--gpu-expert-slots",type=int,choices=[0,1,2],default=0)
     p.add_argument("--gpu-cache-mode",choices=["shadow","apply"],default="apply")
+    p.add_argument("--workload",choices=["short","extended"],default="short")
+    p.add_argument("--moe-slot-layout",choices=["compact","union"],default="compact")
     p.add_argument("--vram-gib", type=float, default=3)
     p.add_argument("--cache-mib", type=int, default=64)
     p.add_argument("--output", default=str(ROOT / "data/shared-moe-20261113"))
@@ -59,7 +61,7 @@ def main():
     path = dest / (a.case + ".json")
     if path.exists():
         p.error("Case already exists; use another name to preserve evidence")
-    report = dict(status="STARTED", mode=a.mode, native=a.native, vram_budget_gib=a.vram_gib,
+    report = dict(status="STARTED", mode=a.mode, native=a.native, vram_budget_gib=a.vram_gib, workload=a.workload,
         torch_version=torch.__version__, transformers_version=transformers.__version__,
         runtime_sources={str(f.relative_to(ROOT)):hashlib.sha256(f.read_bytes()).hexdigest() for f in sorted((ROOT/"src").glob("*.py"))},
         oracle_source_sha256=hashlib.sha256((ROOT/"scripts/reference_olmoe.py").read_bytes()).hexdigest())
@@ -97,18 +99,27 @@ def main():
             runtime = AirColibriOLMoE(a.model, a.airllm or default_airllm_source(), ram_bytes=a.cache_mib*2**20,
                 native_dll=ROOT/"data/native/colibri_tier.dll" if a.native else None,
                 io_backend=a.read_backend,gpu_expert_slots=a.gpu_expert_slots,gpu_cache_mode=a.gpu_cache_mode,
-                gpu_native_dll=ROOT/"data/native/colibri_tier.dll" if a.gpu_expert_slots else None, **extra)
+                gpu_native_dll=ROOT/"data/native/colibri_tier.dll" if a.gpu_expert_slots else None,
+                slot_layout=a.moe_slot_layout, **extra)
             report["airllm_io_backend"]=runtime.provider.reader.io_backend
         report["initialization_seconds"] = time.perf_counter()-started
         rows, values = [], []
         # Fixed teacher-forced inputs prevent a token divergence changing later work.
-        for prompt in ("Hello", "The answer is 42. Код: x = 1"):
+        prompts = ("Hello", "The answer is 42. Код: x = 1") if a.workload=="short" else (
+            "The cache retains reusable weights while the context grows. Код: for x in range(8): print(x*x). Память и вычисления проверяются отдельно. "*20,)
+        decode_ids = [13,42] if a.workload=="short" else [13,42]*8
+        report["planned_forwards"] = len(prompts)*(1+len(decode_ids))
+        for prompt in prompts:
             state = None
-            inputs = [runtime.tokenizer(prompt, return_tensors="pt")["input_ids"], torch.tensor([[13]]), torch.tensor([[42]])]
+            prefill = runtime.tokenizer(prompt, return_tensors="pt")["input_ids"]
+            if a.workload=="extended":
+                prefill=prefill[:,:128]
+                if prefill.shape[1]!=128:raise ValueError("Extended workload requires 128 prefill tokens")
+            inputs = [prefill, *(torch.tensor([[token]]) for token in decode_ids)]
             for ids in inputs:
                 if psutil.virtual_memory().available < 512*2**20:
                     raise MemoryError("RAM pressure before forward")
-                print(f"{a.case}: forward {len(rows)+1}/6 ({ids.shape[1]} tokens)", flush=True)
+                print(f"{a.case}: forward {len(rows)+1}/{report['planned_forwards']} ({ids.shape[1]} tokens)", flush=True)
                 t = time.perf_counter()
                 logits, state = runtime.forward(ids, state)
                 torch.cuda.synchronize()
@@ -116,7 +127,13 @@ def main():
                     raise ValueError("Nonfinite logits")
                 values.append(logits.detach().cpu())
                 rows.append(dict(input_ids=ids.tolist(), state=state_hashes(state), seconds=time.perf_counter()-t,
-                    available_ram=psutil.virtual_memory().available, rss=psutil.Process().memory_info().rss))
+                    available_ram=psutil.virtual_memory().available, rss=psutil.Process().memory_info().rss,
+                    cuda_allocated=torch.cuda.memory_allocated(),cuda_reserved=torch.cuda.memory_reserved()))
+                if getattr(runtime,"resources",None):
+                    snap=runtime.resources.snapshot()
+                    rows[-1]["resources"]={k:snap[k] for k in ("loads","computes","resident_acquires","active_slots","violations")}
+                    if snap["expert_residency"]:
+                        rows[-1]["gpu_cache_stats"]=snap["expert_residency"]["stats"]
                 report["runs"] = rows
                 report["completed_forwards"] = len(rows)
                 # Native faults cannot execute finally: preserve each completed

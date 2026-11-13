@@ -25,12 +25,18 @@ def compare(folder, reference, candidates):
         if len(actual)!=len(expected):
             raise ValueError("Different workload lengths")
         same_inputs=[r["input_ids"] for r in base["runs"]]==[r["input_ids"] for r in candidate["runs"]]
-        logits_equal=all(a.dtype==b.dtype and a.shape==b.shape and torch.equal(a,b) for a,b in zip(expected,actual))
+        logits_equal=all(a.dtype==b.dtype and a.shape==b.shape
+                         and torch.equal(a.contiguous().view(torch.uint8),b.contiguous().view(torch.uint8))
+                         for a,b in zip(expected,actual))
         state_equal=[r["state"] for r in base["runs"]]==[r["state"] for r in candidate["runs"]]
         routers_equal=base["router_choices"]==candidate["router_choices"]
         oracle_source_matches=base["oracle_source_sha256"]==candidate["oracle_source_sha256"]
-        row=dict(case=case,status="PASS" if same_inputs and logits_equal and state_equal and routers_equal and oracle_source_matches else "FAIL",
+        identities={key:(base[key]==candidate[key] if key in base and key in candidate else None)
+            for key in ("checkpoint_metadata_sha256","checkpoint_shards","hf_olmoe_source_sha256")}
+        row=dict(case=case,status="PASS" if same_inputs and logits_equal and state_equal and routers_equal and oracle_source_matches
+                 and all(value is not False for value in identities.values()) else "FAIL",
             identical_inputs=same_inputs,exact_logits=logits_equal,exact_kv_state_hashes=state_equal,
+            bitwise_logits=logits_equal,source_identity_matches=identities,
             exact_router_choices=routers_equal,forward_count=len(actual),logit_values=sum(x.numel() for x in actual),
             max_abs_logit_error=max(float((a.float()-b.float()).abs().max()) for a,b in zip(expected,actual)),
             peak_vram=candidate["peak_vram"],peak_reserved=candidate["peak_reserved"],
@@ -46,7 +52,8 @@ def compare(folder, reference, candidates):
         reference_forward_count=len(expected),reference_peak_vram=base["peak_vram"],
         reference_source_sha256=base["oracle_source_sha256"],results=results,
         input_artifact_sha256={case:hashlib.sha256((folder/(case+".json")).read_bytes()).hexdigest() for case in [reference,*candidates]},
-        limits="Same installed Transformers graph; independent loading/materialization only. Two short contexts; no speed, long-context or physical-I/O claim.")
+        workload=base.get("workload","historical-short"),
+        limits="Same installed Transformers graph; independent loading/materialization only. Workload-scoped parity; no speed, long-context certification or physical-I/O claim.")
 
 
 if __name__=="__main__":
