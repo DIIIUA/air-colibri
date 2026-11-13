@@ -34,3 +34,8 @@ data/integration-20261112/before-changes.zip
 /data/checkpoint-manifest.json
 /scripts/build_implementation_report.py
 /scripts/record_provenance.py
+
+# Local review of private chat/research history.
+/docs/AIRCOLIBRI_IDEAS_TO_IMPLEMENTATION_20261113.html
+/scripts/build_evolution_review.py
+/data/review-20261113/

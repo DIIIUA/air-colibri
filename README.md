@@ -125,10 +125,17 @@ or the explicit `--report` path.
 - [x] Verify full Dense 9B and MoE 7B logits, state and actual routing.
 - [x] Add a single experimental CLI, budgets, lifecycle guards and repeatable probes.
 - [ ] Pass strict Q4 quality acceptance on a sufficient held-out set.
+- [ ] Stream the Dense trunk and selected experts of one MoE through shared resource ownership.
 - [ ] Integrate a general byte/lifetime planner for GPU residency and cancellation.
 - [ ] Connect and verify the complete native Colibrì executor where compatible.
 - [ ] Measure cold/warm I/O, startup latency, long runs and standalone baselines.
 - [ ] Validate larger checkpoints and an independent setup.
+
+The current MoE adapter keeps non-expert weights resident on GPU and copies
+experts on demand. Native admission controls RAM retention; it does not yet
+provide a hot-expert GPU cache. Progressive CPU/GPU migration and phase-based
+placement remain research work. The [roadmap](docs/ROADMAP.md) records these
+original goals separately from the integration already tested.
 
 [Detailed P0–P9 roadmap](docs/ROADMAP.md).
 

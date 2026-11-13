@@ -72,9 +72,10 @@ admission, `apply` actual native admission. Dense additionally accepts
 MoE currently requires sequential/enforce. Raw prompts are used; no chat
 template is added automatically.
 
-The plan reserves cache, pinned/transient weights and runtime/state/scratch
-space. Startup requires at least 2.8 GiB available RAM, plus the plan's
-requirements and Windows commit headroom. Torch allocator VRAM fraction is
+The startup plan estimates cache, pinned/transient weights and runtime/state/scratch
+space; it is not a live reservation ledger. Startup requires at least 2.8 GiB
+available RAM, plus the plan's requirements and Windows commit headroom.
+Torch allocator VRAM fraction is
 process-local; RAM is checked at layer boundaries, not constrained by an OS
 hard quota. Results distinguish estimates from measured allocations.
 
@@ -86,6 +87,10 @@ Cache identity includes source SHA, tensor layout, group size, compute dtype
 and quantizer source SHA. Cache misses can quantize weights, so first-use
 work differs from a verified prepacked-cache run. Do not treat the published
 cache-hit timings as fresh-conversion timings.
+
+The cache implementation supports a disk quota, but the main manager and CLI
+currently use its unlimited default. Cache disk limits are not enforced by
+`--ram-gib` or `--cache-mib`; those refer to memory budgets.
 
 Use BF16 unless specifically investigating Q4. Off/on Q4 parity does not
 satisfy the strict Q4-versus-BF16 quality gate.
