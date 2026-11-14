@@ -666,24 +666,44 @@ class StableWeightManager:
 
         # Читаем только метаданные форм весов (без чтения тензоров с диска) для linear_attn и self_attn
         template: Dict[str, Any] = {}
-        for l_idx in [0, 3]:
+        # Probe one representative layer for each distinct parameter keyset (e.g. linear_attn + self_attn
+        # in hybrid models, or just layer 0 in uniform decoders) without hardcoding interval=4.
+        if model_source is not None:
+            probe_layers = []
+            seen_keysets = set()
+            for idx in range(int(model_source.num_layers)):
+                entries = model_source.layer_entries(idx)
+                if not entries:
+                    continue
+                prefix = f"model.layers.{idx}."
+                sig = frozenset(k[len(prefix):] if k.startswith(prefix) else k for k in entries)
+                if sig not in seen_keysets:
+                    seen_keysets.add(sig)
+                    probe_layers.append(idx)
+        else:
+            probe_layers = [0, 3]
+        for l_idx in probe_layers:
             l_file = os.path.join(model_dir, f"model-{l_idx:05d}.safetensors")
-            if model_source is not None or os.path.exists(l_file):
-                f = self._get_mmap_handle(l_idx)
-                for k in f.keys():
-                    short_k = k.replace(f"model.layers.{l_idx}.", "")
-                    shape = tuple(f.get_slice(k).get_shape())
-                    if self.is_q4 and is_q4_quantizable(short_k, shape, group_size=self.q4_group_size):
-                        template.update(
-                            q4_tensor_specs(
-                                short_k,
-                                shape,
-                                group_size=self.q4_group_size,
-                                compute_dtype=self.dtype,
-                            )
+            if model_source is not None:
+                if l_idx >= int(model_source.num_layers) or l_idx not in getattr(model_source, "_layers", {}):
+                    continue
+            elif not os.path.exists(l_file):
+                continue
+            f = self._get_mmap_handle(l_idx)
+            for k in f.keys():
+                short_k = k.replace(f"model.layers.{l_idx}.", "")
+                shape = tuple(f.get_slice(k).get_shape())
+                if self.is_q4 and is_q4_quantizable(short_k, shape, group_size=self.q4_group_size):
+                    template.update(
+                        q4_tensor_specs(
+                            short_k,
+                            shape,
+                            group_size=self.q4_group_size,
+                            compute_dtype=self.dtype,
                         )
-                    else:
-                        template[short_k] = (shape, self.dtype)
+                    )
+                else:
+                    template[short_k] = (shape, self.dtype)
 
         self.pinned_pool = BoundedPinnedBufferPool(
             template_tensors=template,
@@ -700,7 +720,10 @@ class StableWeightManager:
         """Возвращает постоянный открытый mmap-дескриптор файла слоя."""
         if layer_idx not in self.mmap_handles:
             if self.model_source is not None:
-                self.mmap_handles[layer_idx] = ShardedLayerView(self.model_source.layer_entries(layer_idx))
+                if hasattr(self.model_source, "open_layer"):
+                    self.mmap_handles[layer_idx] = self.model_source.open_layer(layer_idx, dtype=self.dtype)
+                else:
+                    self.mmap_handles[layer_idx] = ShardedLayerView(self.model_source.layer_entries(layer_idx))
             else:
                 layer_file = os.path.join(self.model_dir, f"model-{layer_idx:05d}.safetensors")
                 self.mmap_handles[layer_idx] = safetensors.safe_open(layer_file, framework="pt", device="cpu")
@@ -711,6 +734,9 @@ class StableWeightManager:
 
     def _load_globals(self) -> None:
         if self.model_source is not None:
+            if hasattr(self.model_source, "open_globals"):
+                self.globals = self.model_source.open_globals(dtype=self.dtype)
+                return
             self.globals = LazyGlobalsMap(None, dtype=self.dtype, key_map=self.model_source.globals_entries())
             return
         globals_path = os.path.join(self.model_dir, "model-globals.safetensors")
@@ -740,15 +766,23 @@ class StableWeightManager:
         elif isinstance(f, ShardedLayerView):
             loaded = (self.weight_reader.read_entries(f.entries())
                       if hasattr(self.weight_reader, "read_entries") else None)
+        elif hasattr(self.model_source, "open_layer"):
+            loaded = None
         else:
             loaded = self.weight_reader(self.model_dir, f"model-{layer_idx:05d}", names)
         tensors: Dict[str, torch.Tensor] = {}
         prefix = f"model.layers.{layer_idx}."
+        gguf_layer = hasattr(self.model_source, "open_layer")
         for k in names:
             if not k.startswith(prefix):
                 raise ValueError(f"Foreign tensor in layer shard: {k}")
             short_k = k[len(prefix):]
-            t = loaded[k] if loaded is not None else f.get_tensor(k)
+            if loaded is not None:
+                t = loaded[k]
+            elif gguf_layer:
+                t = f.get_tensor(k, device=dst)
+            else:
+                t = f.get_tensor(k)
             if self.is_q4 and is_q4_quantizable(short_k, tuple(t.shape), group_size=self.q4_group_size):
                 self.quantization_calls += 1
                 q_k, s_k, z_k = q4_subkey_names(short_k)
@@ -787,6 +821,8 @@ class StableWeightManager:
         self.ram_cache.clear()
         if hasattr(self, "globals") and self.globals is not None:
             self.globals.clear()
+        if getattr(self, "model_source", None) is not None and hasattr(self.model_source, "close"):
+            self.model_source.close()
         if hasattr(self, "pinned_pool") and self.pinned_pool is not None:
             self.pinned_pool.close()
 

@@ -183,7 +183,7 @@ def test_client_disconnect_is_detected_during_prefill(server):
     sock = _start_stream(srv.http_port)
     assert _wait(lambda: eng.active == 1, 5.0)
     t0 = time.time()
-    sock.close()  # ForgeMind's call.cancel(): FIN while the server is still in prefill
+    sock.close()  # Client call.cancel(): FIN while the server is still in prefill
     assert _wait(lambda: eng.cleanups == 1, 3.0), "server did not notice the closed socket during prefill"
     assert time.time() - t0 < 1.5
     assert eng.cancel_phases == ["prefill"]
@@ -195,3 +195,38 @@ def test_server_log_is_written(server, tmp_path):
     srv.stop()
     log = (tmp_path / "logs" / "server.log").read_text(encoding="utf-8")
     assert "server started" in log and " start " in log and " end ok " in log
+
+
+def _get(port, path, headers=None, timeout=10):
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    conn.request("GET", path, headers=headers or {})
+    resp = conn.getresponse()
+    payload = resp.read()
+    conn.close()
+    return resp.status, json.loads(payload)
+
+
+def test_context_discovery_endpoints_and_sse_disconnect_log(server, tmp_path):
+    srv, eng = server(engine=FakeEngine(decode_steps=500, step_s=0.01))
+
+    st, m_v1 = _get(srv.http_port, "/v1/models")
+    assert st == 200 and m_v1["data"][0]["context_length"] == 8192 and m_v1["data"][0]["max_model_len"] == 8192
+
+    st, m_lms = _get(srv.http_port, "/api/v0/models")
+    assert st == 200 and m_lms["data"][0]["max_context_length"] == 8192
+
+    st, props = _get(srv.http_port, "/props")
+    assert st == 200 and props["default_generation_settings"]["n_ctx"] == 8192
+
+    st, kobold = _get(srv.http_port, "/api/extra/true_max_context_length")
+    assert st == 200 and kobold["value"] == 8192
+
+    sock = _start_stream(srv.http_port, max_tokens=500)
+    assert eng.first_token.wait(5)
+    sock.close()
+    assert _wait(lambda: eng.cleanups == 1, 3.0)
+    srv.stop()
+    log = (tmp_path / "logs" / "server.log").read_text(encoding="utf-8")
+    assert "end cancelled" in log
+    assert "end ok" not in log
+

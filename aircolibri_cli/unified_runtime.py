@@ -8,8 +8,8 @@
   all layers resident when they fit, otherwise resident layers + an equal-slot streaming ring
 - Chunked prefill that projects only the last position onto the vocabulary
 - Cooperative cancellation and guaranteed VRAM cleanup (`try/finally`) for every generation
-- `ColibriKVPrefixSession`: multi-turn prefix reuse with pinned host-RAM parking
-- Colibri containers and standard Hugging Face shards (see `model_source`)
+- `ColibriKVPrefixSession`: universal multi-turn KV / GatedDeltaNet prefix reuse with host-RAM parking
+- Colibri containers, standard Hugging Face shards, and sliced GGUF checkpoints (see `model_source`)
 - Optional `ZeroProbSubspaceVocabHead` (`--fast-vocab`, off by default)
 """
 from __future__ import annotations
@@ -482,7 +482,7 @@ def forward_step_all_logits(
     """One backbone pass. ``logits_to_keep=1`` projects only the last position onto the vocabulary.
 
     Prefill must always pass ``logits_to_keep=1``: projecting every prompt position materialises
-    ``[1, S, 248320]`` logits (about 0.5 MiB per token in BF16, 1-2 GiB for a ForgeMind prompt).
+    ``[1, S, 248320]`` logits (about 0.5 MiB per token in BF16, 1-2 GiB for a multi-thousand-token prompt).
     """
     extra = {"logits_to_keep": int(logits_to_keep)} if logits_to_keep else {}
     if hasattr(engine, "_anchor_ring_prepare"):
@@ -984,6 +984,9 @@ def install_colibri_anchor_ring_schedule(engine: Any, resident_set: set[int]) ->
         layer_module._air_layer_idx = idx
 
         def _pre_hook(module, _args):
+            cancel_fn = getattr(engine, "_step_cancel_check", None)
+            if cancel_fn is not None:
+                cancel_fn()
             i = module._air_layer_idx
             if i in resident_set:
                 return
@@ -1051,16 +1054,33 @@ def install_colibri_anchor_ring_schedule(engine: Any, resident_set: set[int]) ->
         )
         return outputs.logits, outputs.past_key_values
 
+    def _reset_anchor_ring() -> None:
+        for idx_s in range(len(tail_prefetched_slot)):
+            tail_prefetched_slot[idx_s] = False
+
     engine._anchor_ring_prepare = True
     engine._anchor_ring_forward = _anchor_ring_forward
+    engine._anchor_ring_reset = _reset_anchor_ring
     return {"resident_layers": sorted(resident_set), "streamed_layers": stream_layers, "slot_queues": slot_queues}
 
 
+def _detach_park_cpu(tensor: torch.Tensor, allow_pin: bool) -> torch.Tensor:
+    cpu_t = tensor.detach().to("cpu", non_blocking=False)
+    if allow_pin:
+        try:
+            return cpu_t.pin_memory()
+        except RuntimeError:
+            return cpu_t
+    return cpu_t
+
+
 class ColibriKVPrefixSession:
-    """Multi-turn KV + GatedDeltaNet + MTP session ledger with pinned Host-RAM parking (`0 MiB` idle VRAM)."""
+    """Multi-turn KV + GatedDeltaNet + MTP session ledger with Host-RAM parking (`0 MiB` idle VRAM)."""
 
     def __init__(self):
         self.fed: list[int] = []
+        self.unfed_tail: list[int] = []
+        self.chatml_think_format: bool = False
         self.tainted: bool = False
         self.parked_backbone: dict[int, dict[str, torch.Tensor]] | None = None
         self.parked_mtp: dict[str, torch.Tensor] | None = None
@@ -1072,6 +1092,8 @@ class ColibriKVPrefixSession:
 
     def reset(self) -> None:
         self.fed = []
+        self.unfed_tail = []
+        self.chatml_think_format = False
         self.tainted = False
         self.parked_backbone = None
         self.parked_mtp = None
@@ -1088,23 +1110,34 @@ class ColibriKVPrefixSession:
         engine: Any,
         mtp_head: ColibriNativeMTPHead | None,
         captured: dict[str, torch.Tensor],
+        chatml_think_format: bool = False,
     ) -> float:
         self.config = config
+        self.chatml_think_format = bool(chatml_think_format)
         all_ids = list(all_ids_full)
         past_len = int(past_key_values.get_seq_length())
-        if past_len < len(all_ids):
-            unfed = all_ids[past_len:]
-            with torch.no_grad():
-                st = torch.tensor([unfed], dtype=torch.long)
-                _, past_key_values = forward_step_all_logits(
-                    engine, st, past_key_values=past_key_values, prefetch_next=False
-                )
-                last_h = captured["post_norm"][:, -1:, :].clone()
+        need_bridge = (mtp_head is not None) or (last_fed_h_post is not None) or ("post_norm" in captured)
+        if need_bridge:
+            if past_len < len(all_ids):
+                unfed = all_ids[past_len:]
+                with torch.no_grad():
+                    st = torch.tensor([unfed], dtype=torch.long)
+                    _, past_key_values = forward_step_all_logits(
+                        engine, st, past_key_values=past_key_values, prefetch_next=False
+                    )
+                    last_h = captured["post_norm"][:, -1:, :].clone()
+            else:
+                last_h = last_fed_h_post
+            self.fed = all_ids
+            self.unfed_tail = []
         else:
-            last_h = last_fed_h_post
+            last_h = None
+            self.fed = all_ids[:past_len]
+            self.unfed_tail = all_ids[past_len:]
 
-        self.fed = all_ids
-        self._pending_bridge_h = last_h.cpu().pin_memory() if last_h is not None else None
+        ram_budget = _streaming_ram_budget_bytes()
+        allow_pin = ram_budget is None or ram_budget >= 512 * MiB
+        self._pending_bridge_h = _detach_park_cpu(last_h, allow_pin) if last_h is not None else None
 
         t0 = time.perf_counter()
         self.parked_backbone = {}
@@ -1112,20 +1145,20 @@ class ColibriKVPrefixSession:
         for l_idx, l_cache in enumerate(past_key_values.layers):
             entry: dict[str, torch.Tensor] = {}
             if getattr(l_cache, "keys", None) is not None and l_cache.keys.numel() > 0:
-                entry["keys"] = l_cache.keys.detach().to("cpu", non_blocking=False).pin_memory()
-                entry["values"] = l_cache.values.detach().to("cpu", non_blocking=False).pin_memory()
+                entry["keys"] = _detach_park_cpu(l_cache.keys, allow_pin)
+                entry["values"] = _detach_park_cpu(l_cache.values, allow_pin)
                 total_bytes += entry["keys"].nbytes + entry["values"].nbytes
             if hasattr(l_cache, "conv_states") and l_cache.is_conv_states_initialized.get(0, False):
-                entry["conv"] = l_cache.conv_states[0].detach().to("cpu", non_blocking=False).pin_memory()
-                entry["rec"] = l_cache.recurrent_states[0].detach().to("cpu", non_blocking=False).pin_memory()
+                entry["conv"] = _detach_park_cpu(l_cache.conv_states[0], allow_pin)
+                entry["rec"] = _detach_park_cpu(l_cache.recurrent_states[0], allow_pin)
                 total_bytes += entry["conv"].nbytes + entry["rec"].nbytes
             self.parked_backbone[l_idx] = entry
 
         if mtp_head is not None and mtp_head.kv_cache.get_seq_length() > 0:
             mtp_l0 = mtp_head.kv_cache.layers[0]
             self.parked_mtp = {
-                "keys": mtp_l0.keys.detach().to("cpu", non_blocking=False).pin_memory(),
-                "values": mtp_l0.values.detach().to("cpu", non_blocking=False).pin_memory(),
+                "keys": _detach_park_cpu(mtp_l0.keys, allow_pin),
+                "values": _detach_park_cpu(mtp_l0.values, allow_pin),
             }
             total_bytes += self.parked_mtp["keys"].nbytes + self.parked_mtp["values"].nbytes
             self.parked_mtp_committed_len = mtp_head.committed_len
@@ -1159,20 +1192,26 @@ class ColibriKVPrefixSession:
         from transformers.cache_utils import DynamicCache
 
         t0 = time.perf_counter()
-        past = DynamicCache(config=self.config)
+        tcfg = self.config.get_text_config() if hasattr(self.config, "get_text_config") else self.config
+        past = DynamicCache(config=tcfg)
         for l_idx, entry in self.parked_backbone.items():
-            l_cache = past.layers[l_idx]
-            if "keys" in entry:
+            if l_idx < len(past.layers):
+                l_cache = past.layers[l_idx]
+                if "keys" in entry:
+                    k_gpu = entry["keys"].to(device, non_blocking=True)
+                    v_gpu = entry["values"].to(device, non_blocking=True)
+                    l_cache.update(k_gpu, v_gpu)
+                if "conv" in entry:
+                    c_gpu = entry["conv"].to(device, non_blocking=True)
+                    r_gpu = entry["rec"].to(device, non_blocking=True)
+                    l_cache.lazy_initialization(conv_states=c_gpu, state_idx=0, conv_kernel_size=c_gpu.shape[-1])
+                    l_cache.conv_states[0].copy_(c_gpu)
+                    l_cache.has_previous_state[0] = True
+                    l_cache.update_recurrent_state(r_gpu, state_idx=0)
+            elif "keys" in entry:
                 k_gpu = entry["keys"].to(device, non_blocking=True)
                 v_gpu = entry["values"].to(device, non_blocking=True)
-                l_cache.update(k_gpu, v_gpu)
-            if "conv" in entry:
-                c_gpu = entry["conv"].to(device, non_blocking=True)
-                r_gpu = entry["rec"].to(device, non_blocking=True)
-                l_cache.lazy_initialization(conv_states=c_gpu, state_idx=0, conv_kernel_size=c_gpu.shape[-1])
-                l_cache.conv_states[0].copy_(c_gpu)
-                l_cache.has_previous_state[0] = True
-                l_cache.update_recurrent_state(r_gpu, state_idx=0)
+                past.update(k_gpu, v_gpu, l_idx)
 
         if mtp_head is not None and self.parked_mtp is not None and self._pending_bridge_h is not None:
             mtp_head.reset_cache()
@@ -1255,6 +1294,8 @@ VRAM_MODES = ("normal", "turbo")
 class GenerationCancelled(RuntimeError):
     """Raised inside a generation when its cancel check fires (client gone, stop request, preemption)."""
 
+    _is_cooperative_cancel = True
+
     def __init__(self, phase: str, reason: str = "cancelled"):
         super().__init__(f"generation cancelled during {phase}: {reason}")
         self.phase = phase
@@ -1286,6 +1327,42 @@ def estimate_layer_vram_bytes(layer_shapes: dict[str, tuple[int, ...]], group_si
                 n *= int(s)
             total += 2 * n
     return total
+
+
+def bf16_bytes_for_shape(shape: tuple[int, ...]) -> int:
+    """Uncompressed BF16 storage of one tensor."""
+    n = 1
+    for s in shape:
+        n *= int(s)
+    return 2 * n
+
+
+def state_bytes_from_config(cfg: dict[str, Any]) -> tuple[int, int, int, int]:
+    """KV bytes per token, recurrent-state bytes, hidden size, intermediate size.
+
+    Qwen3.5 counts only ``full_attention`` layers toward KV and the GatedDeltaNet
+    layers toward a fixed recurrent state. Other families are ordinary attention.
+    """
+    n = int(cfg["num_hidden_layers"])
+    hidden = int(cfg["hidden_size"])
+    n_heads = int(cfg.get("num_attention_heads") or 1)
+    n_kv = int(cfg.get("num_key_value_heads") or n_heads)
+    head = int(cfg.get("head_dim") or max(1, hidden // max(1, n_heads)))
+    layer_types = cfg.get("layer_types") or []
+    full = sum(1 for t in layer_types if t == "full_attention") if layer_types else n
+    lin = max(0, n - full) if layer_types else 0
+    kv = full * 2 * n_kv * head * 2
+    rec = 0
+    if lin and cfg.get("linear_num_value_heads"):
+        rec = lin * (
+            int(cfg.get("linear_num_value_heads", 32)) * int(cfg.get("linear_key_head_dim", 128))
+            * int(cfg.get("linear_value_head_dim", 128)) * 4
+            + 2 * int(cfg.get("linear_num_key_heads", 16)) * int(cfg.get("linear_key_head_dim", 128)) * 4 * 2
+        )
+    moe_inter = int(cfg.get("moe_intermediate_size") or 0) * max(1, int(cfg.get("num_experts_per_tok") or 1))
+    moe_inter += int(cfg.get("shared_expert_intermediate_size") or 0)
+    inter = int(cfg.get("intermediate_size") or moe_inter or hidden * 4)
+    return kv, rec, hidden, inter
 
 
 @dataclass
@@ -1410,6 +1487,64 @@ def _model_shape_inventory(model_dir: Path, source: Any, num_layers: int) -> tup
     return layers, _shapes(model_dir / "model-globals.safetensors"), _shapes(model_dir / "model-mtp.safetensors")
 
 
+def plan_for_checkpoint(
+    model_dir: str | Path,
+    *,
+    mode: str,
+    total_bytes: int,
+    free_bytes: int,
+    enable_mtp: bool = True,
+    max_context_tokens: int | None = None,
+    prefill_chunk_tokens: int | None = None,
+) -> tuple[dict[str, Any], VRAMPlan, bool]:
+    """Reads headers only and decides the backend, the VRAM plan and whether MTP exists.
+
+    Q4 sizes and the MTP head are used only when ``runtime_profile`` says the fused
+    kernels match. Other models are measured as BF16 and never enable MTP.
+    """
+    from .model_source import open_model_source, raw_text_config_dict, runtime_profile
+
+    folder = Path(model_dir)
+    profile = runtime_profile(folder)
+    cfg = raw_text_config_dict(folder)
+    num_layers = int(cfg["num_hidden_layers"])
+    layers, globals_sh, mtp_sh = _model_shape_inventory(folder, open_model_source(folder), num_layers)
+    fast = bool(profile["fast_qwen"])
+    if fast:
+        layer_bytes = [estimate_layer_vram_bytes(sh) for sh in layers]
+        vocab, hidden = globals_sh.get("lm_head.weight", (cfg.get("vocab_size", 0), cfg["hidden_size"]))
+        lm_head_bytes = q4_bytes_for_shape((int(vocab), int(hidden)))
+        mtp_bytes = int(estimate_layer_vram_bytes({k: v for k, v in mtp_sh.items() if str(k).startswith("mtp.layers.")}))
+        if "mtp.fc.weight" in mtp_sh:
+            mtp_bytes += q4_bytes_for_shape(tuple(mtp_sh["mtp.fc.weight"]))
+        has_mtp = "mtp.fc.weight" in mtp_sh
+    else:
+        layer_bytes = [sum(bf16_bytes_for_shape(tuple(s)) for s in sh.values()) for sh in layers]
+        shape = globals_sh.get("lm_head.weight", (int(cfg.get("vocab_size") or 1), int(cfg["hidden_size"])))
+        lm_head_bytes = bf16_bytes_for_shape(tuple(shape))
+        mtp_bytes = 0
+        has_mtp = False
+    kv, rec, hidden_size, intermediate = state_bytes_from_config(cfg)
+    plan = plan_vram(
+        mode,
+        total_bytes=total_bytes,
+        free_bytes=free_bytes,
+        layer_bytes=layer_bytes,
+        lm_head_bytes=lm_head_bytes,
+        mtp_bytes=mtp_bytes if (enable_mtp and has_mtp and fast) else 0,
+        kv_bytes_per_token=kv,
+        recurrent_state_bytes=rec,
+        hidden_size=hidden_size,
+        intermediate_size=intermediate,
+        max_context_tokens=max_context_tokens,
+        prefill_chunk_tokens=prefill_chunk_tokens,
+    )
+    profile = dict(profile)
+    profile["mtp_weights"] = has_mtp
+    profile["mtp_enabled"] = bool(has_mtp and fast and enable_mtp and plan.enable_mtp)
+    return profile, plan, has_mtp and fast
+
+
 def choose_resident_layers(count: int, num_layers: int, priority_summary: dict[str, list[int]] | None) -> set[int]:
     """Picks which layers stay resident when the model is streamed: Colibrì priority ranks first."""
     order: list[int] = []
@@ -1422,6 +1557,46 @@ def choose_resident_layers(count: int, num_layers: int, priority_summary: dict[s
         if i not in order:
             order.append(i)
     return set(order[: max(0, min(count, num_layers))])
+
+
+def _streaming_ram_budget_bytes() -> int | None:
+    """Bounds host-RAM layer caching to 35% of currently free RAM so streaming never swaps."""
+    try:
+        if os.name == "nt":
+            class _MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            stat = _MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(stat)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                return max(256 * MiB, int(stat.ullAvailPhys * 0.35))
+        elif os.path.isfile("/proc/meminfo"):
+            with open("/proc/meminfo", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("MemAvailable:"):
+                        kb = int(line.split()[1])
+                        return max(256 * MiB, int(kb * 1024 * 0.35))
+    except Exception:
+        pass
+    return None
+
+
+def _eos_token_set(eos_token_id: Any) -> set[int]:
+    if isinstance(eos_token_id, int):
+        return {eos_token_id}
+    if isinstance(eos_token_id, (list, tuple, set)):
+        return {int(x) for x in eos_token_id if x is not None}
+    return set()
 
 
 class AirColibriUnifiedEngine:
@@ -1447,11 +1622,9 @@ class AirColibriUnifiedEngine:
         from src.existing_hooks import ExistingForwardHookAdapter
         from src.lease_ack_bridge import ExistingRingAcknowledgementAdapter
         from src.upstream_bridge import NativeTierPolicy
-        from .kernels import GrandUnifiedKernels
         from .model_source import (
             PreadSafetensorsReader,
             open_model_source,
-            raw_text_config_dict,
             resolve_model_dir,
         )
 
@@ -1470,53 +1643,23 @@ class AirColibriUnifiedEngine:
         self.model_dir = resolve_model_dir(model_dir, self.root, allow_download=allow_download)
         self.model_id = self.model_dir.name
         self.model_source = open_model_source(self.model_dir)
-        self.model_format = "hf" if self.model_source is not None else "colibri"
-        cfg = raw_text_config_dict(self.model_dir)
-        num_layers = int(cfg["num_hidden_layers"])
+        self.model_format = getattr(self.model_source, "kind", "hf") if self.model_source is not None else "colibri"
 
         free_b, total_b = torch.cuda.mem_get_info(self.device)
         self.total_vram_gib = round(total_b / GiB, 2)
-        layers_sh, globals_sh, mtp_sh = _model_shape_inventory(self.model_dir, self.model_source, num_layers)
-        layer_bytes = [estimate_layer_vram_bytes(sh) for sh in layers_sh]
-        vocab, hidden = globals_sh.get("lm_head.weight", (cfg["vocab_size"], cfg["hidden_size"]))
-        lm_head_bytes = q4_bytes_for_shape((vocab, hidden))
-        mtp_bytes = int(estimate_layer_vram_bytes({k: v for k, v in mtp_sh.items() if k.startswith("mtp.layers.")}))
-        if "mtp.fc.weight" in mtp_sh:
-            mtp_bytes += q4_bytes_for_shape(mtp_sh["mtp.fc.weight"])
-        has_mtp = "mtp.fc.weight" in mtp_sh
-        full_attn = sum(1 for t in cfg.get("layer_types", []) if t == "full_attention")
-        kv_per_token = full_attn * 2 * int(cfg.get("num_key_value_heads", 4)) * int(cfg.get("head_dim", 256)) * 2
-        lin_layers = num_layers - full_attn
-        rec_state = lin_layers * (
-            int(cfg.get("linear_num_value_heads", 32)) * int(cfg.get("linear_key_head_dim", 128))
-            * int(cfg.get("linear_value_head_dim", 128)) * 4
-            + 2 * int(cfg.get("linear_num_key_heads", 16)) * int(cfg.get("linear_key_head_dim", 128)) * 4 * 2
-        )
-        self.plan = plan_vram(
-            vram_mode,
+        self.profile, self.plan, has_mtp = plan_for_checkpoint(
+            self.model_dir,
+            mode=vram_mode,
             total_bytes=total_b,
             free_bytes=free_b,
-            layer_bytes=layer_bytes,
-            lm_head_bytes=lm_head_bytes,
-            mtp_bytes=mtp_bytes if (enable_mtp and has_mtp) else 0,
-            kv_bytes_per_token=kv_per_token,
-            recurrent_state_bytes=rec_state,
-            hidden_size=int(cfg["hidden_size"]),
-            intermediate_size=int(cfg["intermediate_size"]),
+            enable_mtp=enable_mtp,
             max_context_tokens=max_context_tokens,
             prefill_chunk_tokens=prefill_chunk_tokens,
         )
+        self.fast_qwen = bool(self.profile["fast_qwen"])
         self.vram_mode = vram_mode
         self.prefill_chunk_tokens = self.plan.prefill_chunk_tokens
-
-        q4_cache = Path(os.environ.get("AIRCOLIBRI_CACHE_DIR") or (self.root / "data" / "q4-g64-cache"))
-        if self.model_source is not None:
-            use_cache_dir, use_manifest = str(q4_cache), None
-        else:
-            manifest = checkpoint_manifest_path(self.root)
-            have = q4_cache.exists() and manifest.exists()
-            use_cache_dir = str(q4_cache) if have else None
-            use_manifest = str(manifest) if have else None
+        num_layers = int(self.plan.layers_total)
 
         dll_path = self.root / "data" / "native" / "colibri_tier.dll"
         self.has_native_dll = dll_path.exists() and os.name == "nt"
@@ -1532,79 +1675,120 @@ class AirColibriUnifiedEngine:
             )
             print(
                 f"[AirColibri] GPU: {self.gpu_name} ({self.total_vram_gib} GiB, free {free_b / GiB:.2f} GiB) | "
-                f"Mode: {vram_mode} | Budget: {p.budget_bytes / GiB:.2f} GiB, reserve {p.reserve_bytes / GiB:.2f} GiB | "
+                f"Mode: {vram_mode} | Backend: {self.profile['backend']} | "
+                f"Budget: {p.budget_bytes / GiB:.2f} GiB, reserve {p.reserve_bytes / GiB:.2f} GiB | "
                 f"{layout} | Model: {self.model_id} ({self.model_format})",
                 flush=True,
             )
 
-        self.gk = GrandUnifiedKernels(self.device)
-        common = dict(
-            pipeline_mode="triple_ring_prefetch",
-            weight_format="q4",
-            quantize_lm_head=True,
-            q4_group_size=64,
-            q4_cache_dir=use_cache_dir,
-            checkpoint_manifest=use_manifest,
-            model_source=self.model_source,
-            weight_reader=self.pread_reader,
-        )
-        if self.plan.full_residency:
-            self.engine = AirColibriModel(str(self.model_dir), vram_resident_layers=num_layers, **common)
-            self.anchor_schedule = {"resident_layers": list(range(num_layers)), "streamed_layers": []}
+        self.max_drafts = max(0, min(3, int(max_drafts)))
+        self.gk = None
+        self.snap_mgr = None
+        self.captured = {}
+        self.draft_vocab = None
+        self.mtp_head = None
+        self.mtp_vram_mib = 0.0
+        self.enable_vocab_pruner = False
+        self.anchor_schedule = {"resident_layers": [], "streamed_layers": []}
+
+        if self.fast_qwen:
+            from .kernels import GrandUnifiedKernels
+
+            q4_cache = Path(os.environ.get("AIRCOLIBRI_CACHE_DIR") or (self.root / "data" / "q4-g64-cache"))
+            if self.model_source is not None:
+                use_cache_dir, use_manifest = str(q4_cache), None
+            else:
+                manifest = checkpoint_manifest_path(self.root)
+                have = q4_cache.exists() and manifest.exists()
+                use_cache_dir = str(q4_cache) if have else None
+                use_manifest = str(manifest) if have else None
+            self.gk = GrandUnifiedKernels(self.device)
+            common = dict(
+                pipeline_mode="triple_ring_prefetch",
+                weight_format="q4",
+                quantize_lm_head=True,
+                q4_group_size=64,
+                q4_cache_dir=use_cache_dir,
+                checkpoint_manifest=use_manifest,
+                model_source=self.model_source,
+                weight_reader=self.pread_reader,
+            )
+            if self.plan.full_residency:
+                self.engine = AirColibriModel(str(self.model_dir), vram_resident_layers=num_layers, **common)
+                self.anchor_schedule = {"resident_layers": list(range(num_layers)), "streamed_layers": []}
+            else:
+                prio = None
+                if self.model_source is None:
+                    try:
+                        prio = PriorityRanker(str(self.model_dir)).get_priority_summary()
+                    except Exception:
+                        prio = None
+                resident_set = choose_resident_layers(self.plan.resident_layers, num_layers, prio)
+                max_ram_layers = max(4, min(num_layers, 16))
+                if self.has_native_dll:
+                    try:
+                        self.native_policy = NativeTierPolicy(
+                            str(dll_path), num_layers=num_layers, capacity=max_ram_layers, mode="apply", decay_interval=16
+                        )
+                    except Exception:
+                        self.native_policy = None
+                self.engine = AirColibriModel(
+                    str(self.model_dir),
+                    vram_resident_layers=0,
+                    max_ram_layers=max_ram_layers,
+                    max_ram_bytes=_streaming_ram_budget_bytes(),
+                    cache_policy="lru",
+                    num_slots=self.plan.ring_slots,
+                    control_mode="off",
+                    native_policy=self.native_policy,
+                    **common,
+                )
+                self.engine.tail_to_head_prefetch = True
+                self.anchor_schedule = install_colibri_anchor_ring_schedule(self.engine, resident_set)
+                if self.model_source is None:
+                    catalog = ExistingCrossLayerCatalog(str(self.model_dir))
+                    self.engine.trace_adapter = ExistingForwardHookAdapter(self.engine, catalog).install()
+                    self.engine.ack_adapter = ExistingRingAcknowledgementAdapter(self.engine.pipeline).install()
+
+            self.snap_mgr = HybridSpecSnapshotManager(self.engine.config, self.device, max_drafts=max(2, self.max_drafts))
+            self.captured = install_colibri_multirow_unifications(
+                self.engine,
+                self.gk,
+                snap_mgr=self.snap_mgr,
+                enable_vocab_pruner=enable_vocab_pruner,
+            )
+            self.enable_vocab_pruner = enable_vocab_pruner
+            self.mtp_enabled = bool(enable_mtp and has_mtp and self.plan.enable_mtp and self.max_drafts >= 1)
+            if self.mtp_enabled:
+                self.draft_vocab = ColibriDraftVocab(self.engine.config.vocab_size, top_k=16000, device=self.device)
+                seed_ids = self.engine.tokenizer(DEFAULT_DRAFT_SEED_CORPUS, add_special_tokens=False).input_ids
+                self.draft_vocab.seed_from_corpus_tokens(seed_ids)
+                self.mtp_head = ColibriNativeMTPHead(self.engine, self.gk, self.draft_vocab)
+                self.mtp_vram_mib = round(self.mtp_head.q4_vram_bytes() / MiB, 2)
         else:
-            prio = None
-            if self.model_source is None:
-                try:
-                    prio = PriorityRanker(str(self.model_dir)).get_priority_summary()
-                except Exception:
-                    prio = None
-            resident_set = choose_resident_layers(self.plan.resident_layers, num_layers, prio)
-            max_ram_layers = max(4, min(num_layers, 16))
-            if self.has_native_dll:
-                try:
-                    self.native_policy = NativeTierPolicy(
-                        str(dll_path), num_layers=num_layers, capacity=max_ram_layers, mode="apply", decay_interval=16
-                    )
-                except Exception:
-                    self.native_policy = None
+            resident = num_layers if self.plan.full_residency else int(self.plan.resident_layers)
+            expert_cache_bytes = max(0, int(self.plan.budget_bytes - self.plan.weights_bytes - 256 * MiB))
             self.engine = AirColibriModel(
                 str(self.model_dir),
-                vram_resident_layers=0,
-                max_ram_layers=max_ram_layers,
+                pipeline_mode="triple_ring_prefetch",
+                vram_resident_layers=resident,
+                max_ram_layers=max(4, min(num_layers, 16)),
+                max_ram_bytes=None if self.plan.full_residency else _streaming_ram_budget_bytes(),
                 cache_policy="lru",
-                num_slots=self.plan.ring_slots,
-                control_mode="off",
-                native_policy=self.native_policy,
-                **common,
+                num_slots=None if self.plan.full_residency else self.plan.ring_slots,
+                weight_format="bf16",
+                quantize_lm_head=False,
+                use_fused_q4_gemv=False,
+                model_source=self.model_source,
+                weight_reader=self.pread_reader,
+                expert_cache_bytes=expert_cache_bytes,
             )
-            self.engine.tail_to_head_prefetch = True
-            self.anchor_schedule = install_colibri_anchor_ring_schedule(self.engine, resident_set)
-            if self.model_source is None:
-                catalog = ExistingCrossLayerCatalog(str(self.model_dir))
-                self.engine.trace_adapter = ExistingForwardHookAdapter(self.engine, catalog).install()
-                self.engine.ack_adapter = ExistingRingAcknowledgementAdapter(self.engine.pipeline).install()
-
-        self.max_drafts = max(0, min(3, int(max_drafts)))
-        self.snap_mgr = HybridSpecSnapshotManager(self.engine.config, self.device, max_drafts=max(2, self.max_drafts))
-        self.captured = install_colibri_multirow_unifications(
-            self.engine,
-            self.gk,
-            snap_mgr=self.snap_mgr,
-            enable_vocab_pruner=enable_vocab_pruner,
-        )
-        self.enable_vocab_pruner = enable_vocab_pruner
-
-        self.mtp_enabled = bool(enable_mtp and has_mtp and self.plan.enable_mtp and self.max_drafts >= 1)
-        if self.mtp_enabled:
-            self.draft_vocab = ColibriDraftVocab(self.engine.config.vocab_size, top_k=16000, device=self.device)
-            seed_ids = self.engine.tokenizer(DEFAULT_DRAFT_SEED_CORPUS, add_special_tokens=False).input_ids
-            self.draft_vocab.seed_from_corpus_tokens(seed_ids)
-            self.mtp_head: ColibriNativeMTPHead | None = ColibriNativeMTPHead(self.engine, self.gk, self.draft_vocab)
-            self.mtp_vram_mib = round(self.mtp_head.q4_vram_bytes() / MiB, 2)
-        else:
-            self.draft_vocab = None
-            self.mtp_head = None
-            self.mtp_vram_mib = 0.0
+            self.anchor_schedule = {
+                "resident_layers": list(range(resident)),
+                "streamed_layers": list(range(resident, num_layers)),
+            }
+            self.mtp_enabled = False
+            self.enable_vocab_pruner = False
 
         self.session = ColibriKVPrefixSession()
         self._session_messages: list[dict[str, str]] = []
@@ -1612,18 +1796,25 @@ class AirColibriUnifiedEngine:
         self.generations_started = 0
         self.generations_cancelled = 0
 
-        # Short CUDA kernel warmup (S=1 & S=2) so the first user prompt runs at full speed.
-        warm_ids = self.engine.tokenizer("Привет!", return_tensors="pt").input_ids[0].tolist()
-        for _ in self._stream_token_ids(warm_ids, max_new_tokens=4, stop_on_eos=True, cached_prefix_len=0, past_kv=None):
-            pass
-        self._release_transient_state()
+        if self.fast_qwen:
+            warm_ids = self.engine.tokenizer("Привет!", return_tensors="pt").input_ids[0].tolist()
+            for _ in self._stream_token_ids(warm_ids, max_new_tokens=4, stop_on_eos=True, cached_prefix_len=0, past_kv=None):
+                pass
+            self._release_transient_state()
 
         self.boot_seconds = round(time.perf_counter() - t_boot0, 2)
         self.resident_vram_mib = round(torch.cuda.memory_allocated(self.device) / MiB, 2)
         if verbose:
+            ec = self.expert_cache_stats()
+            ec_str = (
+                f", ExpertCache: {ec['slots']} slots ({ec['arena_mib']} MiB)"
+                if (ec is not None and ec.get("slots", 0) > 0)
+                else ""
+            )
             print(
                 f"[AirColibri] Ready in {self.boot_seconds}s | Resident VRAM: {self.resident_vram_mib} MiB "
-                f"(MTP Q4: {self.mtp_vram_mib} MiB, FastVocab: {self.enable_vocab_pruner})",
+                f"(backend {self.profile['backend']}, MTP: {'on' if self.mtp_enabled else 'off'}, "
+                f"FastVocab: {self.enable_vocab_pruner}{ec_str})",
                 flush=True,
             )
 
@@ -1631,30 +1822,43 @@ class AirColibriUnifiedEngine:
     def tokenizer(self):
         return self.engine.tokenizer
 
+    def expert_cache_stats(self) -> dict[str, Any] | None:
+        src = getattr(self, "model_source", None)
+        if src is not None and hasattr(src, "expert_cache_stats"):
+            return src.expert_cache_stats()
+        return None
+
     # ------------------------------------------------------------------ state management
 
     def _release_transient_state(self) -> None:
         """Drops per-generation tensors (MTP cache, captured hidden states, snapshots) and returns VRAM."""
         if self.mtp_head is not None:
             self.mtp_head.reset_cache()
-        self.snap_mgr.active_capture = False
-        self.captured.pop("post_norm", None)
+        if self.snap_mgr is not None:
+            self.snap_mgr.active_capture = False
+        if self.captured:
+            self.captured.pop("post_norm", None)
         gc.collect()
         torch.cuda.empty_cache()
 
     def _abort_cleanup(self) -> None:
-        """Restores a clean engine after a cancelled or failed generation (no VRAM may stay behind)."""
+        """Restores a clean engine after a cancelled or failed generation (no VRAM or busy ring slot may stay behind)."""
         self.session.reset()
         self._session_messages.clear()
         eng = self.engine
-        if eng is not None and getattr(eng, "active_slot_per_layer", None):
-            for i, slot in enumerate(eng.active_slot_per_layer):
-                if slot is not None:
-                    try:
-                        eng.pipeline.release_slot_after_compute(slot)
-                    except Exception:
-                        pass
-                    eng.active_slot_per_layer[i] = None
+        if eng is not None:
+            if hasattr(eng, "reset_after_cancel"):
+                eng.reset_after_cancel()
+            elif getattr(eng, "active_slot_per_layer", None):
+                for i, slot in enumerate(eng.active_slot_per_layer):
+                    if slot is not None:
+                        try:
+                            eng.pipeline.release_slot_after_compute(slot)
+                        except Exception:
+                            pass
+                        eng.active_slot_per_layer[i] = None
+            if hasattr(eng, "_anchor_ring_reset"):
+                eng._anchor_ring_reset()
         self._release_transient_state()
 
     def reset_session(self) -> None:
@@ -1664,10 +1868,13 @@ class AirColibriUnifiedEngine:
 
     def status_snapshot(self) -> dict[str, Any]:
         alloc_mib = round(torch.cuda.memory_allocated(self.device) / MiB, 2)
-        return {
+        snap = {
             "model_id": self.model_id,
             "model_dir": str(self.model_dir),
             "model_format": self.model_format,
+            "backend": self.profile.get("backend"),
+            "weight_format": self.profile.get("weight_format"),
+            "fast_qwen": self.fast_qwen,
             "gpu_name": self.gpu_name,
             "total_vram_gib": self.total_vram_gib,
             "vram_mode": self.vram_mode,
@@ -1682,6 +1889,10 @@ class AirColibriUnifiedEngine:
             "generations_cancelled": self.generations_cancelled,
             "last_metrics": self.last_metrics,
         }
+        ec = self.expert_cache_stats()
+        if ec is not None:
+            snap["expert_cache"] = ec
+        return snap
 
     # ------------------------------------------------------------------ prompt preparation
 
@@ -1691,41 +1902,56 @@ class AirColibriUnifiedEngine:
         enable_thinking: bool,
         use_session_cache: bool,
     ) -> tuple[list[int], int, Any, float]:
-        eos_id = self.tokenizer.eos_token_id
+        eos_ids = _eos_token_set(self.tokenizer.eos_token_id)
         norm_msgs = [{"role": str(m["role"]), "content": str(m.get("content", ""))} for m in messages]
 
-        if (
+        has_active_session = (
             use_session_cache
             and len(norm_msgs) >= 3
             and norm_msgs[-1]["role"] == "user"
             and norm_msgs[:-1] == self._session_messages
             and len(self.session.fed) > 0
             and self.session.parked_backbone is not None
-        ):
-            lead = "" if self.session.fed[-1] == eos_id else "<|im_end|>"
+        )
+        if has_active_session and self.session.chatml_think_format:
+            prev_full = self.session.fed + self.session.unfed_tail
+            lead = "" if (prev_full and prev_full[-1] in eos_ids) else "<|im_end|>"
             think_tail = "<think>\n" if enable_thinking else "<think>\n\n</think>\n\n"
             suffix_str = (
                 f"{lead}\n<|im_start|>user\n{norm_msgs[-1]['content']}<|im_end|>\n"
                 f"<|im_start|>assistant\n{think_tail}"
             )
             suffix_ids = self.tokenizer(suffix_str, add_special_tokens=False).input_ids
-            full_ids = self.session.fed + suffix_ids
+            full_ids = prev_full + suffix_ids
             reused = self.session.kv_prefix_reuse(full_ids)
             if reused > 0:
+                self._last_prompt_opened_think = bool(enable_thinking)
+                self._last_prompt_chatml_think = True
                 past_kv, unpark_ms = self.session.unpark_to_gpu(
                     self.device, self.mtp_head, first_new_token=full_ids[reused]
                 )
                 return full_ids, reused, past_kv, unpark_ms
 
+        template_kwargs = dict(tokenize=False, add_generation_prompt=True, enable_thinking=enable_thinking)
+        try:
+            prompt_str = self.tokenizer.apply_chat_template(norm_msgs, **template_kwargs)
+        except TypeError:
+            template_kwargs.pop("enable_thinking")
+            prompt_str = self.tokenizer.apply_chat_template(norm_msgs, **template_kwargs)
+        self._last_prompt_opened_think = prompt_str.rstrip().endswith("<think>")
+        self._last_prompt_chatml_think = "<|im_start|>assistant\n<think>" in prompt_str
+        prompt_ids = self.tokenizer(prompt_str, return_tensors="pt").input_ids[0].tolist()
+
+        if has_active_session:
+            reused = self.session.kv_prefix_reuse(prompt_ids)
+            if reused > 0:
+                past_kv, unpark_ms = self.session.unpark_to_gpu(
+                    self.device, self.mtp_head, first_new_token=prompt_ids[reused]
+                )
+                return prompt_ids, reused, past_kv, unpark_ms
+
         if use_session_cache:
             self.session.reset()
-        prompt_str = self.tokenizer.apply_chat_template(
-            norm_msgs,
-            tokenize=False,
-            add_generation_prompt=True,
-            enable_thinking=enable_thinking,
-        )
-        prompt_ids = self.tokenizer(prompt_str, return_tensors="pt").input_ids[0].tolist()
         return prompt_ids, 0, None, 0.0
 
     # ------------------------------------------------------------------ generation core
@@ -1780,6 +2006,98 @@ class AirColibriUnifiedEngine:
             self.captured.pop("post_norm", None)
         return picked, past, last_h, mtp_draft
 
+    def _stream_bf16(
+        self,
+        prompt_ids: list[int],
+        max_new_tokens: int,
+        stop_on_eos: bool,
+        cancel_check: Callable[[], bool] | None,
+        cached_prefix_len: int = 0,
+        past_kv: Any = None,
+    ) -> Iterator[dict[str, Any]]:
+        """Greedy BF16 generation for HF and GGUF checkpoints on the ring.
+
+        Prefill chunks pass ``cache_position`` starting at ``cached_prefix_len`` so unparked
+        multi-turn KV + GatedDeltaNet caches stay aligned, and every decoder layer's pre-hook
+        polls ``cancel_check`` for sub-layer stop latency.
+        """
+        eos_ids = _eos_token_set(self.tokenizer.eos_token_id)
+        check = self._make_cancel_checker(cancel_check)
+        if not prompt_ids:
+            raise ValueError("empty prompt")
+        chunk = max(1, int(self.prefill_chunk_tokens))
+        n = len(prompt_ids)
+        start = max(0, min(int(cached_prefix_len), n - 1))
+        all_ids = list(prompt_ids)
+        past = past_kv if start > 0 else None
+        picked = -1
+        phase_ref = ["prefill"]
+        if cancel_check is not None:
+            self.engine._step_cancel_check = lambda: check(phase_ref[0])
+        try:
+            with torch.no_grad():
+                torch.cuda.reset_peak_memory_stats(self.device)
+                torch.cuda.synchronize()
+                t_pre0 = time.perf_counter()
+                for a in range(start, n, chunk):
+                    check("prefill")
+                    b = min(n, a + chunk)
+                    step = torch.tensor([prompt_ids[a:b]], dtype=torch.long)
+                    cache_pos = torch.arange(a, b, dtype=torch.long)
+                    logits, past = self.engine._forward_step(
+                        step,
+                        past_key_values=past,
+                        prefetch_next=(b < n or max_new_tokens > 1),
+                        cache_position=cache_pos,
+                    )
+                    if b == n:
+                        picked = int(logits[0].argmax().item())
+                    del logits
+                all_ids.append(picked)
+                torch.cuda.synchronize()
+                prefill_ms = (time.perf_counter() - t_pre0) * 1000.0
+                yield {"kind": "tokens", "new_ids": [picked]}
+
+                generated = 1
+                passes = 0
+                cursor = n
+                phase_ref[0] = "decode"
+                torch.cuda.synchronize()
+                t_dec0 = time.perf_counter()
+                while generated < max_new_tokens:
+                    if stop_on_eos and picked in eos_ids:
+                        break
+                    check("decode")
+                    logits, past = self.engine._forward_step(
+                        torch.tensor([[picked]], dtype=torch.long),
+                        past_key_values=past,
+                        prefetch_next=(generated + 1 < max_new_tokens),
+                        cache_position=torch.tensor([cursor], dtype=torch.long),
+                    )
+                    cursor += 1
+                    picked = int(logits[0].argmax().item())
+                    del logits
+                    all_ids.append(picked)
+                    generated += 1
+                    passes += 1
+                    yield {"kind": "tokens", "new_ids": [picked]}
+                torch.cuda.synchronize()
+                dec_s = time.perf_counter() - t_dec0
+        finally:
+            self.engine._step_cancel_check = None
+
+        yield {
+            "kind": "final_state",
+            "all_ids": all_ids,
+            "past": past,
+            "last_fed_h": None,
+            "prefill_ms": prefill_ms,
+            "decode_s": dec_s,
+            "decode_tokens": max(0, generated - 1),
+            "backbone_passes": passes,
+            "spec_gate": {"overall_accept_rate_pct": 0.0, "mtp_accept_rate_pct": 0.0},
+        }
+
     def _stream_token_ids(
         self,
         prompt_ids: list[int],
@@ -1789,6 +2107,16 @@ class AirColibriUnifiedEngine:
         past_kv: Any,
         cancel_check: Callable[[], bool] | None = None,
     ) -> Iterator[dict[str, Any]]:
+        if not self.fast_qwen:
+            yield from self._stream_bf16(
+                prompt_ids,
+                max_new_tokens=max_new_tokens,
+                stop_on_eos=stop_on_eos,
+                cancel_check=cancel_check,
+                cached_prefix_len=cached_prefix_len,
+                past_kv=past_kv,
+            )
+            return
         eos_id = self.tokenizer.eos_token_id
         check = self._make_cancel_checker(cancel_check)
         all_ids = list(prompt_ids)
@@ -1995,11 +2323,12 @@ class AirColibriUnifiedEngine:
     ) -> Iterator[dict[str, Any]]:
         """Streams UTF-8-safe `thinking` and `answer` deltas, followed by a `done` telemetry packet.
 
-        ``cancel_check`` is polled before every prefill chunk and every decode step; when it returns
-        True the generation stops with ``GenerationCancelled``. On cancellation, errors and early
-        close (``generator.close()``) every per-request tensor is released in ``finally``.
+        ``cancel_check`` is polled before every prefill chunk, every decode step, and every streamed
+        layer pre-hook; when it returns True the generation stops with ``GenerationCancelled``. On
+        cancellation, errors and early close (``generator.close()``) every per-request tensor and
+        ring slot is released in ``finally``.
         """
-        eos_id = self.tokenizer.eos_token_id
+        eos_ids = _eos_token_set(self.tokenizer.eos_token_id)
         check = self._make_cancel_checker(cancel_check)
         self.generations_started += 1
         completed = False
@@ -2011,7 +2340,8 @@ class AirColibriUnifiedEngine:
                 messages, enable_thinking=enable_thinking, use_session_cache=use_session_cache
             )
 
-            splitter = _IncrementalThinkSplitter(start_in_thinking=enable_thinking)
+            started_in_think = bool(getattr(self, "_last_prompt_opened_think", enable_thinking))
+            splitter = _IncrementalThinkSplitter(start_in_thinking=started_in_think)
             clean_gen_ids: list[int] = []
             raw_gen_ids: list[int] = []
             committed_tok_idx = 0
@@ -2032,7 +2362,7 @@ class AirColibriUnifiedEngine:
                     new_ids = ev["new_ids"]
                     raw_gen_ids.extend(new_ids)
                     for tid in new_ids:
-                        if tid != eos_id:
+                        if tid not in eos_ids:
                             clean_gen_ids.append(tid)
                     if len(clean_gen_ids) > committed_tok_idx:
                         if committed_tok_idx >= 4:
@@ -2093,6 +2423,7 @@ class AirColibriUnifiedEngine:
                     engine=self.engine,
                     mtp_head=self.mtp_head,
                     captured=self.captured,
+                    chatml_think_format=bool(getattr(self, "_last_prompt_chatml_think", False)),
                 )
                 self._session_messages = [
                     *[{"role": str(m["role"]), "content": str(m.get("content", ""))} for m in messages],
@@ -2106,7 +2437,7 @@ class AirColibriUnifiedEngine:
                 gc.collect()
                 torch.cuda.empty_cache()
 
-            stopped_by_eos = bool(raw_gen_ids and raw_gen_ids[-1] == eos_id)
+            stopped_by_eos = bool(raw_gen_ids and raw_gen_ids[-1] in eos_ids)
             metrics = {
                 "prompt_tokens": len(prompt_ids),
                 "cached_prefix_tokens": cached_len,
@@ -2124,6 +2455,9 @@ class AirColibriUnifiedEngine:
                 "parked_session_ram_mib": round(self.session.parked_bytes / MiB, 2),
                 "spec_gate": final_info.get("spec_gate", {}),
             }
+            ec = self.expert_cache_stats()
+            if ec is not None:
+                metrics["expert_cache"] = ec
             self.last_metrics = metrics
             completed = True
             yield {
@@ -2162,6 +2496,12 @@ class AirColibriUnifiedEngine:
             except Exception:
                 pass
             self.engine = None
+        if getattr(self, "model_source", None) is not None and hasattr(self.model_source, "close"):
+            try:
+                self.model_source.close()
+            except Exception:
+                pass
+            self.model_source = None
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

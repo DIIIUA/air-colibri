@@ -403,7 +403,15 @@ async function sendPrompt() {
         if (j.aircolibri_metrics) {
           const m = j.aircolibri_metrics;
           const acc = (m.spec_gate && m.spec_gate.overall_accept_rate_pct) || 0;
-          metaFoot.textContent = `${m.decode_tok_per_s} tok/s | ${m.generated_tokens} tok | MTP accept: ${acc}% | Peak VRAM: ${m.peak_vram_mib} MiB`;
+          const ec = m.expert_cache;
+          const reuse = m.cached_prefix_tokens ? ` | Reused: ${m.cached_prefix_tokens} tok` : '';
+          let extra = '';
+          if (acc > 0 || (m.avg_tokens_per_backbone_pass && m.avg_tokens_per_backbone_pass > 1.0)) {
+            extra = ` | MTP accept: ${acc}%`;
+          } else if (ec && ec.slots > 0) {
+            extra = ` | Expert cache: ${ec.hit_rate_pct}% (${ec.used_slots}/${ec.slots})`;
+          }
+          metaFoot.textContent = `${m.decode_tok_per_s} tok/s | ${m.generated_tokens} tok${reuse}${extra} | Peak VRAM: ${m.peak_vram_mib} MiB`;
         }
         chat.scrollTop = chat.scrollHeight;
       }
@@ -470,7 +478,7 @@ def make_disconnect_probe(sock: socket.socket, interval_s: float = 0.05):
     """Returns a cheap callable that reports True once the client closed or reset the connection.
 
     The request body has been read completely, so a readable socket whose ``MSG_PEEK`` returns
-    ``b""`` means the peer sent FIN (ForgeMind's ``call.cancel()``, a closed browser tab, ...).
+    ``b""`` means the peer sent FIN (an HTTP client's ``call.cancel()``, a closed browser tab, ...).
     It runs during prefill and ``<think>`` buffering, when nothing is written to the socket.
     """
     state = {"last": 0.0, "closed": False}
@@ -769,8 +777,31 @@ class AirColibriLANServer:
                     self._send_json(info)
                     return
 
-                if path == "/v1/models":
+                if path in ("/v1/models", "/api/v0/models"):
                     if not self._check_auth():
+                        return
+                    snap = srv.engine.status_snapshot() if hasattr(srv.engine, "status_snapshot") else {}
+                    max_ctx = int(
+                        (snap.get("vram_plan") or {}).get("max_context_tokens")
+                        or getattr(getattr(srv.engine, "plan", None), "max_context_tokens", 8192)
+                        or 8192
+                    )
+                    if path == "/api/v0/models":
+                        self._send_json(
+                            {
+                                "object": "list",
+                                "data": [
+                                    {
+                                        "id": srv.engine.model_id,
+                                        "object": "model",
+                                        "type": "llm",
+                                        "state": "loaded",
+                                        "max_context_length": max_ctx,
+                                        "loaded_context_length": max_ctx,
+                                    }
+                                ],
+                            }
+                        )
                         return
                     self._send_json(
                         {
@@ -781,8 +812,33 @@ class AirColibriLANServer:
                                     "object": "model",
                                     "created": srv.started_at,
                                     "owned_by": "aircolibri-lan",
+                                    "context_length": max_ctx,
+                                    "max_model_len": max_ctx,
                                 }
                             ],
+                        }
+                    )
+                    return
+
+                if path in ("/props", "/api/extra/true_max_context_length"):
+                    if not self._check_auth():
+                        return
+                    snap = srv.engine.status_snapshot() if hasattr(srv.engine, "status_snapshot") else {}
+                    max_ctx = int(
+                        (snap.get("vram_plan") or {}).get("max_context_tokens")
+                        or getattr(getattr(srv.engine, "plan", None), "max_context_tokens", 8192)
+                        or 8192
+                    )
+                    if path == "/api/extra/true_max_context_length":
+                        self._send_json({"value": max_ctx})
+                        return
+                    self._send_json(
+                        {
+                            "default_generation_settings": {
+                                "n_ctx": max_ctx,
+                                "model": srv.engine.model_id,
+                            },
+                            "total_slots": 1,
                         }
                     )
                     return
@@ -887,6 +943,7 @@ class AirColibriLANServer:
                         return False
 
                 outcome = "ok"
+                req_metrics: dict[str, Any] = {}
                 gen = None
                 try:
                     with srv.coordinator.gpu(ticket):
@@ -908,6 +965,7 @@ class AirColibriLANServer:
                                 gen.close()
                             assert done_ev is not None
                             m = done_ev["metrics"]
+                            req_metrics = m
                             msg_out: dict[str, Any] = {"role": "assistant", "content": done_ev["answer_text"]}
                             if done_ev["thinking_text"]:
                                 msg_out["reasoning_content"] = done_ev["thinking_text"]
@@ -946,6 +1004,7 @@ class AirColibriLANServer:
                                         break
                                 elif ev["type"] == "done":
                                     m = ev["metrics"]
+                                    req_metrics = m
                                     _write_sse(chunk({}, m["finish_reason"], aircolibri_metrics=m))
                         finally:
                             gen.close()
@@ -975,7 +1034,9 @@ class AirColibriLANServer:
                 finally:
                     if gen is not None:
                         gen.close()
-                    m = (getattr(srv.engine, "last_metrics", {}) or {}) if outcome == "ok" else {}
+                    if outcome == "ok" and ticket.cancel_event.is_set():
+                        outcome = f"cancelled (decode: {ticket.cancel_reason or 'client disconnected'})"
+                    m = req_metrics or ((getattr(srv.engine, "last_metrics", {}) or {}) if outcome == "ok" else {})
                     srv.log.info(
                         "%s end %s in %.2fs | prompt=%s gen=%s prefill_ms=%s tok/s=%s peak_vram_mib=%s alloc_mib=%.1f",
                         req_id, outcome, time.perf_counter() - t0, m.get("prompt_tokens", "-"), m.get("generated_tokens", "-"),

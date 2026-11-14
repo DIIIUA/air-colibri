@@ -314,6 +314,18 @@ class GPURingPipeline:
         self.tail_prefetches += 1
         return slot
 
+    def reset_in_flight(self) -> None:
+        """Synchronizes CUDA streams and returns all slots (LOADING/READY/COMPUTING) to FREE."""
+        if self.device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.synchronize(self.device)
+        for slot in self.slots:
+            if slot.state == SlotState.COMPUTING and slot.compute_done_event is not None and slot.consumer_stream is not None:
+                slot.compute_done_event.record(slot.consumer_stream)
+            slot.current_layer_idx = None
+            slot.consumer_stream = None
+            slot.loaded_keys.clear()
+            slot.state = SlotState.FREE
+
     def close(self) -> None:
         """Освобождает GPU-слоты и сбрасывает состояние конвейера."""
         if self.device.type == "cuda" and torch.cuda.is_available():

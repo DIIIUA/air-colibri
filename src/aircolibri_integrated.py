@@ -12,6 +12,7 @@
 
 import collections
 import gc
+import inspect
 import os
 import sys
 import time
@@ -55,10 +56,11 @@ def _fail_runtime_on_error(forward):
     def wrapped(self, *args, **kwargs):
         try:
             return forward(self, *args, **kwargs)
-        except BaseException:
-            # Initial embedding / ring preparation can already own resources,
-            # so failures before model.forward also require close and reopen.
-            self._failed = True
+        except BaseException as exc:
+            if not getattr(exc, "_is_cooperative_cancel", False):
+                # Initial embedding / ring preparation can already own resources,
+                # so non-cancel failures before model.forward require close and reopen.
+                self._failed = True
             raise
     return wrapped
 
@@ -74,6 +76,9 @@ class _NoStreamingPipeline:
 
     get_slot_for_loading = load_tensors_async = acquire_slot_for_compute = _unused
     release_slot_after_compute = prefetch_tail_to_head = _unused
+
+    def reset_in_flight(self) -> None:
+        return None
 
     def close(self) -> None:
         return None
@@ -106,6 +111,7 @@ class AirColibriModel:
         use_fused_q4_gemv: bool = True,
         model_source=None,
         weight_reader=None,
+        expert_cache_bytes: int = 0,
     ):
         if pipeline_mode not in ("sequential", "double_buffer", "triple_ring", "triple_ring_prefetch"):
             raise ValueError("Unsupported pipeline mode")
@@ -144,20 +150,30 @@ class AirColibriModel:
         self._q4_wrapped_modules: List[Tuple[ColibriQ4Linear, Any]] = []
         self._q4_scratch: Optional[torch.Tensor] = None
         self.embed_tokens_weight: Optional[torch.Tensor] = None
+        self._step_cancel_check = None
 
         # 1. Загрузка конфигурации и токенизатора
         if model_source is not None:
-            from aircolibri_cli.model_source import load_text_config
-            self.config = load_text_config(model_dir)
+            from aircolibri_cli.model_source import load_runtime_config
+            self.config = load_runtime_config(model_dir)
         else:
             self.config = AutoConfig.from_pretrained(model_dir, config_file="config.hf.json")
-        if self.config.model_type != "qwen3_5_text":
-            raise ValueError("Dense adapter currently supports qwen3_5_text only")
+        self.fast_qwen = self.config.model_type == "qwen3_5_text"
+        if self.is_q4 and not self.fast_qwen:
+            raise ValueError("Q4 fast path supports qwen3_5_text only; other models run in BF16")
         if not 0 <= vram_resident_layers <= self.config.num_hidden_layers:
             raise ValueError("Resident layer count outside model")
-        # Preserve the checkpoint tokenizer. The installed Transformers detector
-        # incorrectly treats local configs without transformers_version as Mistral.
-        self.tokenizer = AutoTokenizer.from_pretrained(model_dir, fix_mistral_regex=False, local_files_only=True)
+        # Preserve the checkpoint tokenizer without ever calling mmap on GGUF files.
+        if getattr(model_source, "gguf_file", None):
+            from aircolibri_cli.model_source import load_runtime_tokenizer
+            self.tokenizer = load_runtime_tokenizer(model_dir, config=self.config)
+        else:
+            tok_kwargs: Dict[str, Any] = {"fix_mistral_regex": False, "local_files_only": True}
+            try:
+                self.tokenizer = AutoTokenizer.from_pretrained(model_dir, **tok_kwargs)
+            except TypeError:
+                tok_kwargs.pop("fix_mistral_regex", None)
+                self.tokenizer = AutoTokenizer.from_pretrained(model_dir, **tok_kwargs)
 
         # Определяем параметры кольца по режиму (при полной VRAM-резидентности всех слоёв стриминга нет -> 1 слот)
         all_layers_resident = (self.vram_resident_layers == self.config.num_hidden_layers)
@@ -197,8 +213,33 @@ class AirColibriModel:
 
         # 3. Создание модели на meta-устройстве (0 байт VRAM!)
         with init_empty_weights():
-            self.model = AutoModelForCausalLM.from_config(self.config)
+            self.model = AutoModelForCausalLM.from_config(self.config, dtype=self.dtype)
         self.model.eval()
+        if model_source is not None and hasattr(model_source, "prepare_model"):
+            try:
+                model_source.prepare_model(
+                    self.model,
+                    device=self.device,
+                    dtype=self.dtype,
+                    expert_cache_bytes=int(expert_cache_bytes),
+                )
+            except TypeError:
+                model_source.prepare_model(self.model, device=self.device, dtype=self.dtype)
+        if self.device.type == "cuda":
+            from src.colibri_deltanet_nvrtc import install_deltanet_nvrtc_kernels
+
+            install_deltanet_nvrtc_kernels(
+                self.model,
+                patch_norms=True,
+                patch_zero_centered_norm=not self.is_q4,
+            )
+        try:
+            sig_params = inspect.signature(self.model.forward).parameters
+            self._supports_logits_to_keep = "logits_to_keep" in sig_params or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig_params.values()
+            )
+        except (TypeError, ValueError):
+            self._supports_logits_to_keep = False
         if self.is_q4:
             replace_linear_with_q4(
                 self.model,
@@ -308,17 +349,30 @@ class AirColibriModel:
         raw_params = [k for k, _ in layer_module.named_parameters()]
         return q4_bindings, raw_params
 
+    def _decoder_layers(self):
+        """Decoder stack. Qwen, OLMoE, Llama, Mistral, Gemma and Phi keep it at ``model.layers``."""
+        inner = getattr(self.model, "model", None)
+        layers = getattr(inner, "layers", None) if inner is not None else None
+        if layers is None:
+            raise ValueError(
+                f"{type(self.model).__name__} has no model.layers decoder stack; "
+                "this BF16 ring runs standard Hugging Face causal LMs"
+            )
+        return layers
+
     def _load_resident_layer(self, layer_idx: int) -> None:
         """Загружает VRAM-резидентный слой навсегда на GPU (в bf16 или packed Q4)."""
-        layer_module = self.model.model.layers[layer_idx]
-        if self.is_q4:
+        layer_module = self._decoder_layers()[layer_idx]
+        if self.is_q4 or self.model_source is not None:
             tensors = self.weight_manager.read_layer_tensors(layer_idx, target_device=self.device)
             q4_bindings, raw_params = self._collect_layer_bindings(layer_module)
             for submod, q_k, s_k, z_k in q4_bindings:
                 submod.bind_q4_tensors(tensors[q_k], tensors[s_k], tensors[z_k])
             for k in raw_params:
                 if k in tensors:
-                    set_module_tensor_to_device(layer_module, k, self.device, value=tensors[k], clear_cache=False)
+                    set_module_tensor_to_device(
+                        layer_module, k, self.device, value=tensors[k], dtype=self.dtype, clear_cache=False
+                    )
             return
 
         layer_file = os.path.join(self.model_dir, f"model-{layer_idx:05d}.safetensors")
@@ -327,7 +381,9 @@ class AirColibriModel:
             for k in f.keys():
                 short_k = k.replace(prefix, "")
                 t = f.get_slice(k)[:].to(device=self.device, dtype=self.dtype)
-                set_module_tensor_to_device(layer_module, short_k, self.device, value=t, clear_cache=False)
+                set_module_tensor_to_device(
+                    layer_module, short_k, self.device, value=t, dtype=self.dtype, clear_cache=False
+                )
 
     def _quantize_lm_head_from_slice(self) -> None:
         """Квантует lm_head чанками из mmap прямо на GPU без материализации 1.94 ГБ в RAM."""
@@ -371,7 +427,9 @@ class AirColibriModel:
                 del chunk
         else:
             lm_head_w.copy_(sl[:].to(device=self.device, dtype=self.dtype))
-        set_module_tensor_to_device(self.model, "lm_head.weight", self.device, value=lm_head_w, clear_cache=False)
+        set_module_tensor_to_device(
+            self.model, "lm_head.weight", self.device, value=lm_head_w, dtype=self.dtype, clear_cache=False
+        )
         del lm_head_w
         del self.weight_manager.globals["lm_head.weight"]
 
@@ -384,7 +442,9 @@ class AirColibriModel:
         # Norm на GPU
         if "model.norm.weight" in self.weight_manager.globals:
             norm_w = self.weight_manager.globals.pop("model.norm.weight").to(device=self.device, dtype=self.dtype)
-            set_module_tensor_to_device(self.model, "model.norm.weight", self.device, value=norm_w, clear_cache=False)
+            set_module_tensor_to_device(
+                self.model, "model.norm.weight", self.device, value=norm_w, dtype=self.dtype, clear_cache=False
+            )
             del norm_w
 
         # LM Head на GPU
@@ -405,15 +465,17 @@ class AirColibriModel:
         # Собираем привязки Q4-подмодулей и неквантуемых параметров для каждого слоя
         layer_q4_bindings: List[List[Tuple[ColibriQ4Linear, str, str, str]]] = []
         layer_param_names: List[List[str]] = []
-        for layer_mod in self.model.model.layers:
+        for layer_mod in self._decoder_layers():
             q4_b, raw_p = self._collect_layer_bindings(layer_mod)
             layer_q4_bindings.append(q4_b)
             layer_param_names.append(raw_p)
 
-        for idx, layer_module in enumerate(self.model.model.layers):
+        for idx, layer_module in enumerate(self._decoder_layers()):
             layer_module._air_layer_idx = idx
 
             def _pre_hook(module, args):
+                if self._step_cancel_check is not None:
+                    self._step_cancel_check()
                 i = module._air_layer_idx
                 # Слой резидентен в VRAM?
                 if i < self.vram_resident_layers:
@@ -437,7 +499,9 @@ class AirColibriModel:
                     submod.bind_q4_tensors(slot.tensors[q_k], slot.tensors[s_k], slot.tensors[z_k])
                 for k in layer_param_names[i]:
                     if k in slot.tensors:
-                        set_module_tensor_to_device(module, k, self.device, value=slot.tensors[k], clear_cache=False)
+                        set_module_tensor_to_device(
+                            module, k, self.device, value=slot.tensors[k], dtype=self.dtype, clear_cache=False
+                        )
 
             def _post_hook(module, args, output):
                 i = module._air_layer_idx
@@ -484,7 +548,7 @@ class AirColibriModel:
 
     @_fail_runtime_on_error
     def _forward_step(self, step_tokens: torch.Tensor, past_key_values: Any = None,
-                      prefetch_next: bool = True) -> Tuple[torch.Tensor, Any]:
+                      prefetch_next: bool = True, cache_position: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Any]:
         if self._failed or self.model is None:
             raise RuntimeError("Model is closed or failed; create a new runtime")
         self._prefetch_next_step = prefetch_next
@@ -503,16 +567,33 @@ class AirColibriModel:
                 self.pipeline.load_tensors_async(slot, pinned_t, pinned_pool=self.weight_manager.pinned_pool)
 
         try:
+            extra = {}
+            if cache_position is not None:
+                extra["cache_position"] = cache_position.to(device=self.device)
+            if getattr(self, "_supports_logits_to_keep", False):
+                extra["logits_to_keep"] = 1
             outputs = self.model(
                 inputs_embeds=inputs_embeds,
                 input_ids=None,
                 past_key_values=past_key_values,
                 use_cache=True,
+                **extra,
             )
-        except BaseException:
-            self._failed = True
+        except BaseException as exc:
+            if not getattr(exc, "_is_cooperative_cancel", False):
+                self._failed = True
             raise
         return outputs.logits[:, -1, :], outputs.past_key_values
+
+    def reset_after_cancel(self) -> None:
+        """Restores ring slots and prefetch flags after a cooperative cancellation."""
+        self._step_cancel_check = None
+        self.tail_prefetched = False
+        if getattr(self, "active_slot_per_layer", None):
+            for i in range(len(self.active_slot_per_layer)):
+                self.active_slot_per_layer[i] = None
+        if getattr(self, "pipeline", None) is not None and hasattr(self.pipeline, "reset_in_flight"):
+            self.pipeline.reset_in_flight()
 
     def compute_next_token_logits(self, prompt: str) -> torch.Tensor:
         """Возвращает полный вектор логитов следующего токена [1, vocab_size] на CPU."""
@@ -606,6 +687,8 @@ class AirColibriModel:
         if getattr(self, "weight_manager", None) is not None:
             self.weight_manager.close()
             self.weight_manager = None
+        if getattr(self, "model_source", None) is not None and hasattr(self.model_source, "close"):
+            self.model_source.close()
         self.embed_tokens_weight = None
         self._q4_scratch = None
         self.model = None

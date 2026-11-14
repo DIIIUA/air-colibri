@@ -38,9 +38,22 @@ built once into `data/q4-g64-cache/`.
 aircolibri doctor --model Qwen/Qwen3.5-9B      # downloads once (~19 GB) and checks the setup
 ```
 
-You can also point `--model` at a local folder, or place the folder in `models/`; it is then
-found automatically (unsupported models such as OLMoE are skipped). Colibrì per-layer containers
+You can also point `--model` at a local folder, or place the folder in `models/`. A Qwen3.5
+hybrid whose geometry matches the fused kernels stays on the fast Q4/MTP engine. Any other
+complete decoder checkpoint (OLMoE, Llama, Mistral, Gemma, Phi, …) runs in BF16 on the same
+ring and is streamed layer by layer when it does not fit. When both are present, Qwen stays
+the default. A broken folder is skipped. Colibrì per-layer containers
 (`config.hf.json` + `model-00000.safetensors` …) keep working.
+
+A folder that contains a supported GGUF checkpoint (`qwen35moe` / `qwen35`, one `.gguf`) runs on
+the same BF16 ring directly from the `.gguf` file — without `mmap`, without unpacking onto disk,
+and without writing extra files next to it. Dense layer trunks live in VRAM or stream through the
+ring, while routed MoE experts stay in the `.gguf`: only the selected experts' byte slices are read
+and NVRTC-dequantized per step, with hot experts cached in spare VRAM within the mode budget.
+Self-contained NVRTC CUDA kernels (`data/native/ptx-cache/`) accelerate `GatedDeltaNet`,
+`CausalConv1d`, and gated/zero-centered `RMSNorm` across all hybrid models without requiring
+`causal-conv1d`, `flash-linear-attention`, or Triton. The 9B Q4 fused kernels and MTP stay off on
+non-9B checkpoints, and `Qwen3.5-9B` remains the default when both are present.
 
 ## Usage
 
@@ -76,7 +89,7 @@ is projected onto the 248k-token vocabulary.
 |---|---|
 | `POST /v1/chat/completions` | OpenAI-compatible, JSON or `stream: true` SSE (`reasoning_content` for `<think>`) |
 | `POST /v1/chat/stop` | stops the running generation immediately |
-| `GET /v1/models`, `GET /api/info` | model list, node status |
+| `GET /v1/models`, `GET /api/info` | model list, context length (`GET /api/v0/models`, `/props`, `/api/extra/true_max_context_length`), node status |
 | `GET /` | built-in web chat |
 
 - One generation runs at a time. A new request — or a client that closes its connection, detected

@@ -40,7 +40,6 @@ from aircolibri_cli.model_source import (
     ModelNotFoundError,
     UnsupportedModelError,
     detect_format,
-    raw_text_config_dict,
     resolve_model_dir,
 )
 from aircolibri_cli.unified_runtime import (
@@ -61,8 +60,9 @@ def _add_engine_args(p: argparse.ArgumentParser) -> None:
         dest="model",
         type=str,
         default=None,
-        help=f"Model folder (Colibri container or Hugging Face shards) or a Hugging Face repo id such as "
-        f"{DEFAULT_MODEL_ID} (downloaded once). Default: a supported folder in <root>/models",
+        help=f"Model folder (Colibri container, Hugging Face shards, or a Qwen3.5/3.6 MoE GGUF) "
+        f"or a Hugging Face repo id such as {DEFAULT_MODEL_ID} (downloaded once). "
+        f"Default: a supported folder in <root>/models",
     )
     p.add_argument("--aircolibri-root", type=str, default=None, help="Path to the AirColibri program folder")
     p.add_argument(
@@ -100,12 +100,8 @@ def _engine_from_args(args: argparse.Namespace) -> AirColibriUnifiedEngine:
 def cmd_doctor(args: argparse.Namespace) -> int:
     import torch
 
-    from aircolibri_cli.unified_runtime import (
-        _model_shape_inventory,
-        estimate_layer_vram_bytes,
-        plan_vram,
-        q4_bytes_for_shape,
-    )
+    from aircolibri_cli.model_source import runtime_profile
+    from aircolibri_cli.unified_runtime import plan_for_checkpoint
 
     root = find_aircolibri_root(args.aircolibri_root)
     lan_ip, all_ips = detect_lan_ips()
@@ -131,28 +127,22 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if model_dir is not None:
         fmt = detect_format(model_dir)
         report["model_format"] = fmt
-        if fmt == "colibri":
+        profile = runtime_profile(model_dir)
+        report["runtime_profile"] = profile
+        if fmt == "colibri" and profile.get("fast_qwen"):
             report["q4_cache_ready"] = (root / "data" / "q4-g64-cache").exists() and checkpoint_manifest_path(root).exists()
         if cuda_ok:
-            from aircolibri_cli.model_source import open_model_source
-
-            cfg = raw_text_config_dict(model_dir)
-            n = int(cfg["num_hidden_layers"])
-            layers_sh, globals_sh, mtp_sh = _model_shape_inventory(model_dir, open_model_source(model_dir), n)
-            vocab, hidden = globals_sh.get("lm_head.weight", (cfg["vocab_size"], cfg["hidden_size"]))
-            mtp_b = estimate_layer_vram_bytes({k: v for k, v in mtp_sh.items() if k.startswith("mtp.layers.")})
-            if "mtp.fc.weight" in mtp_sh:
-                mtp_b += q4_bytes_for_shape(mtp_sh["mtp.fc.weight"])
-            report["mtp_weights_present"] = "mtp.fc.weight" in mtp_sh
             free_b, total_b = torch.cuda.mem_get_info(0)
-            full_attn = sum(1 for t in cfg.get("layer_types", []) if t == "full_attention")
             try:
-                plan = plan_vram(
-                    args.vram_mode, total_b, free_b, [estimate_layer_vram_bytes(s) for s in layers_sh],
-                    q4_bytes_for_shape((vocab, hidden)), mtp_b,
-                    full_attn * 2 * int(cfg.get("num_key_value_heads", 4)) * int(cfg.get("head_dim", 256)) * 2,
-                    (n - full_attn) * 32 * 128 * 128 * 4, int(cfg["hidden_size"]), int(cfg["intermediate_size"]),
+                profile, plan, _has_mtp = plan_for_checkpoint(
+                    model_dir,
+                    mode=args.vram_mode,
+                    total_bytes=total_b,
+                    free_bytes=free_b,
+                    enable_mtp=not getattr(args, "no_mtp", False),
                 )
+                report["runtime_profile"] = profile
+                report["mtp_weights_present"] = bool(profile.get("mtp_weights"))
                 report["vram_plan"] = plan.as_dict()
             except RuntimeError as exc:
                 report["vram_plan_error"] = str(exc)
@@ -165,8 +155,21 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"  Model              : {model_dir or 'NOT FOUND'} ({report.get('model_format', '-')})")
     if model_error:
         print(f"                       {model_error}")
+    profile = report.get("runtime_profile") or {}
+    if profile:
+        why = "; ".join(profile.get("why_not_fast") or [])
+        fast_line = "on" if profile.get("fast_qwen") else f"off ({why})" if why else "off"
+        print(f"  Backend            : {profile.get('backend')} / {profile.get('weight_format')} / fast {fast_line}")
     if "mtp_weights_present" in report:
-        print(f"  MTP head           : {'present' if report['mtp_weights_present'] else 'not in checkpoint (MTP off)'}")
+        mtp_on = bool(profile.get("mtp_enabled"))
+        present = "present" if report["mtp_weights_present"] else "absent"
+        print(f"  MTP head           : weights {present}, {'on' if mtp_on else 'off'}")
+    if profile.get("num_experts"):
+        print(
+            f"  Experts            : {profile.get('num_experts')} total, "
+            f"{profile.get('num_experts_per_tok')} per token, "
+            f"{profile.get('num_hidden_layers')} layers, hidden {profile.get('hidden_size')}"
+        )
     if plan is not None:
         layout = "all layers resident" if plan.full_residency else (
             f"{plan.resident_layers}/{plan.layers_total} resident + {plan.ring_slots}-slot ring"
@@ -224,14 +227,23 @@ def _stream_to_console(engine: AirColibriUnifiedEngine, messages: list[dict[str,
 
     m = done_packet.get("metrics", {})
     sg = m.get("spec_gate", {})
-    acc_pct = sg.get("overall_accept_rate_pct", 0.0)
+    ec = m.get("expert_cache") or {}
+    if engine.mtp_enabled:
+        acc_pct = sg.get("overall_accept_rate_pct", 0.0)
+        accel_str = f" | MTP accept: {acc_pct}% ({m.get('avg_tokens_per_backbone_pass', 1.0):.2f} tok/pass)"
+    elif ec.get("slots", 0) > 0:
+        accel_str = (
+            f" | Expert cache: {ec.get('hit_rate_pct', 0.0)}% "
+            f"({ec.get('used_slots', 0)}/{ec.get('slots', 0)} slots)"
+        )
+    else:
+        accel_str = ""
     reuse_str = f" | Prefix reused: {m.get('cached_prefix_tokens', 0)} tok" if m.get("cached_prefix_tokens") else ""
     park_str = f" | Parked RAM: {m.get('parked_session_ram_mib', 0.0)} MiB" if use_session else ""
     print(
         f"\n\n--- [ one answer: {m.get('decode_tok_per_s', 0.0):.2f} tok/s | "
         f"{m.get('generated_tokens', 0)} tok (EOS={m.get('stopped_by_eos')}) | "
-        f"Prefill: {m.get('prefill_ms', 0.0):.1f} ms{reuse_str} | "
-        f"MTP accept: {acc_pct}% ({m.get('avg_tokens_per_backbone_pass', 1.0):.2f} tok/pass) | "
+        f"Prefill: {m.get('prefill_ms', 0.0):.1f} ms{reuse_str}{accel_str} | "
         f"Peak VRAM: {m.get('peak_vram_mib', 0.0):.1f} MiB{park_str} ] ---",
         flush=True,
     )
