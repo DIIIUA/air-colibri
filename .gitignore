@@ -1,42 +1,28 @@
-upstream_airllm/
-upstream_colibri/
-.venv/
+# Python
 __pycache__/
 *.pyc
-*.bin
-*.safetensors
-*.log
-.gemini/
 .pytest_cache/
-models/
-.relay/
-data/native/*.dll
-data/native/*.obj
-data/native/*.exp
-data/native/*.lib
-data/native/build_tier.cmd
-data/integration-20261112/*-logits.pt
-data/integration-20261112/before-changes.zip
+.venv/
 
-# Local checkpoints, lab outputs and private research/chat archive.
+# Model weights, generated caches and runtime output (local only)
+models/
+data/
+logs/
+*.safetensors
+*.bin
+*.log
+
+# Local research, history and transfer archives (kept outside the public repository)
 /history/
+/transfer/
+/docs/
+/scripts/
 /aircolibri.local.json
 /AIRCOLIBRI_KNOWLEDGE.txt
-/docs/knowledge-base-20261112/
-/docs/AIRCOLIBRI_IMPLEMENTATION_REPORT_20261113.html
-/docs/AIRCOLIBRI_INTEGRATION_PLAN.html
-/data/integration-20261112/
-/data/publication-20261113/
-/data/quality-20261113/
-/data/native/
-/data/q4-g64-cache/
-/data/latest-run.json
-/data/checkpoint-manifest.json
-/scripts/build_implementation_report.py
-/scripts/record_provenance.py
+/doctor_report.json
 
-# Local review of private chat/research history.
-/docs/AIRCOLIBRI_IDEAS_TO_IMPLEMENTATION_20261113.html
-/scripts/build_evolution_review.py
-/data/review-20261113/
-/data/shared-moe-20261113/
+# Local tooling
+.gemini/
+.relay/
+upstream_airllm/
+upstream_colibri/

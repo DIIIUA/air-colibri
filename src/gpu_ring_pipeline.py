@@ -111,7 +111,7 @@ class GPURingPipeline:
         arena_layout: Optional[SlotArenaLayout] = None,
         slot_layouts: Optional[List[SlotArenaLayout]] = None,
     ):
-        self.num_slots = max(1, min(num_slots, 4))
+        self.num_slots = max(1, min(num_slots, 1024))
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = dtype
         self.tail_to_head_prefetch = tail_to_head_prefetch
@@ -168,9 +168,10 @@ class GPURingPipeline:
 
         total_mb = self.arena.nbytes / (1024**2)
         strides_mb = [round(size / (1024**2),2) for size in self.slot_strides]
+        strides_str = str(strides_mb) if len(strides_mb) <= 8 else f"{strides_mb[:4]}...({len(strides_mb)} slots)"
         print(
             f"[GPURingPipeline] Initialized {self.num_slots}-slot ring "
-            f"({total_mb:.1f} MB VRAM arena | slot MiB {strides_mb}) | "
+            f"({total_mb:.1f} MB VRAM arena | slot MiB {strides_str}) | "
             f"Mode: {'Triple-Ring + Tail-Prefetch' if (self.num_slots >= 3 and tail_to_head_prefetch) else f'{self.num_slots}-Slot Ring'}"
         )
 
@@ -196,7 +197,8 @@ class GPURingPipeline:
         self,
         slot: RingSlot,
         pinned_src_tensors: Dict[str, torch.Tensor],
-        pinned_pool: Optional[Any] = None
+        pinned_pool: Optional[Any] = None,
+        pinned_slot_id: Optional[int] = None,
     ) -> None:
         """Асинхронно копирует веса из закрепленной памяти в GPU-слот через transfer_stream."""
         if slot not in self.slots or slot.state != SlotState.LOADING:
@@ -223,7 +225,8 @@ class GPURingPipeline:
 
             # Регистрируем в pinned-пуле активную DMA-передачу для предотвращения гонок
             if pinned_pool is not None:
-                pinned_pool.record_dma_in_flight(slot.slot_id, self.transfer_stream)
+                psid = slot.slot_id if pinned_slot_id is None else pinned_slot_id
+                pinned_pool.record_dma_in_flight(psid, self.transfer_stream)
 
             # На CPU семантически состояние остается LOADING до завершения DMA
             slot.state = SlotState.LOADING

@@ -459,17 +459,35 @@ class BoundedPinnedBufferPool:
 class LazyGlobalsMap(collections.abc.MutableMapping):
     """Ленивый mmap-словарь глобальных весов без жадной загрузки 4 ГБ в RAM."""
 
-    def __init__(self, globals_path: str, dtype: torch.dtype):
+    def __init__(self, globals_path: Optional[str], dtype: torch.dtype,
+                 key_map: Optional[Dict[str, Tuple[str, str]]] = None):
+        """``key_map`` (canonical name -> (file, stored key)) serves sharded Hugging Face checkpoints."""
         self._globals_path = globals_path
         self._dtype = dtype
-        self._handle: Any = safetensors.safe_open(globals_path, framework="pt", device="cpu")
-        self._keys: Dict[str, None] = dict.fromkeys(self._handle.keys())
+        self._key_map = key_map
+        self._handles: Dict[str, Any] = {}
+        if key_map is None:
+            self._handle: Any = safetensors.safe_open(globals_path, framework="pt", device="cpu")
+            self._keys: Dict[str, None] = dict.fromkeys(self._handle.keys())
+        else:
+            self._handle = None
+            self._keys = dict.fromkeys(key_map)
         self._materialized: Dict[str, torch.Tensor] = {}
 
     def _ensure_handle(self) -> Any:
         if self._handle is None:
             self._handle = safetensors.safe_open(self._globals_path, framework="pt", device="cpu")
         return self._handle
+
+    def _slice(self, key: str) -> Any:
+        if self._key_map is None:
+            return self._ensure_handle().get_slice(key)
+        path, stored = self._key_map[key]
+        handle = self._handles.get(path)
+        if handle is None:
+            handle = safetensors.safe_open(path, framework="pt", device="cpu")
+            self._handles[path] = handle
+        return handle.get_slice(stored)
 
     def release_handle(self) -> None:
         """Drop the globals mapping after staged copies, retain lazy key metadata.
@@ -479,9 +497,10 @@ class LazyGlobalsMap(collections.abc.MutableMapping):
         when explicitly requested by callers, retain their own storage owner.
         """
         self._handle = None
+        self._handles.clear()
 
     def _read_tensor(self, key: str) -> torch.Tensor:
-        sl = self._ensure_handle().get_slice(key)
+        sl = self._slice(key)
         shape = sl.get_shape()
         if len(shape) >= 2 and shape[0] > 4096:
             out = torch.empty(shape, dtype=self._dtype, device="cpu")
@@ -495,7 +514,7 @@ class LazyGlobalsMap(collections.abc.MutableMapping):
         """Возвращает ленивый safetensors slice без материализации всего тензора в RAM."""
         if key not in self._keys:
             raise KeyError(key)
-        return self._ensure_handle().get_slice(key)
+        return self._slice(key)
 
     def lookup_rows(self, key: str, indices: torch.Tensor, dtype: Optional[torch.dtype] = None) -> torch.Tensor:
         """Читает только нужные строки embedding-таблицы без загрузки 1.94 ГБ в RAM."""
@@ -504,7 +523,7 @@ class LazyGlobalsMap(collections.abc.MutableMapping):
         target_dtype = dtype or self._dtype
         if key in self._materialized:
             return self._materialized[key][indices].to(dtype=target_dtype)
-        sl = self._ensure_handle().get_slice(key)
+        sl = self._slice(key)
         flat_ids = indices.reshape(-1).tolist()
         if not flat_ids:
             cols = sl.get_shape()[1]
@@ -558,12 +577,45 @@ class LazyGlobalsMap(collections.abc.MutableMapping):
         self._materialized.clear()
         self._keys.clear()
         self._handle = None
+        self._handles.clear()
 
     def close(self) -> None:
         self.clear()
 
     def __repr__(self) -> str:
         return f"LazyGlobalsMap(keys={list(self._keys.keys())}, loaded={list(self._materialized.keys())})"
+
+
+class ShardedLayerView:
+    """``safe_open``-like view of one decoder layer spread over Hugging Face shards.
+
+    ``entries`` maps canonical names (``model.layers.{i}.<param>``) to ``(file, stored key)``.
+    """
+
+    def __init__(self, entries: Dict[str, Tuple[str, str]]):
+        self._entries = dict(entries)
+        self._handles: Dict[str, Any] = {}
+
+    def _handle(self, path: str) -> Any:
+        h = self._handles.get(path)
+        if h is None:
+            h = safetensors.safe_open(path, framework="pt", device="cpu")
+            self._handles[path] = h
+        return h
+
+    def keys(self) -> List[str]:
+        return list(self._entries)
+
+    def entries(self) -> Dict[str, Tuple[str, str]]:
+        return dict(self._entries)
+
+    def get_slice(self, key: str) -> Any:
+        path, stored = self._entries[key]
+        return self._handle(path).get_slice(stored)
+
+    def get_tensor(self, key: str) -> torch.Tensor:
+        path, stored = self._entries[key]
+        return self._handle(path).get_tensor(stored)
 
 
 class StableWeightManager:
@@ -583,8 +635,10 @@ class StableWeightManager:
         max_ram_bytes: Optional[int] = None,
         max_mmap_handles: int = 2,
         weight_reader=None,
+        model_source=None,
     ):
         self.model_dir = model_dir
+        self.model_source = model_source
         self.dtype = dtype
         self.cache_policy = cache_policy
         if weight_format not in ("bf16", "q4", "q4_g16_asym", "q4_g32_asym", "q4_g64_asym"):
@@ -601,11 +655,11 @@ class StableWeightManager:
         self.quantization_calls = 0
         self._closed = False
         if q4_cache_dir is not None:
-            if not self.is_q4 or checkpoint_manifest is None:
-                raise ValueError("Q4 cache requires Q4 format and a checkpoint manifest")
+            if not self.is_q4 or (checkpoint_manifest is None and model_source is None):
+                raise ValueError("Q4 cache requires Q4 format and a checkpoint manifest or model source")
             from src.prepacked_q4_cache import PrepackedLayerCache
             self.prepacked_cache = PrepackedLayerCache(model_dir, q4_cache_dir, checkpoint_manifest,
-                dtype=dtype, group_size=q4_group_size, reader=weight_reader)
+                dtype=dtype, group_size=q4_group_size, reader=weight_reader, source=model_source)
 
         # Постоянные открытые mmap-дескрипторы файлов safetensors
         self.mmap_handles: Dict[int, Any] = collections.OrderedDict()
@@ -614,7 +668,7 @@ class StableWeightManager:
         template: Dict[str, Any] = {}
         for l_idx in [0, 3]:
             l_file = os.path.join(model_dir, f"model-{l_idx:05d}.safetensors")
-            if os.path.exists(l_file):
+            if model_source is not None or os.path.exists(l_file):
                 f = self._get_mmap_handle(l_idx)
                 for k in f.keys():
                     short_k = k.replace(f"model.layers.{l_idx}.", "")
@@ -645,14 +699,20 @@ class StableWeightManager:
     def _get_mmap_handle(self, layer_idx: int) -> Any:
         """Возвращает постоянный открытый mmap-дескриптор файла слоя."""
         if layer_idx not in self.mmap_handles:
-            layer_file = os.path.join(self.model_dir, f"model-{layer_idx:05d}.safetensors")
-            self.mmap_handles[layer_idx] = safetensors.safe_open(layer_file, framework="pt", device="cpu")
+            if self.model_source is not None:
+                self.mmap_handles[layer_idx] = ShardedLayerView(self.model_source.layer_entries(layer_idx))
+            else:
+                layer_file = os.path.join(self.model_dir, f"model-{layer_idx:05d}.safetensors")
+                self.mmap_handles[layer_idx] = safetensors.safe_open(layer_file, framework="pt", device="cpu")
         self.mmap_handles.move_to_end(layer_idx)
         while len(self.mmap_handles) > self.max_mmap_handles:
             self.mmap_handles.popitem(last=False)
         return self.mmap_handles[layer_idx]
 
     def _load_globals(self) -> None:
+        if self.model_source is not None:
+            self.globals = LazyGlobalsMap(None, dtype=self.dtype, key_map=self.model_source.globals_entries())
+            return
         globals_path = os.path.join(self.model_dir, "model-globals.safetensors")
         self.globals = LazyGlobalsMap(globals_path, dtype=self.dtype)
 
@@ -675,8 +735,13 @@ class StableWeightManager:
         dst = target_device or torch.device("cpu")
         f = self._get_mmap_handle(layer_idx)
         names = list(f.keys())
-        loaded = (self.weight_reader(self.model_dir, f"model-{layer_idx:05d}", names)
-                  if self.weight_reader is not None else None)
+        if self.weight_reader is None:
+            loaded = None
+        elif isinstance(f, ShardedLayerView):
+            loaded = (self.weight_reader.read_entries(f.entries())
+                      if hasattr(self.weight_reader, "read_entries") else None)
+        else:
+            loaded = self.weight_reader(self.model_dir, f"model-{layer_idx:05d}", names)
         tensors: Dict[str, torch.Tensor] = {}
         prefix = f"model.layers.{layer_idx}."
         for k in names:

@@ -189,7 +189,7 @@ class ExistingRingAcknowledgementAdapter:
             return result
 
     def load_tensors_async(self, slot: RingSlot, pinned_src_tensors: dict,
-                           pinned_pool=None):
+                           pinned_pool=None, pinned_slot_id: int | None = None):
         with self._lock:
             lease = self._verify_slot(slot)
             if lease.phase != "LOADING_RESERVED":
@@ -210,10 +210,14 @@ class ExistingRingAcknowledgementAdapter:
                 if source.shape != target.shape or source.dtype != target.dtype:
                     self._reject("DMA shape/dtype mismatch for "+name)
             if pinned_pool is not None:
-                if slot.slot_id >= pinned_pool.num_slots:
+                psid = slot.slot_id if pinned_slot_id is None else pinned_slot_id
+                if not isinstance(psid, int) or not 0 <= psid < pinned_pool.num_slots:
                     self._reject("Pinned-pool slot index mismatch")
             original = self.originals["load_tensors_async"]
-            original(slot, pinned_src_tensors, pinned_pool=pinned_pool)
+            if pinned_slot_id is None:
+                original(slot, pinned_src_tensors, pinned_pool=pinned_pool)
+            else:
+                original(slot, pinned_src_tensors, pinned_pool=pinned_pool, pinned_slot_id=pinned_slot_id)
             if self.backend.device.type == "cuda":
                 if slot.transfer_done_event is None:
                     self._reject("Original loader did not provide a CUDA transfer event")

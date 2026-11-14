@@ -63,6 +63,22 @@ def _fail_runtime_on_error(forward):
     return wrapped
 
 
+class _NoStreamingPipeline:
+    """Placeholder ring for fully VRAM-resident models: holds no VRAM and must never be streamed through."""
+
+    num_slots = 0
+    arena = None
+
+    def _unused(self, *args, **kwargs):
+        raise RuntimeError("All layers are VRAM-resident; the streaming ring is not allocated")
+
+    get_slot_for_loading = load_tensors_async = acquire_slot_for_compute = _unused
+    release_slot_after_compute = prefetch_tail_to_head = _unused
+
+    def close(self) -> None:
+        return None
+
+
 class AirColibriModel:
     """Интегрированная модель AirColibri с поддержкой GPU Ring Pipeline и Tail-to-Head Prefetch."""
 
@@ -87,6 +103,9 @@ class AirColibriModel:
         control_mode: str = "off",
         airllm_source: Optional[str] = None,
         native_policy=None,
+        use_fused_q4_gemv: bool = True,
+        model_source=None,
+        weight_reader=None,
     ):
         if pipeline_mode not in ("sequential", "double_buffer", "triple_ring", "triple_ring_prefetch"):
             raise ValueError("Unsupported pipeline mode")
@@ -103,10 +122,11 @@ class AirColibriModel:
         self.trace_adapter = None
         self.native_policy = native_policy
         self._failed = False
-        self.weight_reader = None
-        if airllm_source:
+        self.weight_reader = weight_reader
+        if self.weight_reader is None and airllm_source:
             from src.upstream_bridge import AirLLMReader
             self.weight_reader = AirLLMReader(airllm_source)
+        self.model_source = model_source
         self.model_dir = model_dir
         self.pipeline_mode = pipeline_mode
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -118,12 +138,33 @@ class AirColibriModel:
         self.quantize_lm_head = bool(quantize_lm_head and self.is_q4)
         self.lazy_embed_lookup = True if lazy_embed_lookup is None else bool(lazy_embed_lookup)
         self.q4_group_size = q4_group_size
+        self.use_fused_q4_gemv = bool(use_fused_q4_gemv and self.is_q4)
+        self.fused_q4_gemv_calls = 0
+        self.tiled_q4_fallback_calls = 0
+        self._q4_wrapped_modules: List[Tuple[ColibriQ4Linear, Any]] = []
         self._q4_scratch: Optional[torch.Tensor] = None
         self.embed_tokens_weight: Optional[torch.Tensor] = None
 
-        # Определяем параметры кольца по режиму
+        # 1. Загрузка конфигурации и токенизатора
+        if model_source is not None:
+            from aircolibri_cli.model_source import load_text_config
+            self.config = load_text_config(model_dir)
+        else:
+            self.config = AutoConfig.from_pretrained(model_dir, config_file="config.hf.json")
+        if self.config.model_type != "qwen3_5_text":
+            raise ValueError("Dense adapter currently supports qwen3_5_text only")
+        if not 0 <= vram_resident_layers <= self.config.num_hidden_layers:
+            raise ValueError("Resident layer count outside model")
+        # Preserve the checkpoint tokenizer. The installed Transformers detector
+        # incorrectly treats local configs without transformers_version as Mistral.
+        self.tokenizer = AutoTokenizer.from_pretrained(model_dir, fix_mistral_regex=False, local_files_only=True)
+
+        # Определяем параметры кольца по режиму (при полной VRAM-резидентности всех слоёв стриминга нет -> 1 слот)
+        all_layers_resident = (self.vram_resident_layers == self.config.num_hidden_layers)
         if num_slots is None:
-            if pipeline_mode in ("triple_ring", "triple_ring_prefetch"):
+            if all_layers_resident:
+                self.num_slots = 1
+            elif pipeline_mode in ("triple_ring", "triple_ring_prefetch"):
                 self.num_slots = 3
             elif pipeline_mode == "double_buffer":
                 self.num_slots = 2
@@ -132,17 +173,11 @@ class AirColibriModel:
         else:
             self.num_slots = num_slots
 
-        self.tail_to_head_prefetch = (pipeline_mode == "triple_ring_prefetch" and self.num_slots >= 2)
-
-        # 1. Загрузка конфигурации и токенизатора
-        self.config = AutoConfig.from_pretrained(model_dir, config_file="config.hf.json")
-        if self.config.model_type != "qwen3_5_text":
-            raise ValueError("Dense adapter currently supports qwen3_5_text only")
-        if not 0 <= vram_resident_layers <= self.config.num_hidden_layers:
-            raise ValueError("Resident layer count outside model")
-        # Preserve the checkpoint tokenizer. The installed Transformers detector
-        # incorrectly treats local configs without transformers_version as Mistral.
-        self.tokenizer = AutoTokenizer.from_pretrained(model_dir, fix_mistral_regex=False, local_files_only=True)
+        self.tail_to_head_prefetch = (
+            pipeline_mode == "triple_ring_prefetch"
+            and self.num_slots >= 2
+            and not all_layers_resident
+        )
 
         # 2. Инициализация менеджера памяти
         self.weight_manager = StableWeightManager(
@@ -157,6 +192,7 @@ class AirColibriModel:
             checkpoint_manifest=checkpoint_manifest,
             max_ram_bytes=max_ram_bytes,
             weight_reader=self.weight_reader,
+            model_source=model_source,
         )
 
         # 3. Создание модели на meta-устройстве (0 байт VRAM!)
@@ -171,20 +207,27 @@ class AirColibriModel:
                 group_size=self.q4_group_size,
                 compute_dtype=self.dtype,
             )
+            if self.use_fused_q4_gemv:
+                self._install_fused_q4_gemv_wrappers()
 
         # 4. Постоянные веса и VRAM-резидентные слои
         self._setup_permanent_weights()
         self.weight_manager.globals.release_handle()
 
-        # 5. Инициализация GPU Ring Pipeline на едином layout без union-раздувания
-        self.pipeline = GPURingPipeline(
-            template_tensors=None,
-            num_slots=self.num_slots,
-            device=self.device,
-            dtype=self.dtype,
-            tail_to_head_prefetch=self.tail_to_head_prefetch,
-            arena_layout=self.weight_manager.pinned_pool.layout,
-        )
+        # 5. Инициализация GPU Ring Pipeline на едином layout без union-раздувания.
+        # When every layer is resident nothing is streamed, so no ring arena is allocated
+        # (it used to waste 120-475 MiB of VRAM on 8 GB cards).
+        if all_layers_resident:
+            self.pipeline = _NoStreamingPipeline()
+        else:
+            self.pipeline = GPURingPipeline(
+                template_tensors=None,
+                num_slots=self.num_slots,
+                device=self.device,
+                dtype=self.dtype,
+                tail_to_head_prefetch=self.tail_to_head_prefetch,
+                arena_layout=self.weight_manager.pinned_pool.layout,
+            )
         self.tail_prefetched = False
 
         # 6. Загружаем VRAM-резидентные слои
@@ -213,6 +256,47 @@ class AirColibriModel:
         if self._q4_scratch is None or self._q4_scratch.device != device:
             self._q4_scratch = torch.empty(Q4_SCRATCH_ELEMS, dtype=self.dtype, device=device)
         return self._q4_scratch
+
+    def _install_fused_q4_gemv_wrappers(self) -> int:
+        """Оборачивает ColibriQ4Linear.forward для прямого запуска NVRTC W4A16 GEMV без распаковки."""
+        from src.colibri_nvrtc import can_use_fused_dense_q4, fused_dense_linear_q4
+
+        wrapped_count = 0
+        engine_ref = self
+        for submod in self.model.modules():
+            if isinstance(submod, ColibriQ4Linear):
+                orig_forward = submod.forward
+
+                def _fused_or_tiled_forward(
+                    x: torch.Tensor,
+                    _m: ColibriQ4Linear = submod,
+                    _orig=orig_forward,
+                ) -> torch.Tensor:
+                    qweight = _m._buffers["qweight"]
+                    scales = _m._buffers["scales"]
+                    zeros = _m._buffers["zeros"]
+                    bias = _m._buffers["bias"]
+                    if (
+                        engine_ref.use_fused_q4_gemv
+                        and x.dtype == torch.bfloat16
+                        and can_use_fused_dense_q4(x, qweight, scales, zeros, _m.group_size)
+                    ):
+                        engine_ref.fused_q4_gemv_calls += 1
+                        return fused_dense_linear_q4(
+                            x,
+                            qweight,
+                            scales,
+                            zeros,
+                            bias=bias,
+                            group_size=_m.group_size,
+                        )
+                    engine_ref.tiled_q4_fallback_calls += 1
+                    return _orig(x)
+
+                submod.forward = _fused_or_tiled_forward
+                self._q4_wrapped_modules.append((submod, orig_forward))
+                wrapped_count += 1
+        return wrapped_count
 
     @staticmethod
     def _collect_layer_bindings(layer_module: torch.nn.Module) -> Tuple[List[Tuple[ColibriQ4Linear, str, str, str]], List[str]]:
@@ -496,8 +580,10 @@ class AirColibriModel:
         """Удаляет хуки и освобождает ресурсы GPU и CPU."""
         if getattr(self, "trace_adapter", None) is not None:
             self.trace_adapter.close()
+            self.trace_adapter = None
         if getattr(self, "ack_adapter", None) is not None:
             self.ack_adapter.close()
+            self.ack_adapter = None
         for handle in getattr(self, "_hook_handles", []):
             try:
                 handle.remove()
@@ -505,6 +591,13 @@ class AirColibriModel:
                 pass
         if hasattr(self, "_hook_handles"):
             self._hook_handles.clear()
+        for submod, orig_forward in getattr(self, "_q4_wrapped_modules", []):
+            try:
+                submod.forward = orig_forward
+            except Exception:
+                pass
+        if hasattr(self, "_q4_wrapped_modules"):
+            self._q4_wrapped_modules.clear()
         if hasattr(self, "active_slot_per_layer"):
             self.active_slot_per_layer.clear()
         if getattr(self, "pipeline", None) is not None:

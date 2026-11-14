@@ -10,21 +10,25 @@ permissions:
   contents: read
 
 jobs:
-  synthetic-contracts:
+  cpu-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      HF_HUB_OFFLINE: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install CPU test dependencies
+      - name: Install CPU dependencies
         run: |
           python -m pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install accelerate==1.15.0 transformers==5.22.2 safetensors==0.8.0 psutil==7.2.2 pytest==9.2.0 numpy==2.5.4
+          python -m pip install accelerate==1.15.0 transformers==5.22.2 safetensors==0.8.0 huggingface-hub==2.4.0 psutil==7.2.2 pytest==9.2.0 numpy==2.5.4
       - name: Check source syntax
-        run: python -m compileall -q src scripts tests aircolibri.py
-      - name: Test synthetic CPU contracts
-        # CUDA and the locally compiled native DLL cases skip on this runner.
-        # This job is not a full-model, GPU or performance certification.
-        run: python -m pytest tests/test_integration_contract.py tests/test_olmoe_integration.py tests/test_shared_resources.py tests/test_gpu_expert_residency.py tests/test_compact_slot_layout.py tests/test_moe_comparison.py tests/test_upstream_io_backend.py tests/test_quality_metrics.py tests/test_quality_runner.py tests/test_ring_concurrent_streams.py -q
+        run: python -m compileall -q aircolibri_cli src tests aircolibri.py
+      - name: CLI smoke check
+        run: python aircolibri.py --help
+      - name: Run CPU tests
+        # GPU and local-model tests skip on this runner; this is not a GPU or performance certification.
+        run: python -m pytest tests/test_cli_lan.py tests/test_model_source.py tests/test_vram_plan.py tests/test_lan_server_cancel.py tests/test_quantization_q4.py tests/test_engine_gpu.py -q

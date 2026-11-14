@@ -78,12 +78,23 @@ def exclusive_lock(path, timeout=30.0):
         f.close()
 
 class PrepackedLayerCache:
+    """Q4 layer cache keyed by the source checkpoint identity.
+
+    Colibri containers are identified by a trusted SHA256 manifest of the per-layer files.
+    Hugging Face shards (``source`` given) are identified by the layer's tensor names, dtypes,
+    shapes, byte ranges and shard size/mtime, so no multi-GB file hashing is needed.
+    """
+
     def __init__(self, model_dir, cache_dir, manifest_path, dtype=torch.bfloat16,
-                 group_size=64, max_bytes=0, reader=None):
+                 group_size=64, max_bytes=0, reader=None, source=None):
         self.model_dir = Path(model_dir)
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.manifest = json.loads(Path(manifest_path).read_text(encoding='utf-8'))
+        self.source = source
+        if source is not None:
+            self.manifest = {'format': MANIFEST_FORMAT, 'layers': {}}
+        else:
+            self.manifest = json.loads(Path(manifest_path).read_text(encoding='utf-8'))
         if self.manifest.get('format') != MANIFEST_FORMAT:
             raise ValueError('Unsupported checkpoint manifest format')
         self.dtype = dtype
@@ -98,6 +109,8 @@ class PrepackedLayerCache:
 
     def source_entry(self, idx):
         idx = int(idx)
+        if self.source is not None:
+            return None, self.source.layer_identity(idx)
         ent = self.manifest['layers'][str(idx)]
         filename = 'model-%05d.safetensors' % idx
         if ent['filename'] != filename:
@@ -180,9 +193,11 @@ class PrepackedLayerCache:
             data = self._try(path, meta, specs)
             if data is not None:
                 return data
-            if sha_file(source) != ent['sha256']:
+            if source is not None and sha_file(source) != ent['sha256']:
                 raise CheckpointChangedError('Original checksum mismatch')
             data = builder()
+            if self.source is not None and self.source.layer_identity(idx)['sha256'] != ent['sha256']:
+                raise CheckpointChangedError('Hugging Face shard changed while building the Q4 cache')
             if set(data) != set(specs):
                 raise CacheValidationError('Producer keys mismatch')
             for k, (shape, dtype) in specs.items():

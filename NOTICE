@@ -11,9 +11,10 @@ Colibrì is developed by Vincenzo Fornaro (JustVugg) and contributors.
 Copyright 2026 Vincenzo Fornaro, as stated in the upstream license.
 https://github.com/JustVugg/colibri
 
-The integration calls the original AirLLM reader and compiles a thin shim
-against Colibrì's original tier.h. Upstream sources are not vendored here.
-Their licenses and notices continue to apply to those dependencies.
+AirColibri reimplements selected AirLLM and Colibrì mechanisms (layer
+streaming, tiered placement, MTP speculation). Upstream sources are not
+vendored here. An optional native tier library, when present locally, is
+built from Colibrì's original tier.h; its license and notice apply to it.
 
 The AirColibri project mark is an AI-assisted visual adaptation inspired by
 AirLLM's rocket and Colibrì's pixel hummingbird. Original marks and names
