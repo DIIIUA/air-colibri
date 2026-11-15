@@ -40,6 +40,43 @@ from src.quantization_q4 import (
 )
 
 
+def _cfg_num_layers(cfg: Any) -> int:
+    for attr in ("num_hidden_layers", "n_layers", "n_layer", "num_layers"):
+        val = getattr(cfg, attr, None)
+        if val is not None:
+            return int(val)
+    raise AttributeError(f"{type(cfg).__name__} has no layer count attribute")
+
+
+_NORM_WEIGHT_CANDIDATES: Tuple[str, ...] = (
+    "model.norm.weight",
+    "model.language_model.norm.weight",
+    "language_model.model.norm.weight",
+    "model.embedding_norm.weight",
+    "model.final_layernorm.weight",
+    "model.decoder.final_layer_norm.weight",
+    "model.decoder.layer_norm.weight",
+    "transformer.ln_f.weight",
+    "transformer.norm_f.weight",
+    "gpt_neox.final_layer_norm.weight",
+    "backbone.norm_f.weight",
+    "backbone.norm.weight",
+    "rwkv.ln_out.weight",
+    "biogpt.layer_norm.weight",
+    "norm.weight",
+    "ln_f.weight",
+)
+
+_LM_HEAD_WEIGHT_CANDIDATES: Tuple[str, ...] = (
+    "lm_head.weight",
+    "language_model.lm_head.weight",
+    "embed_out.weight",
+    "output_projection.weight",
+    "head.weight",
+    "transformer.lm_head.weight",
+)
+
+
 def _cleanup_failed_init(init):
     @wraps(init)
     def wrapped(self, *args, **kwargs):
@@ -161,7 +198,8 @@ class AirColibriModel:
         self.fast_qwen = self.config.model_type == "qwen3_5_text"
         if self.is_q4 and not self.fast_qwen:
             raise ValueError("Q4 fast path supports qwen3_5_text only; other models run in BF16")
-        if not 0 <= vram_resident_layers <= self.config.num_hidden_layers:
+        num_hidden_layers = _cfg_num_layers(self.config)
+        if not 0 <= vram_resident_layers <= num_hidden_layers:
             raise ValueError("Resident layer count outside model")
         # Preserve the checkpoint tokenizer without ever calling mmap on GGUF files.
         if getattr(model_source, "gguf_file", None):
@@ -176,7 +214,7 @@ class AirColibriModel:
                 self.tokenizer = AutoTokenizer.from_pretrained(model_dir, **tok_kwargs)
 
         # Определяем параметры кольца по режиму (при полной VRAM-резидентности всех слоёв стриминга нет -> 1 слот)
-        all_layers_resident = (self.vram_resident_layers == self.config.num_hidden_layers)
+        all_layers_resident = (self.vram_resident_layers == num_hidden_layers)
         if num_slots is None:
             if all_layers_resident:
                 self.num_slots = 1
@@ -235,11 +273,27 @@ class AirColibriModel:
             )
         try:
             sig_params = inspect.signature(self.model.forward).parameters
-            self._supports_logits_to_keep = "logits_to_keep" in sig_params or any(
-                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig_params.values()
+            has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig_params.values())
+            self._supports_logits_to_keep = "logits_to_keep" in sig_params or has_varkw
+            if "past_key_values" in sig_params:
+                self._cache_kwarg: Optional[str] = "past_key_values"
+            elif "cache_params" in sig_params:
+                self._cache_kwarg = "cache_params"
+            elif "state" in sig_params:
+                self._cache_kwarg = "state"
+            elif has_varkw:
+                self._cache_kwarg = "past_key_values"
+            else:
+                self._cache_kwarg = None
+            self._supports_cache_position = "cache_position" in sig_params or (
+                self._cache_kwarg == "past_key_values" and has_varkw
             )
+            self._supports_use_cache = "use_cache" in sig_params or has_varkw
         except (TypeError, ValueError):
             self._supports_logits_to_keep = False
+            self._cache_kwarg = "past_key_values"
+            self._supports_cache_position = True
+            self._supports_use_cache = True
         if self.is_q4:
             replace_linear_with_q4(
                 self.model,
@@ -349,15 +403,26 @@ class AirColibriModel:
         raw_params = [k for k, _ in layer_module.named_parameters()]
         return q4_bindings, raw_params
 
+    @staticmethod
+    def _collect_layer_buffers(layer_module: torch.nn.Module) -> Dict[str, torch.dtype]:
+        out: Dict[str, torch.dtype] = {}
+        for k, b in layer_module.named_buffers():
+            if b is None or k.endswith((".qweight", ".scales", ".zeros")):
+                continue
+            out[k] = b.dtype
+        return out
+
     def _decoder_layers(self):
-        """Decoder stack. Qwen, OLMoE, Llama, Mistral, Gemma and Phi keep it at ``model.layers``."""
+        """Resolves the decoder block list across standard, VLM-unwrapped, GPT-2, OPT, NeoX, Mamba, and RWKV models."""
         inner = getattr(self.model, "model", None)
         layers = getattr(inner, "layers", None) if inner is not None else None
+        if layers is not None:
+            return layers
+        from aircolibri_cli.model_source import resolve_decoder_layers
+
+        layers = resolve_decoder_layers(self.model)
         if layers is None:
-            raise ValueError(
-                f"{type(self.model).__name__} has no model.layers decoder stack; "
-                "this BF16 ring runs standard Hugging Face causal LMs"
-            )
+            raise RuntimeError(f"{type(self.model).__name__} has no supported decoder layer stack")
         return layers
 
     def _load_resident_layer(self, layer_idx: int) -> None:
@@ -373,6 +438,11 @@ class AirColibriModel:
                     set_module_tensor_to_device(
                         layer_module, k, self.device, value=tensors[k], dtype=self.dtype, clear_cache=False
                     )
+            for buf_k, buf_dt in self._collect_layer_buffers(layer_module).items():
+                if buf_k in tensors:
+                    set_module_tensor_to_device(
+                        layer_module, buf_k, self.device, value=tensors[buf_k], dtype=buf_dt, clear_cache=False
+                    )
             return
 
         layer_file = os.path.join(self.model_dir, f"model-{layer_idx:05d}.safetensors")
@@ -385,7 +455,7 @@ class AirColibriModel:
                     layer_module, short_k, self.device, value=t, dtype=self.dtype, clear_cache=False
                 )
 
-    def _quantize_lm_head_from_slice(self) -> None:
+    def _quantize_lm_head_from_slice(self, target_mod: Optional[Any] = None) -> None:
         """Квантует lm_head чанками из mmap прямо на GPU без материализации 1.94 ГБ в RAM."""
         sl = self.weight_manager.globals.get_tensor_slice("lm_head.weight")
         out_features, in_features = sl.get_shape()
@@ -410,10 +480,11 @@ class AirColibriModel:
             z_out[r0:r1].copy_(z_c)
             del chunk, p_c, s_c, z_c
 
-        self.model.lm_head.bind_q4_tensors(q_out, s_out, z_out)
+        head_mod = target_mod if target_mod is not None else self.model.lm_head
+        head_mod.bind_q4_tensors(q_out, s_out, z_out)
         del self.weight_manager.globals["lm_head.weight"]
 
-    def _load_bf16_lm_head_from_slice(self) -> None:
+    def _load_bf16_lm_head_from_slice(self, target_param_name: str = "lm_head.weight") -> None:
         """Загружает lm_head на GPU чанками из mmap без материализации 1.94 ГБ в RAM."""
         sl = self.weight_manager.globals.get_tensor_slice("lm_head.weight")
         shape = sl.get_shape()
@@ -428,47 +499,111 @@ class AirColibriModel:
         else:
             lm_head_w.copy_(sl[:].to(device=self.device, dtype=self.dtype))
         set_module_tensor_to_device(
-            self.model, "lm_head.weight", self.device, value=lm_head_w, dtype=self.dtype, clear_cache=False
+            self.model, target_param_name, self.device, value=lm_head_w, dtype=self.dtype, clear_cache=False
         )
         del lm_head_w
         del self.weight_manager.globals["lm_head.weight"]
 
     def _setup_permanent_weights(self) -> None:
-        """Эмбеддинг (ленивый построчный mmap или CPU), norm и lm_head (bf16 или Q4) на GPU."""
-        if not self.lazy_embed_lookup:
+        """Эмбеддинг (ленивый построчный lookup или CPU), norm, lm_head и доп. глобалы на GPU."""
+        if not self.lazy_embed_lookup and "model.embed_tokens.weight" in self.weight_manager.globals:
             # Полный embed на CPU только если отключен ленивый построчный lookup
             self.embed_tokens_weight = self.weight_manager.globals.pop("model.embed_tokens.weight")
 
-        # Norm на GPU
+        model_param_names = {n for n, _ in self.model.named_parameters(remove_duplicate=False)}
+        model_buffer_dtypes = {
+            n: b.dtype for n, b in self.model.named_buffers(remove_duplicate=False) if b is not None
+        }
+
+        # Norm на GPU (любое имя корня: model.norm, transformer.ln_f, gpt_neox.final_layer_norm, backbone.norm_f и др.)
+        norm_w_path = next((c for c in _NORM_WEIGHT_CANDIDATES if c in model_param_names), "model.norm.weight")
         if "model.norm.weight" in self.weight_manager.globals:
             norm_w = self.weight_manager.globals.pop("model.norm.weight").to(device=self.device, dtype=self.dtype)
             set_module_tensor_to_device(
-                self.model, "model.norm.weight", self.device, value=norm_w, dtype=self.dtype, clear_cache=False
+                self.model, norm_w_path, self.device, value=norm_w, dtype=self.dtype, clear_cache=False
             )
             del norm_w
+        if "model.norm.bias" in self.weight_manager.globals:
+            norm_b_path = norm_w_path[:-7] + ".bias"
+            norm_b = self.weight_manager.globals.pop("model.norm.bias").to(device=self.device, dtype=self.dtype)
+            if norm_b_path in model_param_names:
+                set_module_tensor_to_device(
+                    self.model, norm_b_path, self.device, value=norm_b, dtype=self.dtype, clear_cache=False
+                )
+            del norm_b
 
-        # LM Head на GPU
+        # LM Head на GPU (lm_head, embed_out, head, output_projection)
+        lm_w_path = next((c for c in _LM_HEAD_WEIGHT_CANDIDATES if c in model_param_names), "lm_head.weight")
         if "lm_head.weight" in self.weight_manager.globals:
-            if self.quantize_lm_head and isinstance(self.model.lm_head, ColibriQ4Linear):
-                self._quantize_lm_head_from_slice()
+            out_emb = (
+                self.model.get_output_embeddings()
+                if hasattr(self.model, "get_output_embeddings")
+                else getattr(self.model, "lm_head", None)
+            )
+            if self.quantize_lm_head and isinstance(out_emb, ColibriQ4Linear):
+                self._quantize_lm_head_from_slice(out_emb)
             else:
-                self._load_bf16_lm_head_from_slice()
+                self._load_bf16_lm_head_from_slice(lm_w_path)
+        if "lm_head.bias" in self.weight_manager.globals:
+            lm_b_path = lm_w_path[:-7] + ".bias"
+            lm_b = self.weight_manager.globals.pop("lm_head.bias").to(device=self.device, dtype=self.dtype)
+            if lm_b_path in model_param_names:
+                set_module_tensor_to_device(
+                    self.model, lm_b_path, self.device, value=lm_b, dtype=self.dtype, clear_cache=False
+                )
+            del lm_b
+
+        # Дополнительные глобальные параметры (transformer.wpe, embed_positions, word_embeddings_layernorm и др.)
+        for extra_k in list(self.weight_manager.globals.keys()):
+            if extra_k == "model.embed_tokens.weight":
+                continue
+            if self.lazy_embed_lookup and extra_k == "model.embed_tokens_per_layer.weight":
+                continue
+            cands = (
+                extra_k,
+                f"model.{extra_k}",
+                extra_k[6:] if extra_k.startswith("model.") else extra_k,
+            )
+            matched_param = next((c for c in cands if c in model_param_names), None)
+            if matched_param is not None:
+                val = self.weight_manager.globals.pop(extra_k).to(device=self.device, dtype=self.dtype)
+                set_module_tensor_to_device(
+                    self.model, matched_param, self.device, value=val, dtype=self.dtype, clear_cache=False
+                )
+                del val
+                continue
+            matched_buf = next((c for c in cands if c in model_buffer_dtypes), None)
+            if matched_buf is not None:
+                b_dt = model_buffer_dtypes[matched_buf]
+                val = self.weight_manager.globals.pop(extra_k).to(device=self.device, dtype=b_dt)
+                set_module_tensor_to_device(
+                    self.model, matched_buf, self.device, value=val, dtype=b_dt, clear_cache=False
+                )
+                del val
+
+        # Переносим не-meta буферы (rotary inv_freq, embed_scale, маски и др.) с CPU на целевое устройство
+        for submod in self.model.modules():
+            for buf_name, buf_val in list(submod._buffers.items()):
+                if buf_val is not None and not buf_val.is_meta and buf_val.device != self.device:
+                    submod._buffers[buf_name] = buf_val.to(device=self.device)
 
         gc.collect()
 
     def _install_pipeline_hooks(self) -> None:
         """Устанавливает pre/post хуки кольцевого конвейера на каждый слой."""
-        num_layers = self.config.num_hidden_layers
+        num_layers = _cfg_num_layers(self.config)
         self.active_slot_per_layer = [None] * num_layers
         self._hook_handles: List[Any] = []
 
-        # Собираем привязки Q4-подмодулей и неквантуемых параметров для каждого слоя
+        # Собираем привязки Q4-подмодулей, параметров и опциональных буферов для каждого слоя
         layer_q4_bindings: List[List[Tuple[ColibriQ4Linear, str, str, str]]] = []
         layer_param_names: List[List[str]] = []
+        layer_buffer_dtypes: List[Dict[str, torch.dtype]] = []
         for layer_mod in self._decoder_layers():
             q4_b, raw_p = self._collect_layer_bindings(layer_mod)
             layer_q4_bindings.append(q4_b)
             layer_param_names.append(raw_p)
+            layer_buffer_dtypes.append(self._collect_layer_buffers(layer_mod))
 
         for idx, layer_module in enumerate(self._decoder_layers()):
             layer_module._air_layer_idx = idx
@@ -494,13 +629,19 @@ class AirColibriModel:
                     raise ValueError(f"Layer {i} is missing required tensors: {sorted(missing)}")
 
                 self.active_slot_per_layer[i] = slot
-                # Zero-copy привязка указателей к буферам Q4 и параметрам слоя
+                slot_map = getattr(slot, "active_tensors", None) or slot.tensors
+                # Zero-copy привязка указателей к буферам Q4, параметрам и буферам слоя
                 for submod, q_k, s_k, z_k in layer_q4_bindings[i]:
-                    submod.bind_q4_tensors(slot.tensors[q_k], slot.tensors[s_k], slot.tensors[z_k])
+                    submod.bind_q4_tensors(slot_map[q_k], slot_map[s_k], slot_map[z_k])
                 for k in layer_param_names[i]:
-                    if k in slot.tensors:
+                    if k in slot_map:
                         set_module_tensor_to_device(
-                            module, k, self.device, value=slot.tensors[k], dtype=self.dtype, clear_cache=False
+                            module, k, self.device, value=slot_map[k], dtype=self.dtype, clear_cache=False
+                        )
+                for buf_k, buf_dt in layer_buffer_dtypes[i].items():
+                    if buf_k in slot_map:
+                        set_module_tensor_to_device(
+                            module, buf_k, self.device, value=slot_map[buf_k], dtype=buf_dt, clear_cache=False
                         )
 
             def _post_hook(module, args, output):
@@ -540,11 +681,52 @@ class AirColibriModel:
                 step_tokens,
                 dtype=self.dtype,
             )
-            return embeds_cpu.to(device=self.device, dtype=self.dtype)
-        return torch.nn.functional.embedding(step_tokens, self.embed_tokens_weight).to(
-            device=self.device,
-            dtype=self.dtype,
-        )
+            embeds = embeds_cpu.to(device=self.device, dtype=self.dtype)
+        else:
+            embeds = torch.nn.functional.embedding(step_tokens, self.embed_tokens_weight).to(
+                device=self.device,
+                dtype=self.dtype,
+            )
+        emb_mod = self.model.get_input_embeddings() if hasattr(self.model, "get_input_embeddings") else None
+        if emb_mod is not None:
+            scale = getattr(emb_mod, "embed_scale", None)
+            if scale is not None:
+                if isinstance(scale, torch.Tensor):
+                    embeds = embeds * scale.to(device=embeds.device, dtype=embeds.dtype)
+                else:
+                    embeds = embeds * float(scale)
+            emb_norm = getattr(emb_mod, "embed_norm", None) or getattr(emb_mod, "norm", None)
+            if callable(emb_norm):
+                embeds = emb_norm(embeds)
+        return embeds
+
+    def _compute_per_layer_inputs(self, step_tokens: torch.Tensor) -> Optional[torch.Tensor]:
+        """Computes Gemma-4 Per-Layer Embeddings via lazy row lookup without keeping PLE tables in VRAM."""
+        inner = getattr(self.model, "model", None)
+        ple_dim = int(getattr(inner, "hidden_size_per_layer_input", 0) or 0) if inner is not None else 0
+        if ple_dim <= 0:
+            return None
+        ple_mod = getattr(inner, "embed_tokens_per_layer", None)
+        if ple_mod is None:
+            return None
+        num_layers = _cfg_num_layers(self.config)
+        if "model.embed_tokens_per_layer.weight" in self.weight_manager.globals:
+            flat_cpu = self.weight_manager.globals.lookup_rows(
+                "model.embed_tokens_per_layer.weight",
+                step_tokens,
+                dtype=self.dtype,
+            )
+            flat = flat_cpu.to(device=self.device, dtype=self.dtype)
+            scale = getattr(ple_mod, "embed_scale", None)
+            if scale is not None:
+                if isinstance(scale, torch.Tensor):
+                    flat = flat * scale.to(device=flat.device, dtype=flat.dtype)
+                else:
+                    flat = flat * float(scale)
+            return flat.reshape(*step_tokens.shape, num_layers, ple_dim)
+        if hasattr(inner, "get_per_layer_inputs"):
+            return inner.get_per_layer_inputs(step_tokens.to(device=self.device))
+        return None
 
     @_fail_runtime_on_error
     def _forward_step(self, step_tokens: torch.Tensor, past_key_values: Any = None,
@@ -552,8 +734,9 @@ class AirColibriModel:
         if self._failed or self.model is None:
             raise RuntimeError("Model is closed or failed; create a new runtime")
         self._prefetch_next_step = prefetch_next
-        num_layers = self.config.num_hidden_layers
+        num_layers = _cfg_num_layers(self.config)
         inputs_embeds = self._embed_step_tokens(step_tokens)
+        ple_inputs = self._compute_per_layer_inputs(step_tokens)
 
         # Первоначальное заполнение кольца перед началом слоев
         if self.num_slots > 1 or self.pipeline_mode != "sequential":
@@ -567,23 +750,31 @@ class AirColibriModel:
                 self.pipeline.load_tensors_async(slot, pinned_t, pinned_pool=self.weight_manager.pinned_pool)
 
         try:
-            extra = {}
-            if cache_position is not None:
+            extra: Dict[str, Any] = {}
+            if ple_inputs is not None:
+                extra["per_layer_inputs"] = ple_inputs
+            cache_kw = getattr(self, "_cache_kwarg", "past_key_values")
+            if cache_kw is not None:
+                extra[cache_kw] = past_key_values
+            if getattr(self, "_supports_use_cache", True):
+                extra["use_cache"] = True
+            if cache_position is not None and getattr(self, "_supports_cache_position", True):
                 extra["cache_position"] = cache_position.to(device=self.device)
             if getattr(self, "_supports_logits_to_keep", False):
                 extra["logits_to_keep"] = 1
             outputs = self.model(
                 inputs_embeds=inputs_embeds,
                 input_ids=None,
-                past_key_values=past_key_values,
-                use_cache=True,
                 **extra,
             )
         except BaseException as exc:
             if not getattr(exc, "_is_cooperative_cancel", False):
                 self._failed = True
             raise
-        return outputs.logits[:, -1, :], outputs.past_key_values
+        next_cache = getattr(outputs, "past_key_values", None)
+        if next_cache is None and cache_kw and cache_kw != "past_key_values":
+            next_cache = getattr(outputs, cache_kw, None)
+        return outputs.logits[:, -1, :], next_cache
 
     def reset_after_cancel(self) -> None:
         """Restores ring slots and prefetch flags after a cooperative cancellation."""

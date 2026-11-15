@@ -472,6 +472,18 @@ def fused_deltanet_multirow(
     return lat_mod.out_proj(gk.ws_core[:S].view(1, S, 4096))
 
 
+def _cache_seq_len(past: Any) -> int:
+    if past is None:
+        return 0
+    fn = getattr(past, "get_seq_length", None)
+    if not callable(fn):
+        return 0
+    try:
+        return int(fn())
+    except (AttributeError, ValueError, TypeError):
+        return 0
+
+
 def forward_step_all_logits(
     engine: Any,
     step_tokens: torch.Tensor,
@@ -484,15 +496,23 @@ def forward_step_all_logits(
     Prefill must always pass ``logits_to_keep=1``: projecting every prompt position materialises
     ``[1, S, 248320]`` logits (about 0.5 MiB per token in BF16, 1-2 GiB for a multi-thousand-token prompt).
     """
-    extra = {"logits_to_keep": int(logits_to_keep)} if logits_to_keep else {}
+    extra: dict[str, Any] = (
+        {"logits_to_keep": int(logits_to_keep)}
+        if (logits_to_keep and getattr(engine, "_supports_logits_to_keep", True))
+        else {}
+    )
     if hasattr(engine, "_anchor_ring_prepare"):
         return engine._anchor_ring_forward(
             step_tokens, past_key_values=past_key_values, prefetch_next=prefetch_next, **extra
         )
 
     engine._prefetch_next_step = prefetch_next
-    num_layers = engine.config.num_hidden_layers
+    num_layers = getattr(engine.config, "num_hidden_layers", None) or len(engine._decoder_layers())
     inputs_embeds = engine._embed_step_tokens(step_tokens)
+    ple_fn = getattr(engine, "_compute_per_layer_inputs", None)
+    ple_inputs = ple_fn(step_tokens) if callable(ple_fn) else None
+    if ple_inputs is not None:
+        extra["per_layer_inputs"] = ple_inputs
     if engine.num_slots > 1 or engine.pipeline_mode != "sequential":
         first_s = engine.vram_resident_layers
         for s in range(first_s, min(first_s + engine.num_slots, num_layers)):
@@ -504,20 +524,27 @@ def forward_step_all_logits(
             engine.pipeline.load_tensors_async(slot, pinned_t, pinned_pool=engine.weight_manager.pinned_pool)
 
     B, S = step_tokens.shape
+    cache_kw = getattr(engine, "_cache_kwarg", "past_key_values")
     mask_arg = (
         _DECODE_NO_MASK
-        if (B == 1 and 1 <= S <= 4 and past_key_values is not None and past_key_values.get_seq_length() > 0)
+        if (B == 1 and 1 <= S <= 4 and past_key_values is not None and _cache_seq_len(past_key_values) > 0)
         else None
     )
+    if cache_kw is not None:
+        extra[cache_kw] = past_key_values
+    if getattr(engine, "_supports_use_cache", True):
+        extra["use_cache"] = True
+    if cache_kw == "past_key_values" or mask_arg is not None:
+        extra["attention_mask"] = mask_arg
     outputs = engine.model(
         inputs_embeds=inputs_embeds,
         input_ids=None,
-        attention_mask=mask_arg,
-        past_key_values=past_key_values,
-        use_cache=True,
         **extra,
     )
-    return outputs.logits, outputs.past_key_values
+    next_cache = getattr(outputs, "past_key_values", None)
+    if next_cache is None and cache_kw and cache_kw != "past_key_values":
+        next_cache = getattr(outputs, cache_kw, None)
+    return outputs.logits, next_cache
 
 
 def install_colibri_multirow_unifications(
@@ -1041,7 +1068,7 @@ def install_colibri_anchor_ring_schedule(engine: Any, resident_set: set[int]) ->
         B, S = step_tokens.shape
         mask_arg = (
             _DECODE_NO_MASK
-            if (B == 1 and 1 <= S <= 4 and past_key_values is not None and past_key_values.get_seq_length() > 0)
+            if (B == 1 and 1 <= S <= 4 and past_key_values is not None and _cache_seq_len(past_key_values) > 0)
             else None
         )
         outputs = engine.model(
@@ -1115,8 +1142,24 @@ class ColibriKVPrefixSession:
         self.config = config
         self.chatml_think_format = bool(chatml_think_format)
         all_ids = list(all_ids_full)
-        past_len = int(past_key_values.get_seq_length())
         need_bridge = (mtp_head is not None) or (last_fed_h_post is not None) or ("post_norm" in captured)
+        if not hasattr(past_key_values, "layers"):
+            del past_key_values
+            self.reset()
+            self.tainted = True
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            return 0.0
+        past_len = _cache_seq_len(past_key_values)
+        if past_len <= 0 and not need_bridge:
+            del past_key_values
+            self.reset()
+            self.tainted = True
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            return 0.0
         if need_bridge:
             if past_len < len(all_ids):
                 unfed = all_ids[past_len:]
@@ -1341,17 +1384,41 @@ def state_bytes_from_config(cfg: dict[str, Any]) -> tuple[int, int, int, int]:
     """KV bytes per token, recurrent-state bytes, hidden size, intermediate size.
 
     Qwen3.5 counts only ``full_attention`` layers toward KV and the GatedDeltaNet
-    layers toward a fixed recurrent state. Other families are ordinary attention.
+    layers toward a fixed recurrent state. Pure SSM/RWKV models allocate fixed recurrent
+    state with zero KV growth, and MLA models account for QK/V head dimensions.
     """
-    n = int(cfg["num_hidden_layers"])
-    hidden = int(cfg["hidden_size"])
-    n_heads = int(cfg.get("num_attention_heads") or 1)
-    n_kv = int(cfg.get("num_key_value_heads") or n_heads)
+    n = int(
+        cfg.get("num_hidden_layers")
+        or cfg.get("n_layers")
+        or cfg.get("n_layer")
+        or cfg.get("num_layers")
+        or 1
+    )
+    hidden = int(cfg.get("hidden_size") or cfg.get("n_embd") or cfg.get("d_model") or 1)
+    n_heads = int(cfg.get("num_attention_heads") or cfg.get("n_head") or cfg.get("n_heads") or 1)
+    n_kv = int(
+        cfg.get("num_key_value_heads")
+        or cfg.get("num_kv_heads")
+        or (1 if cfg.get("multi_query") else n_heads)
+    )
     head = int(cfg.get("head_dim") or max(1, hidden // max(1, n_heads)))
     layer_types = cfg.get("layer_types") or []
-    full = sum(1 for t in layer_types if t == "full_attention") if layer_types else n
-    lin = max(0, n - full) if layer_types else 0
-    kv = full * 2 * n_kv * head * 2
+    mtype = str(cfg.get("model_type") or "").lower()
+    if layer_types:
+        full = sum(1 for t in layer_types if t in ("full_attention", "attention", "sliding_attention"))
+        lin = max(0, n - full)
+    elif mtype in ("mamba", "mamba2", "falcon_mamba", "rwkv"):
+        full = 0
+        lin = n
+    else:
+        full = n
+        lin = 0
+    if cfg.get("qk_nope_head_dim") is not None or cfg.get("v_head_dim") is not None:
+        qk_d = int(cfg.get("qk_nope_head_dim") or head) + int(cfg.get("qk_rope_head_dim") or 0)
+        v_d = int(cfg.get("v_head_dim") or head)
+        kv = full * n_kv * (qk_d + v_d) * 2
+    else:
+        kv = full * 2 * n_kv * head * 2
     rec = 0
     if lin and cfg.get("linear_num_value_heads"):
         rec = lin * (
@@ -1359,9 +1426,29 @@ def state_bytes_from_config(cfg: dict[str, Any]) -> tuple[int, int, int, int]:
             * int(cfg.get("linear_value_head_dim", 128)) * 4
             + 2 * int(cfg.get("linear_num_key_heads", 16)) * int(cfg.get("linear_key_head_dim", 128)) * 4 * 2
         )
-    moe_inter = int(cfg.get("moe_intermediate_size") or 0) * max(1, int(cfg.get("num_experts_per_tok") or 1))
-    moe_inter += int(cfg.get("shared_expert_intermediate_size") or 0)
-    inter = int(cfg.get("intermediate_size") or moe_inter or hidden * 4)
+    elif lin and (cfg.get("state_size") or cfg.get("mamba_d_state") or cfg.get("ssm_state_size")):
+        d_inner = int(cfg.get("intermediate_size") or hidden * int(cfg.get("expand") or 2))
+        d_state = int(cfg.get("state_size") or cfg.get("mamba_d_state") or cfg.get("ssm_state_size") or 16)
+        d_conv = int(cfg.get("conv_kernel") or cfg.get("mamba_d_conv") or 4)
+        rec = lin * (d_inner * d_state * 4 + d_inner * d_conv * 2)
+    elif mtype == "rwkv":
+        rec = n * hidden * 5 * 4
+    moe_each = int(cfg.get("moe_intermediate_size") or 0)
+    top_k = max(1, int(cfg.get("num_experts_per_tok") or cfg.get("num_selected_experts") or 1))
+    moe_inter = moe_each * top_k
+    moe_inter += int(
+        cfg.get("shared_expert_intermediate_size")
+        or (moe_each * int(cfg.get("n_shared_experts") or 0))
+    )
+    ffn_cfg = cfg.get("ffn_config") if isinstance(cfg.get("ffn_config"), dict) else {}
+    inter = int(
+        cfg.get("intermediate_size")
+        or cfg.get("ffn_dim")
+        or cfg.get("n_inner")
+        or ffn_cfg.get("ffn_hidden_size")
+        or moe_inter
+        or hidden * 4
+    )
     return kv, rec, hidden, inter
 
 
@@ -1507,12 +1594,23 @@ def plan_for_checkpoint(
     folder = Path(model_dir)
     profile = runtime_profile(folder)
     cfg = raw_text_config_dict(folder)
-    num_layers = int(cfg["num_hidden_layers"])
-    layers, globals_sh, mtp_sh = _model_shape_inventory(folder, open_model_source(folder), num_layers)
+    num_layers = int(
+        cfg.get("num_hidden_layers")
+        or cfg.get("n_layers")
+        or cfg.get("n_layer")
+        or cfg.get("num_layers")
+    )
+    cfg_hidden = int(cfg.get("hidden_size") or cfg.get("n_embd") or cfg.get("d_model"))
+    tmp_source = open_model_source(folder)
+    try:
+        layers, globals_sh, mtp_sh = _model_shape_inventory(folder, tmp_source, num_layers)
+    finally:
+        if tmp_source is not None and hasattr(tmp_source, "close"):
+            tmp_source.close()
     fast = bool(profile["fast_qwen"])
     if fast:
         layer_bytes = [estimate_layer_vram_bytes(sh) for sh in layers]
-        vocab, hidden = globals_sh.get("lm_head.weight", (cfg.get("vocab_size", 0), cfg["hidden_size"]))
+        vocab, hidden = globals_sh.get("lm_head.weight", (cfg.get("vocab_size", 0), cfg_hidden))
         lm_head_bytes = q4_bytes_for_shape((int(vocab), int(hidden)))
         mtp_bytes = int(estimate_layer_vram_bytes({k: v for k, v in mtp_sh.items() if str(k).startswith("mtp.layers.")}))
         if "mtp.fc.weight" in mtp_sh:
@@ -1520,7 +1618,7 @@ def plan_for_checkpoint(
         has_mtp = "mtp.fc.weight" in mtp_sh
     else:
         layer_bytes = [sum(bf16_bytes_for_shape(tuple(s)) for s in sh.values()) for sh in layers]
-        shape = globals_sh.get("lm_head.weight", (int(cfg.get("vocab_size") or 1), int(cfg["hidden_size"])))
+        shape = globals_sh.get("lm_head.weight", (int(cfg.get("vocab_size") or 1), cfg_hidden))
         lm_head_bytes = bf16_bytes_for_shape(tuple(shape))
         mtp_bytes = 0
         has_mtp = False
@@ -1932,12 +2030,32 @@ class AirColibriUnifiedEngine:
                 )
                 return full_ids, reused, past_kv, unpark_ms
 
-        template_kwargs = dict(tokenize=False, add_generation_prompt=True, enable_thinking=enable_thinking)
-        try:
-            prompt_str = self.tokenizer.apply_chat_template(norm_msgs, **template_kwargs)
-        except TypeError:
-            template_kwargs.pop("enable_thinking")
-            prompt_str = self.tokenizer.apply_chat_template(norm_msgs, **template_kwargs)
+        prompt_str: str | None = None
+        if getattr(self.tokenizer, "chat_template", None):
+            template_kwargs = dict(tokenize=False, add_generation_prompt=True, enable_thinking=enable_thinking)
+            try:
+                prompt_str = self.tokenizer.apply_chat_template(norm_msgs, **template_kwargs)
+            except TypeError:
+                template_kwargs.pop("enable_thinking", None)
+                try:
+                    prompt_str = self.tokenizer.apply_chat_template(norm_msgs, **template_kwargs)
+                except (ValueError, AttributeError):
+                    prompt_str = None
+            except (ValueError, AttributeError):
+                prompt_str = None
+        if prompt_str is None:
+            parts: list[str] = []
+            for m in norm_msgs:
+                role = m["role"]
+                content = m["content"]
+                if role == "system":
+                    parts.append(f"System: {content}\n\n")
+                elif role == "assistant":
+                    parts.append(f"Assistant: {content}\n\n")
+                else:
+                    parts.append(f"User: {content}\n\n")
+            parts.append("Assistant:")
+            prompt_str = "".join(parts)
         self._last_prompt_opened_think = prompt_str.rstrip().endswith("<think>")
         self._last_prompt_chatml_think = "<|im_start|>assistant\n<think>" in prompt_str
         prompt_ids = self.tokenizer(prompt_str, return_tensors="pt").input_ids[0].tolist()

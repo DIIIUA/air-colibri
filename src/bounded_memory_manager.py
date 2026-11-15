@@ -169,14 +169,15 @@ class TensorArenaSpec:
     shape: Tuple[int, ...]
     offset_bytes: int
     nbytes: int
-    region: str  # "shared" | "linear_attn" | "self_attn"
+    region: str  # "shared" | "linear_attn" | "self_attn" | "mamba" | "conv"
     dtype: torch.dtype = torch.bfloat16
+    allowed_shapes: Tuple[Tuple[int, ...], ...] = ()
 
 
 class SlotArenaLayout:
-    """Единый шаблон слота из двух зон (shared + перекрытый overlay attention) без union-раздувания."""
+    """Единый шаблон слота из двух зон (shared + перекрытый overlay attention/mixer) без union-раздувания."""
 
-    ATTENTION_PREFIXES: Tuple[str, ...] = ("linear_attn.", "self_attn.")
+    ATTENTION_PREFIXES: Tuple[str, ...] = ("linear_attn.", "self_attn.", "mamba.", "conv.")
 
     def __init__(
         self,
@@ -187,6 +188,7 @@ class SlotArenaLayout:
         variant_bytes: Dict[str, int],
         payload_bytes: int,
         slot_stride: int,
+        overlay_prefixes: Optional[Tuple[str, ...]] = None,
     ):
         self.specs = specs
         self.dtype = dtype
@@ -195,21 +197,36 @@ class SlotArenaLayout:
         self.variant_bytes = variant_bytes
         self.payload_bytes = payload_bytes
         self.slot_stride = slot_stride
+        self.overlay_prefixes: Tuple[str, ...] = tuple(
+            self.ATTENTION_PREFIXES if overlay_prefixes is None else overlay_prefixes
+        )
 
     @classmethod
-    def _classify_region(cls, name: str) -> str:
-        for prefix in cls.ATTENTION_PREFIXES:
+    def _classify_region(cls, name: str, overlay_prefixes: Optional[Tuple[str, ...]] = None) -> str:
+        prefixes = cls.ATTENTION_PREFIXES if overlay_prefixes is None else overlay_prefixes
+        for prefix in prefixes:
             if name.startswith(prefix):
                 return prefix[:-1]
         return "shared"
 
     @classmethod
-    def _parse_template_entry(cls, spec_val: Any, default_dtype: torch.dtype) -> Tuple[Tuple[int, ...], torch.dtype]:
+    def _parse_template_entry(
+        cls,
+        spec_val: Any,
+        default_dtype: torch.dtype,
+    ) -> Tuple[Tuple[int, ...], torch.dtype, Tuple[Tuple[int, ...], ...]]:
         if isinstance(spec_val, torch.Tensor):
-            return tuple(spec_val.shape), spec_val.dtype
+            sh = tuple(spec_val.shape)
+            return sh, spec_val.dtype, (sh,)
+        if isinstance(spec_val, tuple) and len(spec_val) == 3 and isinstance(spec_val[1], torch.dtype):
+            sh = tuple(spec_val[0])
+            allowed = tuple(tuple(x) for x in spec_val[2]) or (sh,)
+            return sh, spec_val[1], allowed
         if isinstance(spec_val, tuple) and len(spec_val) == 2 and isinstance(spec_val[1], torch.dtype):
-            return tuple(spec_val[0]), spec_val[1]
-        return tuple(spec_val), default_dtype
+            sh = tuple(spec_val[0])
+            return sh, spec_val[1], (sh,)
+        sh = tuple(spec_val)
+        return sh, default_dtype, (sh,)
 
     @classmethod
     def from_templates(
@@ -218,26 +235,28 @@ class SlotArenaLayout:
         dtype: torch.dtype = torch.bfloat16,
         slot_alignment: int = ARENA_ALIGN_BYTES,
         tensor_alignment: int = TENSOR_ALIGN_BYTES,
+        overlay_prefixes: Optional[Tuple[str, ...]] = None,
     ) -> "SlotArenaLayout":
+        active_prefixes = tuple(cls.ATTENTION_PREFIXES if overlay_prefixes is None else overlay_prefixes)
+        overlay_regions = tuple(p[:-1] for p in active_prefixes)
         elem_sizes: Dict[torch.dtype, int] = {}
-        grouped: Dict[str, List[Tuple[str, Tuple[int, ...], torch.dtype]]] = {
+        grouped: Dict[str, List[Tuple[str, Tuple[int, ...], torch.dtype, Tuple[Tuple[int, ...], ...]]]] = {
             "shared": [],
-            "linear_attn": [],
-            "self_attn": [],
+            **{r: [] for r in overlay_regions},
         }
 
         for name, spec_val in template_tensors.items():
-            shape, t_dtype = cls._parse_template_entry(spec_val, dtype)
+            shape, t_dtype, allowed_shapes = cls._parse_template_entry(spec_val, dtype)
             if t_dtype not in elem_sizes:
                 elem_sizes[t_dtype] = torch.empty((), dtype=t_dtype).element_size()
-            grouped[cls._classify_region(name)].append((name, shape, t_dtype))
+            grouped[cls._classify_region(name, active_prefixes)].append((name, shape, t_dtype, allowed_shapes))
 
         specs: Dict[str, TensorArenaSpec] = {}
         cursor = 0
         shared_logical = 0
         max_end = 0
 
-        for name, shape, t_dtype in grouped["shared"]:
+        for name, shape, t_dtype, allowed_shapes in grouped["shared"]:
             numel = math.prod(shape) if shape else 1
             nbytes = numel * elem_sizes[t_dtype]
             specs[name] = TensorArenaSpec(
@@ -247,6 +266,7 @@ class SlotArenaLayout:
                 nbytes=nbytes,
                 region="shared",
                 dtype=t_dtype,
+                allowed_shapes=allowed_shapes,
             )
             shared_logical += nbytes
             end = cursor + nbytes
@@ -257,14 +277,14 @@ class SlotArenaLayout:
         attn_offset = cursor
         variant_bytes: Dict[str, int] = {}
 
-        # Ветки attention стартуют от одного attn_offset и разделяют общую память без union-суммирования
-        for region_name in ("linear_attn", "self_attn"):
+        # Ветки attention/mixer стартуют от одного attn_offset и разделяют общую память без union-суммирования
+        for region_name in overlay_regions:
             items = grouped[region_name]
             if not items:
                 continue
             v_cursor = attn_offset
             v_logical = 0
-            for name, shape, t_dtype in items:
+            for name, shape, t_dtype, allowed_shapes in items:
                 numel = math.prod(shape) if shape else 1
                 nbytes = numel * elem_sizes[t_dtype]
                 specs[name] = TensorArenaSpec(
@@ -274,6 +294,7 @@ class SlotArenaLayout:
                     nbytes=nbytes,
                     region=region_name,
                     dtype=t_dtype,
+                    allowed_shapes=allowed_shapes,
                 )
                 v_logical += nbytes
                 v_end = v_cursor + nbytes
@@ -292,6 +313,7 @@ class SlotArenaLayout:
             variant_bytes=variant_bytes,
             payload_bytes=payload_bytes,
             slot_stride=slot_stride,
+            overlay_prefixes=active_prefixes,
         )
 
     def bind_slot_views(
@@ -403,17 +425,23 @@ class BoundedPinnedBufferPool:
         if self.arena is None or not self.slots:
             raise RuntimeError("BoundedPinnedBufferPool is closed; cannot copy_into_slot.")
 
-        if any(k.startswith("linear_attn.") for k in src_tensors) and any(k.startswith("self_attn.") for k in src_tensors):
+        idx = slot_idx % self.num_slots
+        slot_layout = self.slot_layouts[idx]
+        present_overlays = sum(
+            1 for p in slot_layout.overlay_prefixes if any(k.startswith(p) for k in src_tensors)
+        )
+        if present_overlays > 1:
             raise ValueError("Cannot write both attention variants into an overlay slot")
         if not src_tensors:
             raise ValueError("Empty pinned payload")
-        idx = slot_idx % self.num_slots
         # Validate the entire payload before the first write (copy_ can broadcast).
         for name, src_t in src_tensors.items():
             target = self.slots[idx].get(name)
-            if target is None or not isinstance(src_t, torch.Tensor):
+            spec = slot_layout.specs.get(name)
+            if target is None or spec is None or not isinstance(src_t, torch.Tensor):
                 raise ValueError(f"Unknown pinned tensor: {name}")
-            if src_t.shape != target.shape or src_t.dtype != target.dtype or src_t.device.type != "cpu":
+            allowed = spec.allowed_shapes or (target.shape,)
+            if tuple(src_t.shape) not in allowed or src_t.dtype != target.dtype or src_t.device.type != "cpu":
                 raise ValueError(f"Pinned tensor shape/dtype/device mismatch: {name}")
 
         # Защита от гонки: ждем, пока GPU DMA закончит чтение предыдущего пакета из этого pinned-буфера
@@ -426,8 +454,12 @@ class BoundedPinnedBufferPool:
         for name, src_t in src_tensors.items():
             if name in target_slot:
                 target_t = target_slot[name]
-                target_t.copy_(src_t, non_blocking=False)
-                active_views[name] = target_t
+                if src_t.shape == target_t.shape:
+                    view_t = target_t
+                else:
+                    view_t = target_t.view(-1)[: src_t.numel()].view(src_t.shape)
+                view_t.copy_(src_t, non_blocking=False)
+                active_views[name] = view_t
         return active_views
 
     def record_dma_in_flight(self, slot_idx: int, stream: Optional[torch.cuda.Stream]) -> None:
@@ -664,19 +696,39 @@ class StableWeightManager:
         # Постоянные открытые mmap-дескрипторы файлов safetensors
         self.mmap_handles: Dict[int, Any] = collections.OrderedDict()
 
-        # Читаем только метаданные форм весов (без чтения тензоров с диска) для linear_attn и self_attn
+        # Читаем только метаданные форм весов (без чтения тензоров с диска) для всех типов слоев
         template: Dict[str, Any] = {}
-        # Probe one representative layer for each distinct parameter keyset (e.g. linear_attn + self_attn
-        # in hybrid models, or just layer 0 in uniform decoders) without hardcoding interval=4.
+        observed_shapes: Dict[str, List[Tuple[int, ...]]] = {}
+        observed_dtypes: Dict[str, torch.dtype] = {}
+        coexisting_overlays = False
+
+        def _record_spec(key_name: str, key_shape: Tuple[int, ...], key_dtype: torch.dtype) -> None:
+            sh_t = tuple(int(d) for d in key_shape)
+            lst = observed_shapes.setdefault(key_name, [])
+            if sh_t not in lst:
+                lst.append(sh_t)
+            observed_dtypes[key_name] = key_dtype
+
+        # Probe one representative layer for each distinct (key, shape) signature without hardcoding interval=4.
         if model_source is not None:
             probe_layers = []
             seen_keysets = set()
+            has_shape_fn = hasattr(model_source, "tensor_shape")
             for idx in range(int(model_source.num_layers)):
                 entries = model_source.layer_entries(idx)
                 if not entries:
                     continue
                 prefix = f"model.layers.{idx}."
-                sig = frozenset(k[len(prefix):] if k.startswith(prefix) else k for k in entries)
+                sig_items = []
+                short_keys = []
+                for k, e in entries.items():
+                    sk = k[len(prefix) :] if k.startswith(prefix) else k
+                    short_keys.append(sk)
+                    sh = tuple(model_source.tensor_shape(e)) if has_shape_fn else ()
+                    sig_items.append((sk, sh))
+                if sum(1 for p in SlotArenaLayout.ATTENTION_PREFIXES if any(sk.startswith(p) for sk in short_keys)) > 1:
+                    coexisting_overlays = True
+                sig = frozenset(sig_items)
                 if sig not in seen_keysets:
                     seen_keysets.add(sig)
                     probe_layers.append(idx)
@@ -690,25 +742,40 @@ class StableWeightManager:
             elif not os.path.exists(l_file):
                 continue
             f = self._get_mmap_handle(l_idx)
+            layer_short_keys = []
             for k in f.keys():
                 short_k = k.replace(f"model.layers.{l_idx}.", "")
+                layer_short_keys.append(short_k)
                 shape = tuple(f.get_slice(k).get_shape())
                 if self.is_q4 and is_q4_quantizable(short_k, shape, group_size=self.q4_group_size):
-                    template.update(
-                        q4_tensor_specs(
-                            short_k,
-                            shape,
-                            group_size=self.q4_group_size,
-                            compute_dtype=self.dtype,
-                        )
-                    )
+                    for sub_k, (sub_sh, sub_dt) in q4_tensor_specs(
+                        short_k,
+                        shape,
+                        group_size=self.q4_group_size,
+                        compute_dtype=self.dtype,
+                    ).items():
+                        _record_spec(sub_k, sub_sh, sub_dt)
                 else:
-                    template[short_k] = (shape, self.dtype)
+                    _record_spec(short_k, shape, self.dtype)
+            if sum(1 for p in SlotArenaLayout.ATTENTION_PREFIXES if any(sk.startswith(p) for sk in layer_short_keys)) > 1:
+                coexisting_overlays = True
 
+        for key_name, shapes_list in observed_shapes.items():
+            if len(shapes_list) == 1:
+                template[key_name] = (shapes_list[0], observed_dtypes[key_name])
+            else:
+                max_shape = max(shapes_list, key=lambda s: math.prod(s) if s else 1)
+                template[key_name] = (max_shape, observed_dtypes[key_name], tuple(shapes_list))
+
+        arena_layout = SlotArenaLayout.from_templates(
+            template,
+            dtype=dtype,
+            overlay_prefixes=() if coexisting_overlays else None,
+        )
         self.pinned_pool = BoundedPinnedBufferPool(
-            template_tensors=template,
+            arena_layout=arena_layout,
             num_slots=num_pinned_slots,
-            dtype=dtype
+            dtype=dtype,
         )
         del template
 

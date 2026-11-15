@@ -59,11 +59,13 @@ class RingSlot:
         self._owned_arena: Optional[torch.Tensor] = None
 
         if arena is not None and arena_layout is not None:
+            self.layout: SlotArenaLayout = arena_layout
             self.tensors = arena_layout.bind_slot_views(arena, slot_id, dtype=dtype,base_offset_bytes=arena_offset_bytes)
             self.slot_bytes = arena_layout.slot_stride
             self.payload_bytes = arena_layout.payload_bytes
         else:
             layout = arena_layout or SlotArenaLayout.from_templates(template_tensors or {}, dtype=dtype)
+            self.layout = layout
             self._owned_arena = (
                 torch.zeros(layout.slot_stride, dtype=torch.uint8, device=self.device)
                 if layout.slot_stride > 0
@@ -72,6 +74,7 @@ class RingSlot:
             self.tensors = layout.bind_slot_views(self._owned_arena, 0, dtype=dtype)
             self.slot_bytes = layout.slot_stride
             self.payload_bytes = layout.payload_bytes
+        self.active_tensors: Dict[str, torch.Tensor] = dict(self.tensors)
 
         # CUDA события для строгой синхронизации без блокировки CPU
         if self.device.type == "cuda":
@@ -191,6 +194,7 @@ class GPURingPipeline:
         slot.current_layer_idx = layer_idx
         slot.consumer_stream = None
         slot.loaded_keys.clear()
+        slot.active_tensors.clear()
         return slot
 
     def load_tensors_async(
@@ -203,24 +207,34 @@ class GPURingPipeline:
         """Асинхронно копирует веса из закрепленной памяти в GPU-слот через transfer_stream."""
         if slot not in self.slots or slot.state != SlotState.LOADING:
             raise RuntimeError("DMA requires a reserved local slot")
-        has_linear = any(k.startswith("linear_attn.") for k in pinned_src_tensors)
-        has_self = any(k.startswith("self_attn.") for k in pinned_src_tensors)
-        if has_linear and has_self:
+        slot_layout = slot.layout
+        present_overlays = sum(
+            1 for p in slot_layout.overlay_prefixes if any(k.startswith(p) for k in pinned_src_tensors)
+        )
+        if present_overlays > 1:
             raise ValueError(
                 "Cannot load both 'linear_attn.' and 'self_attn.' branches into the same overlay slot."
             )
         if not pinned_src_tensors:
             raise ValueError("Empty GPU payload")
+        target_views: Dict[str, torch.Tensor] = {}
         for name, src in pinned_src_tensors.items():
             target = slot.tensors.get(name)
-            if target is None or src.shape != target.shape or src.dtype != target.dtype:
+            spec = slot_layout.specs.get(name)
+            if target is None or spec is None or src.dtype != target.dtype:
                 raise ValueError(f"GPU payload shape/dtype/key mismatch: {name}")
+            allowed = spec.allowed_shapes or (target.shape,)
+            if tuple(src.shape) not in allowed:
+                raise ValueError(f"GPU payload shape/dtype/key mismatch: {name}")
+            if src.shape == target.shape:
+                target_views[name] = target
+            else:
+                target_views[name] = target.view(-1)[: src.numel()].view(src.shape)
 
         if self.device.type == "cuda" and self.transfer_stream is not None:
             with torch.cuda.stream(self.transfer_stream):
                 for name, src_t in pinned_src_tensors.items():
-                    if name in slot.tensors:
-                        slot.tensors[name].copy_(src_t, non_blocking=True)
+                    target_views[name].copy_(src_t, non_blocking=True)
                 slot.transfer_done_event.record(self.transfer_stream)
 
             # Регистрируем в pinned-пуле активную DMA-передачу для предотвращения гонок
@@ -232,12 +246,12 @@ class GPURingPipeline:
             slot.state = SlotState.LOADING
         else:
             for name, src_t in pinned_src_tensors.items():
-                if name in slot.tensors:
-                    slot.tensors[name].copy_(src_t, non_blocking=False)
+                target_views[name].copy_(src_t, non_blocking=False)
             slot.state = SlotState.READY
 
         self.total_loads += 1
         slot.loaded_keys = set(pinned_src_tensors)
+        slot.active_tensors = target_views
 
     def acquire_slot_for_compute(self, layer_idx: int) -> RingSlot:
         """Ожидает завершения передачи и переводит слот в состояние COMPUTING."""
@@ -324,6 +338,7 @@ class GPURingPipeline:
             slot.current_layer_idx = None
             slot.consumer_stream = None
             slot.loaded_keys.clear()
+            slot.active_tensors.clear()
             slot.state = SlotState.FREE
 
     def close(self) -> None:
@@ -335,6 +350,7 @@ class GPURingPipeline:
                 pass
         for slot in self.slots:
             slot.tensors.clear()
+            slot.active_tensors.clear()
             slot._owned_arena = None
             slot.compute_done_event = None
             slot.transfer_done_event = None

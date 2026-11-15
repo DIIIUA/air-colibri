@@ -52,7 +52,10 @@ from aircolibri_cli.gguf_reader import (
     GGML_TYPE_Q5_K,
     GGML_TYPE_Q6_K,
     GGML_TYPE_Q8_0,
+    GGML_TYPE_Q8_1,
     GGML_TYPE_Q8_K,
+    GGML_TYPE_TQ1_0,
+    GGML_TYPE_TQ2_0,
     GGUFError,
     GGUFReader,
 )
@@ -74,15 +77,140 @@ FAST_KERNEL_FIELDS = {
     "linear_conv_kernel_dim": 4,
 }
 
-_LAYER_RE = re.compile(r"^(?:model\.language_model\.|model\.)layers\.(\d+)\.(.+)$")
+_VISION_OR_AUDIO_PREFIXES = (
+    "visual.",
+    "model.visual.",
+    "vision_tower.",
+    "model.vision_tower.",
+    "vision_model.",
+    "model.vision_model.",
+    "audio_tower.",
+    "model.audio_tower.",
+    "audio_model.",
+    "multi_modal_projector.",
+    "model.multi_modal_projector.",
+    "aligner.",
+    "model.aligner.",
+    "embed_vision.",
+    "model.embed_vision.",
+    "embed_audio.",
+    "model.embed_audio.",
+    "vit.",
+    "model.vit.",
+    "connector.",
+    "model.connector.",
+    "mm_projector.",
+    "model.mm_projector.",
+)
+
+_IGNORED_BUFFER_SUFFIXES = (
+    ".rotary_emb.inv_freq",
+    ".attn.bias",
+    ".attn.masked_bias",
+    ".attention.bias",
+    ".attention.masked_bias",
+)
+
+_LAYER_RE = re.compile(
+    r"^(?:"
+    r"model\.language_model\.layers|"
+    r"language_model\.model\.layers|"
+    r"language_model\.layers|"
+    r"model\.decoder\.layers|"
+    r"model\.layers|"
+    r"transformer\.h|"
+    r"transformer\.blocks|"
+    r"gpt_neox\.layers|"
+    r"gpt_neox_japanese\.layers|"
+    r"backbone\.layers|"
+    r"backbone\.blocks|"
+    r"rwkv\.blocks|"
+    r"biogpt\.layers|"
+    r"layers|"
+    r"h"
+    r")\.(\d+)\.(.+)$"
+)
 _GLOBAL_ALIASES = {
-    "model.embed_tokens.weight": ("model.language_model.embed_tokens.weight", "model.embed_tokens.weight"),
+    "model.embed_tokens.weight": (
+        "model.language_model.embed_tokens.weight",
+        "language_model.model.embed_tokens.weight",
+        "model.embed_tokens.weight",
+        "model.embeddings.weight",
+        "model.decoder.embed_tokens.weight",
+        "transformer.wte.weight",
+        "transformer.word_embeddings.weight",
+        "gpt_neox.embed_in.weight",
+        "gpt_neox_japanese.embed_in.weight",
+        "backbone.embeddings.weight",
+        "backbone.embedding.weight",
+        "rwkv.embeddings.weight",
+        "biogpt.embed_tokens.weight",
+        "embed_tokens.weight",
+        "wte.weight",
+        "word_embeddings.weight",
+    ),
     "model.norm.weight": (
         "model.language_model.norm.weight",
+        "language_model.model.norm.weight",
         "model.norm.weight",
+        "model.norm_f.weight",
         "model.embedding_norm.weight",
+        "model.final_layernorm.weight",
+        "model.decoder.final_layer_norm.weight",
+        "transformer.ln_f.weight",
+        "transformer.norm_f.weight",
+        "gpt_neox.final_layer_norm.weight",
+        "gpt_neox_japanese.final_layer_norm.weight",
+        "backbone.norm_f.weight",
+        "rwkv.ln_out.weight",
+        "biogpt.layer_norm.weight",
+        "norm.weight",
+        "ln_f.weight",
     ),
-    "lm_head.weight": ("lm_head.weight", "model.language_model.lm_head.weight"),
+    "lm_head.weight": (
+        "lm_head.weight",
+        "model.language_model.lm_head.weight",
+        "language_model.lm_head.weight",
+        "embed_out.weight",
+        "output_projection.weight",
+        "head.weight",
+    ),
+}
+_OPTIONAL_GLOBAL_ALIASES = {
+    "model.norm.bias": (
+        "model.language_model.norm.bias",
+        "language_model.model.norm.bias",
+        "model.norm.bias",
+        "model.norm_f.bias",
+        "model.embedding_norm.bias",
+        "model.final_layernorm.bias",
+        "model.decoder.final_layer_norm.bias",
+        "transformer.ln_f.bias",
+        "transformer.norm_f.bias",
+        "gpt_neox.final_layer_norm.bias",
+        "gpt_neox_japanese.final_layer_norm.bias",
+        "backbone.norm_f.bias",
+        "rwkv.ln_out.bias",
+        "biogpt.layer_norm.bias",
+        "norm.bias",
+        "ln_f.bias",
+    ),
+    "lm_head.bias": (
+        "lm_head.bias",
+        "model.language_model.lm_head.bias",
+        "language_model.lm_head.bias",
+        "embed_out.bias",
+        "output_projection.bias",
+        "head.bias",
+    ),
+}
+_EXTRA_GLOBAL_RENAMES = {
+    "wpe.weight": "transformer.wpe.weight",
+    "word_embeddings_layernorm.weight": "transformer.word_embeddings_layernorm.weight",
+    "word_embeddings_layernorm.bias": "transformer.word_embeddings_layernorm.bias",
+    "decoder.embed_positions.weight": "model.decoder.embed_positions.weight",
+    "decoder.project_in.weight": "model.decoder.project_in.weight",
+    "decoder.project_out.weight": "model.decoder.project_out.weight",
 }
 _MISSING = object()
 _MAX_EXPERT_DEQUANT_BATCH = 8
@@ -102,13 +230,24 @@ class UnsupportedModelError(ValueError):
 # --------------------------------------------------------------------------------------
 
 
+def _single_hf_safetensors(model_dir: Path) -> Path | None:
+    if (model_dir / "model.safetensors").is_file():
+        return model_dir / "model.safetensors"
+    cands = [
+        p
+        for p in sorted(model_dir.glob("*.safetensors"))
+        if p.is_file() and "mtp" not in p.name.lower()
+    ]
+    return cands[0] if len(cands) == 1 else None
+
+
 def detect_format(model_dir: str | Path) -> str | None:
     """Returns ``"colibri"``, ``"hf"``, ``"gguf"`` or ``None`` for an unrecognised folder."""
     d = Path(model_dir)
     if (d / "config.hf.json").is_file() and (d / "model-00000.safetensors").is_file():
         return "colibri"
     if (d / "config.json").is_file() and (
-        (d / "model.safetensors.index.json").is_file() or (d / "model.safetensors").is_file()
+        (d / "model.safetensors.index.json").is_file() or _single_hf_safetensors(d) is not None
     ):
         return "hf"
     if any(p.is_file() for p in d.glob("*.gguf")):
@@ -116,16 +255,16 @@ def detect_format(model_dir: str | Path) -> str | None:
     return None
 
 
+def find_gguf_files(model_dir: str | Path) -> list[Path]:
+    """Returns the single ``.gguf`` file or ordered split ``.gguf`` shards (ignoring ``mmproj``)."""
+    from aircolibri_cli.gguf_arch_registry import find_gguf_files as _find_files
+
+    return _find_files(model_dir, error_cls=UnsupportedModelError)
+
+
 def find_gguf_file(model_dir: str | Path) -> Path:
-    """Returns the single ``.gguf`` file inside ``model_dir`` or raises ``UnsupportedModelError``."""
-    d = Path(model_dir)
-    found = sorted(p for p in d.glob("*.gguf") if p.is_file())
-    if not found:
-        raise UnsupportedModelError(f"{d}: no .gguf file found")
-    if len(found) > 1:
-        names = ", ".join(p.name for p in found[:4])
-        raise UnsupportedModelError(f"{d}: expected a single .gguf file, found {len(found)} ({names})")
-    return found[0]
+    """Returns the primary ``.gguf`` file inside ``model_dir`` or raises ``UnsupportedModelError``."""
+    return find_gguf_files(model_dir)[0]
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -153,28 +292,70 @@ def _read_gguf_header_cached(gguf_path: Path) -> tuple[dict[str, Any], list[dict
     try:
         with GGUFReader(str(resolved)) as reader:
             meta = dict(reader.metadata)
-            raw_tensors = list(reader.tensors)
+            raw_tensors = []
+            shard_str = str(resolved)
+            for t in reader.tensors:
+                td = dict(t)
+                td["shard_path"] = shard_str
+                raw_tensors.append(td)
     except (GGUFError, OSError) as exc:
         raise UnsupportedModelError(f"{gguf_path}: {exc}") from exc
 
     with _GGUF_HEADER_LOCK:
-        while len(_GGUF_HEADER_CACHE) >= 2:
+        while len(_GGUF_HEADER_CACHE) >= 8:
             _GGUF_HEADER_CACHE.popitem(last=False)
         _GGUF_HEADER_CACHE[key] = (meta, raw_tensors)
     return meta, raw_tensors
 
 
+def _read_gguf_shards_cached(gguf_paths: list[Path]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Reads and merges metadata + tensor descriptors across 1 or more split GGUF shards."""
+    merged_meta: dict[str, Any] = {}
+    all_tensors: list[dict[str, Any]] = []
+    for idx, p in enumerate(gguf_paths):
+        meta, tensors = _read_gguf_header_cached(p)
+        if idx == 0:
+            merged_meta.update(meta)
+        else:
+            for k, v in meta.items():
+                if k not in merged_meta and not k.startswith("split."):
+                    merged_meta[k] = v
+        all_tensors.extend(tensors)
+    return merged_meta, all_tensors
+
+
 def _validate_gguf_header(gguf_path: Path) -> str:
     """Validates GGUF binary header with pure positioned I/O (no mmap) and checks arch support."""
-    from transformers.integrations.gguf.utils import is_gguf_arch_supported
+    from aircolibri_cli.gguf_arch_registry import is_extended_gguf_arch_supported
 
     meta, _ = _read_gguf_header_cached(gguf_path)
     arch = str(meta.get("general.architecture") or "")
     if not arch:
         raise UnsupportedModelError(f"{gguf_path}: GGUF metadata misses 'general.architecture'")
-    if not is_gguf_arch_supported(arch):
+    if not is_extended_gguf_arch_supported(arch):
         raise UnsupportedModelError(f"{gguf_path}: GGUF architecture {arch!r} is not supported")
     return arch
+
+
+def _normalize_decoder_shape_keys(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Maps legacy Hugging Face shape keys (``n_layer``, ``n_embd``, ``d_model``) when present."""
+    out = dict(cfg)
+    if "num_hidden_layers" not in out:
+        for alt in ("n_layer", "num_layers"):
+            if out.get(alt) is not None:
+                out["num_hidden_layers"] = int(out[alt])
+                break
+    if "hidden_size" not in out:
+        for alt in ("n_embd", "d_model"):
+            if out.get(alt) is not None:
+                out["hidden_size"] = int(out[alt])
+                break
+    if "num_attention_heads" not in out:
+        for alt in ("n_head", "num_heads"):
+            if out.get(alt) is not None:
+                out["num_attention_heads"] = int(out[alt])
+                break
+    return out
 
 
 def raw_text_config_dict(model_dir: str | Path) -> dict[str, Any]:
@@ -183,12 +364,38 @@ def raw_text_config_dict(model_dir: str | Path) -> dict[str, Any]:
     if detect_format(d) == "gguf":
         cfg_obj = load_runtime_config(d)
         text_cfg = cfg_obj.get_text_config() if hasattr(cfg_obj, "get_text_config") else cfg_obj
-        return text_cfg.to_dict()
+        return _normalize_decoder_shape_keys(text_cfg.to_dict())
     cfg_path = d / "config.hf.json" if (d / "config.hf.json").is_file() else d / "config.json"
     cfg = _read_json(cfg_path)
     if isinstance(cfg.get("text_config"), dict):
-        return cfg["text_config"]
-    return cfg
+        return _normalize_decoder_shape_keys(cfg["text_config"])
+    return _normalize_decoder_shape_keys(cfg)
+
+
+def resolve_decoder_layers(model: Any):
+    """Finds the decoder ``ModuleList`` across all ``transformers`` CausalLM architectures."""
+    for path in (
+        ("model", "layers"),
+        ("model", "language_model", "layers"),
+        ("language_model", "model", "layers"),
+        ("model", "decoder", "layers"),
+        ("transformer", "h"),
+        ("transformer", "blocks"),
+        ("gpt_neox", "layers"),
+        ("backbone", "layers"),
+        ("backbone", "blocks"),
+        ("rwkv", "blocks"),
+        ("biogpt", "layers"),
+        ("layers",),
+    ):
+        cur = model
+        for attr in path:
+            cur = getattr(cur, attr, None)
+            if cur is None:
+                break
+        if cur is not None and hasattr(cur, "__len__") and hasattr(cur, "__getitem__"):
+            return cur
+    return None
 
 
 def fast_kernel_mismatches(cfg: dict[str, Any]) -> list[str]:
@@ -199,6 +406,14 @@ def fast_kernel_mismatches(cfg: dict[str, Any]) -> list[str]:
         if got is None or int(got) != int(expect):
             bad.append(f"{key}={got!r}, kernels expect {expect}")
     return bad
+
+
+def _config_expert_count(cfg: dict[str, Any]) -> int:
+    for k in ("num_experts", "num_local_experts", "n_routed_experts", "moe_num_experts"):
+        v = cfg.get(k)
+        if v is not None and int(v) > 0:
+            return int(v)
+    return 0
 
 
 def runtime_profile(model_dir: str | Path) -> dict[str, Any]:
@@ -213,7 +428,7 @@ def runtime_profile(model_dir: str | Path) -> dict[str, Any]:
     has_deltanet = "linear_attention" in (cfg.get("layer_types") or [])
     hybrid = is_qwen35_hybrid(model_dir)
     mismatches = fast_kernel_mismatches(cfg) if has_deltanet else []
-    num_experts = int(cfg.get("num_experts") or 0)
+    num_experts = _config_expert_count(cfg)
     fast = bool(hybrid and not mismatches and num_experts == 0 and fmt != "gguf")
 
     why: list[str] = []
@@ -236,7 +451,7 @@ def runtime_profile(model_dir: str | Path) -> dict[str, Any]:
     }
     if num_experts > 0:
         out["num_experts"] = num_experts
-        out["num_experts_per_tok"] = int(cfg.get("num_experts_per_tok") or 0)
+        out["num_experts_per_tok"] = int(cfg.get("num_experts_per_tok") or cfg.get("moe_k") or 0)
     return out
 
 
@@ -248,7 +463,7 @@ def is_qwen35_hybrid(model_dir: str | Path) -> bool:
         cfg = raw_text_config_dict(model_dir)
     except (OSError, json.JSONDecodeError, UnsupportedModelError):
         return False
-    if cfg.get("num_experts"):
+    if _config_expert_count(cfg):
         return False
     model_type = str(cfg.get("model_type", ""))
     if model_type not in SUPPORTED_MODEL_TYPES and model_type != "qwen3_5_text":
@@ -270,8 +485,8 @@ def check_supported(model_dir: str | Path) -> None:
     """Raises ``UnsupportedModelError`` unless the folder can be run.
 
     Qwen3.5 hybrid checkpoints use the fast Q4/MTP engine when geometry matches. Supported GGUF
-    checkpoints (such as ``qwen35moe`` / ``qwen35``) and standard Hugging Face causal LMs
-    (OLMoE, Llama, Mistral, Qwen2, Gemma, Phi, …) run on the BF16 ring.
+    checkpoints and standard Hugging Face causal LMs (OLMoE, Llama, Mistral, Qwen2/3, Gemma,
+    Phi, DeepSeek, GPT-2, Mamba, …) run on the BF16 ring.
     A Colibrì container that is not Qwen3.5 is rejected.
     """
     fmt = detect_format(model_dir)
@@ -318,8 +533,6 @@ def load_text_config(model_dir: str | Path):
     if detect_format(d) == "colibri":
         return AutoConfig.from_pretrained(str(d), config_file="config.hf.json")
     if cfg_dict.get("model_type") in ("qwen3_5", "qwen3_5_text"):
-        # Multimodal checkpoints nest the text model under `text_config`; build the plain text config
-        # exactly as a Colibri container's `config.hf.json` would be loaded.
         kwargs = {k: v for k, v in cfg_dict.items() if k not in ("model_type", "transformers_version")}
         cfg = AutoConfig.for_model("qwen3_5_text", **kwargs)
     else:
@@ -333,59 +546,53 @@ def load_runtime_config(model_dir: str | Path):
     """Config for the engine: Qwen3.5 text config, zero-mmap GGUF-derived config, or checkpoint causal config."""
     d = Path(model_dir)
     if detect_format(d) == "gguf":
-        gguf_path = find_gguf_file(d)
-        _validate_gguf_header(gguf_path)
+        gguf_paths = find_gguf_files(d)
+        _validate_gguf_header(gguf_paths[0])
         from transformers import AutoConfig
-        from transformers.integrations.gguf import get_gguf_config
+        from aircolibri_cli.gguf_arch_registry import build_gguf_config_dict
 
         try:
-            meta, raw_tensors = _read_gguf_header_cached(gguf_path)
+            meta, raw_tensors = _read_gguf_shards_cached(gguf_paths)
             cfg_meta = {
                 k: (len(v) if isinstance(v, list) and (not v or isinstance(v[0], str)) else v)
                 for k, v in meta.items()
             }
             tensor_names = tuple(t["name"] for t in raw_tensors)
-            cfg_dict = get_gguf_config(cfg_meta, tensor_names)
-            return AutoConfig.for_model(**cfg_dict)
+            tensor_shapes = {t["name"]: tuple(int(x) for x in reversed(t["dims"])) for t in raw_tensors}
+            cfg_dict = build_gguf_config_dict(cfg_meta, tensor_names, tensor_shapes=tensor_shapes)
+            model_type = cfg_dict.pop("model_type")
+            return AutoConfig.for_model(model_type, **cfg_dict)
         except Exception as exc:
             raise UnsupportedModelError(f"{d}: invalid GGUF config ({exc})") from exc
     if is_qwen35_hybrid(d):
         return load_text_config(d)
     from transformers import AutoConfig
+    from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING
 
-    return AutoConfig.from_pretrained(str(d))
+    cfg = AutoConfig.from_pretrained(str(d))
+    if hasattr(cfg, "get_text_config") and getattr(cfg, "text_config", None) is not None:
+        text_cfg = cfg.get_text_config()
+        if text_cfg is not cfg and type(text_cfg) in MODEL_FOR_CAUSAL_LM_MAPPING:
+            return text_cfg
+    if type(cfg) not in MODEL_FOR_CAUSAL_LM_MAPPING:
+        raise UnsupportedModelError(
+            f"{d}: model_type={getattr(cfg, 'model_type', '?')!r} ({type(cfg).__name__}) has no CausalLM class"
+        )
+    return cfg
 
 
 def load_runtime_tokenizer(model_dir: str | Path, config: Any = None):
     """Loads the checkpoint tokenizer without calling ``mmap`` / ``np.memmap`` on GGUF files."""
     d = Path(model_dir)
     if detect_format(d) == "gguf":
-        gguf_path = find_gguf_file(d)
-        _validate_gguf_header(gguf_path)
-        from transformers import PreTrainedTokenizerFast
-        from transformers.integrations.gguf import (
-            GGUF_TOKENIZER_MAPPING,
-            convert_gguf_tokenizer,
-        )
-        from transformers.integrations.gguf.gguf_tokenizer_mapping import _SPECIAL_TOKENS
-        from transformers.models.auto.tokenization_auto import TOKENIZER_MAPPING
+        gguf_paths = find_gguf_files(d)
+        _validate_gguf_header(gguf_paths[0])
+        from aircolibri_cli.gguf_arch_registry import build_extended_gguf_tokenizer
 
         cfg = config if config is not None else load_runtime_config(d)
-        meta, _ = _read_gguf_header_cached(gguf_path)
+        meta, _ = _read_gguf_shards_cached(gguf_paths)
         arch = str(meta["general.architecture"])
-        grouped = {
-            group: {name: meta[f"tokenizer.{key}"] for key, name in renames.items() if f"tokenizer.{key}" in meta}
-            for group, renames in GGUF_TOKENIZER_MAPPING.items()
-        }
-        tok_dict, tok_cfg = grouped["tokenizer"], grouped["tokenizer_config"]
-        for name, key in _SPECIAL_TOKENS.items():
-            tid = meta.get(f"tokenizer.ggml.{key}")
-            tok_cfg[name] = tok_dict["tokens"][tid] if tid is not None else None
-        fast_tok, add_kw = convert_gguf_tokenizer(arch, tok_dict)
-        mapped = TOKENIZER_MAPPING.get(type(cfg), None)
-        tok_cls = (mapped[1] or mapped[0]) if isinstance(mapped, (tuple, list)) else mapped
-        tok_cls = tok_cls or PreTrainedTokenizerFast
-        return tok_cls(tokenizer_object=fast_tok, **tok_cfg, **add_kw)
+        return build_extended_gguf_tokenizer(arch, meta, cfg)
 
     from transformers import AutoTokenizer
 
@@ -764,7 +971,10 @@ class _ParallelSliceStagingPool:
 _EXTRA_GGML_BLOCKS = {
     GGML_TYPE_Q5_0: ("Q5_0", 32, 22),
     GGML_TYPE_Q5_1: ("Q5_1", 32, 24),
+    GGML_TYPE_Q8_1: ("Q8_1", 32, 36),
     GGML_TYPE_Q8_K: ("Q8_K", 256, 292),
+    GGML_TYPE_TQ1_0: ("TQ1_0", 256, 54),
+    GGML_TYPE_TQ2_0: ("TQ2_0", 256, 66),
     GGML_TYPE_MXFP4: ("MXFP4", 32, 17),
 }
 _MXFP4_DOUBLED_LEVELS = (0.0, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 0.0, -1.0, -2.0, -3.0, -4.0, -6.0, -8.0, -12.0)
@@ -1006,7 +1216,7 @@ def dequantize_gguf_tensor(u8: Any, ggml_type: int, dtype: Any = None):
 
     if ggml_type == GGML_TYPE_Q5_0:
         blocks = u8.reshape(-1, 22)
-        d = blocks[:, 0:2].view(torch.float16).to(dtype)
+        d = blocks[:, 0:2].contiguous().view(torch.float16).to(dtype)
         qh = blocks[:, 2:6].unsqueeze(-1) >> torch.arange(8, device=u8.device, dtype=torch.uint8)
         high = (qh.reshape(-1, 32) & 1) << 4
         qs = blocks[:, 6:22]
@@ -1016,8 +1226,8 @@ def dequantize_gguf_tensor(u8: Any, ggml_type: int, dtype: Any = None):
 
     if ggml_type == GGML_TYPE_Q5_1:
         blocks = u8.reshape(-1, 24)
-        d = blocks[:, 0:2].view(torch.float16).to(dtype)
-        m = blocks[:, 2:4].view(torch.float16).to(dtype)
+        d = blocks[:, 0:2].contiguous().view(torch.float16).to(dtype)
+        m = blocks[:, 2:4].contiguous().view(torch.float16).to(dtype)
         qh = blocks[:, 4:8].unsqueeze(-1) >> torch.arange(8, device=u8.device, dtype=torch.uint8)
         high = (qh.reshape(-1, 32) & 1) << 4
         qs = blocks[:, 8:24]
@@ -1025,11 +1235,41 @@ def dequantize_gguf_tensor(u8: Any, ggml_type: int, dtype: Any = None):
         q = low | high
         return (d * q + m).reshape(-1)
 
+    if ggml_type == GGML_TYPE_Q8_1:
+        blocks = u8.reshape(-1, 36)
+        d = blocks[:, 0:2].contiguous().view(torch.float16).to(dtype)
+        qs = blocks[:, 4:36].view(torch.int8)
+        return (d * qs).reshape(-1)
+
     if ggml_type == GGML_TYPE_Q8_K:
         blocks = u8.reshape(-1, 292)
         d = blocks[:, 0:4].contiguous().view(torch.float32)
         qs = blocks[:, 4:260].view(torch.int8)
         return (d * qs.float()).to(dtype).reshape(-1)
+
+    if ggml_type == GGML_TYPE_TQ1_0:
+        blocks = u8.reshape(-1, 54)
+        nb = blocks.shape[0]
+        pow5 = torch.tensor([1, 3, 9, 27, 81], device=u8.device, dtype=torch.int32).view(1, 5, 1)
+        pow4 = torch.tensor([1, 3, 9, 27], device=u8.device, dtype=torch.int32).view(1, 4, 1)
+        qs32 = blocks[:, 0:32].to(torch.int32).unsqueeze(1)
+        p1 = ((((qs32 * pow5) & 0xFF) * 3) >> 8).sub_(1).reshape(nb, 160)
+        qs16 = blocks[:, 32:48].to(torch.int32).unsqueeze(1)
+        p2 = ((((qs16 * pow5) & 0xFF) * 3) >> 8).sub_(1).reshape(nb, 80)
+        qh4 = blocks[:, 48:52].to(torch.int32).unsqueeze(1)
+        p3 = ((((qh4 * pow4) & 0xFF) * 3) >> 8).sub_(1).reshape(nb, 16)
+        trits = torch.cat([p1, p2, p3], dim=1).to(torch.float32)
+        d = blocks[:, 52:54].contiguous().view(torch.float16).to(torch.float32)
+        return (d * trits).to(dtype).reshape(-1)
+
+    if ggml_type == GGML_TYPE_TQ2_0:
+        blocks = u8.reshape(-1, 66)
+        nb = blocks.shape[0]
+        chunks = blocks[:, 0:64].reshape(nb, 2, 32).unsqueeze(2)
+        shifts = torch.tensor([0, 2, 4, 6], device=u8.device, dtype=torch.uint8).view(1, 1, 4, 1)
+        trits = (((chunks >> shifts) & 3).to(torch.int8) - 1).reshape(nb, 256).to(torch.float32)
+        d = blocks[:, 64:66].contiguous().view(torch.float16).to(torch.float32)
+        return (d * trits).to(dtype).reshape(-1)
 
     if ggml_type == GGML_TYPE_MXFP4:
         blocks = u8.reshape(-1, 17)
@@ -1044,6 +1284,32 @@ def dequantize_gguf_tensor(u8: Any, ggml_type: int, dtype: Any = None):
     raise UnsupportedModelError(f"Unsupported ggml block type {ggml_type}")
 
 
+def _expert_act(self_exp: Any, gate: Any, up: Any):
+    """Applies 2-proj act, GPT-OSS clamped GLU, custom ``_apply_gate``, or standard SwiGLU/GeGLU."""
+    import torch
+
+    if gate is None:
+        out = self_exp.act_fn(up)
+    elif hasattr(self_exp, "alpha") and hasattr(self_exp, "limit"):
+        limit = float(self_exp.limit)
+        alpha = float(self_exp.alpha)
+        g_c = gate.clamp(max=limit)
+        u_c = up.clamp(min=-limit, max=limit)
+        out = (u_c + 1.0) * (g_c * torch.sigmoid(g_c * alpha))
+    else:
+        custom_gate = getattr(type(self_exp), "_apply_gate", None)
+        if custom_gate is not None and getattr(custom_gate, "__name__", "") != "_default_apply_gate":
+            if getattr(self_exp, "is_concatenated", True):
+                out = self_exp._apply_gate(torch.cat([gate, up], dim=-1))
+            else:
+                out = self_exp._apply_gate(torch.stack([gate, up], dim=-1).flatten(-2))
+        else:
+            out = self_exp.act_fn(gate) * up
+    if getattr(self_exp, "has_post_expert_norm", False) and hasattr(self_exp, "norm"):
+        out = self_exp.norm(out)
+    return out
+
+
 def _fast_moe_dispatch(
     self_exp: Any,
     hidden_states: Any,
@@ -1051,6 +1317,9 @@ def _fast_moe_dispatch(
     top_k_weights: Any,
     num_exp: int,
     load_batch_fn: Any,
+    *,
+    bias_lookup_fn: Any = None,
+    input_weighted: bool = False,
 ):
     """Sync-free MoE router dispatch: batched GEMV/BMM for decode (T=1) and grouped batches for prefill."""
     import torch
@@ -1061,7 +1330,7 @@ def _fast_moe_dispatch(
         return torch.zeros_like(hidden_states)
 
     if T == 1:
-        # Single-token decode: one D2H read of K integers, zero one_hot/torch.where syncs, 3 batched cuBLAS calls.
+        # Single-token decode: one D2H read of K integers, zero one_hot/torch.where syncs, batched cuBLAS calls.
         raw_k = top_k_index[0].tolist()
         valid_pos: list[int] = []
         exp_ids: list[int] = []
@@ -1074,26 +1343,43 @@ def _fast_moe_dispatch(
             return torch.zeros_like(hidden_states)
 
         comp_dtype = hidden_states.dtype
-        w = top_k_weights[0, valid_pos].to(dtype=comp_dtype)
+        w = top_k_weights[0, valid_pos]
         x = hidden_states[0]
-        if len(exp_ids) <= _MAX_EXPERT_DEQUANT_BATCH:
-            gate_w, up_w, down_w = load_batch_fn(exp_ids, hidden_states.device, comp_dtype, True)
-            act = self_exp.act_fn(torch.matmul(gate_w, x)) * torch.matmul(up_w, x)
+
+        def _run_t1_sub(sub_ids: list[int], sub_w: Any):
+            gate_w, up_w, down_w = load_batch_fn(sub_ids, hidden_states.device, comp_dtype, True)
+            biases = bias_lookup_fn(sub_ids, hidden_states.device, comp_dtype) if bias_lookup_fn is not None else None
+            if input_weighted:
+                x_k = (sub_w.unsqueeze(-1) * x.unsqueeze(0)).to(dtype=comp_dtype)  # (K, D)
+                up_out = torch.bmm(up_w, x_k.unsqueeze(-1)).squeeze(-1)
+                gate_out = torch.bmm(gate_w, x_k.unsqueeze(-1)).squeeze(-1) if gate_w is not None else None
+            else:
+                up_out = torch.matmul(up_w, x)
+                gate_out = torch.matmul(gate_w, x) if gate_w is not None else None
+            if biases is not None:
+                gb, ub, db = biases
+                if gate_out is not None and gb is not None:
+                    gate_out = gate_out + gb
+                if ub is not None:
+                    up_out = up_out + ub
+            act = _expert_act(self_exp, gate_out, up_out)
             del gate_w, up_w
             out_k = torch.bmm(down_w, act.unsqueeze(-1)).squeeze(-1)
             del down_w
-            return torch.matmul(w, out_k).unsqueeze(0).to(dtype=hidden_states.dtype)
+            if biases is not None and biases[2] is not None:
+                out_k = out_k + biases[2]
+            if input_weighted:
+                return out_k.sum(dim=0, keepdim=True)
+            return (sub_w.unsqueeze(-1) * out_k).sum(dim=0, keepdim=True).to(dtype=comp_dtype)
 
-        acc = torch.zeros((1, D), dtype=comp_dtype, device=hidden_states.device)
+        if len(exp_ids) <= _MAX_EXPERT_DEQUANT_BATCH:
+            return _run_t1_sub(exp_ids, w).to(dtype=hidden_states.dtype)
+
+        acc = torch.zeros((1, D), dtype=torch.float32, device=hidden_states.device)
         for b0 in range(0, len(exp_ids), _MAX_EXPERT_DEQUANT_BATCH):
             sub_ids = exp_ids[b0 : b0 + _MAX_EXPERT_DEQUANT_BATCH]
             sub_w = w[b0 : b0 + _MAX_EXPERT_DEQUANT_BATCH]
-            gate_w, up_w, down_w = load_batch_fn(sub_ids, hidden_states.device, comp_dtype, True)
-            act = self_exp.act_fn(torch.matmul(gate_w, x)) * torch.matmul(up_w, x)
-            del gate_w, up_w
-            out_k = torch.bmm(down_w, act.unsqueeze(-1)).squeeze(-1)
-            del down_w
-            acc = acc + torch.matmul(sub_w, out_k).unsqueeze(0)
+            acc = acc + _run_t1_sub(sub_ids, sub_w).float()
         return acc.to(dtype=hidden_states.dtype)
 
     # Multi-token prefill: group token/slot indices on CPU in one transfer (zero per-expert GPU syncs).
@@ -1133,17 +1419,28 @@ def _fast_moe_dispatch(
 
     all_tok_gpu = torch.tensor(flat_tok, dtype=torch.long, device=dev)
     all_pos_gpu = torch.tensor(flat_pos, dtype=torch.long, device=dev)
-    all_w_gpu = top_k_weights[all_tok_gpu, all_pos_gpu, None].to(dtype=comp_dtype)
+    all_w_gpu = top_k_weights[all_tok_gpu, all_pos_gpu, None]
 
     for b0 in range(0, len(hit_list), _MAX_EXPERT_DEQUANT_BATCH):
         batch_ids = hit_list[b0 : b0 + _MAX_EXPERT_DEQUANT_BATCH]
         gate_w, up_w, down_w = load_batch_fn(batch_ids, dev, comp_dtype, is_short_step)
+        biases = bias_lookup_fn(batch_ids, dev, comp_dtype) if bias_lookup_fn is not None else None
         for local_i in range(len(batch_ids)):
             s0, s1 = spans[b0 + local_i]
             token_idx = all_tok_gpu[s0:s1]
+            w_slice = all_w_gpu[s0:s1]
             current_state = hidden_states.index_select(0, token_idx)
-            act = self_exp.act_fn(F.linear(current_state, gate_w[local_i])) * F.linear(current_state, up_w[local_i])
-            current_hidden = F.linear(act, down_w[local_i]) * all_w_gpu[s0:s1]
+            if input_weighted:
+                current_state = (current_state * w_slice).to(dtype=comp_dtype)
+            gb = biases[0][local_i] if (biases is not None and biases[0] is not None) else None
+            ub = biases[1][local_i] if (biases is not None and biases[1] is not None) else None
+            db = biases[2][local_i] if (biases is not None and biases[2] is not None) else None
+            up_out = F.linear(current_state, up_w[local_i], ub)
+            gate_out = F.linear(current_state, gate_w[local_i], gb) if gate_w is not None else None
+            act = _expert_act(self_exp, gate_out, up_out)
+            current_hidden = F.linear(act, down_w[local_i], db)
+            if not input_weighted:
+                current_hidden = current_hidden * w_slice
             final_hidden_states.index_add_(0, token_idx, current_hidden.to(dtype=final_hidden_states.dtype))
         del gate_w, up_w, down_w
 
@@ -1155,7 +1452,12 @@ def _fast_moe_dispatch(
 # --------------------------------------------------------------------------------------
 
 _HF_EXPERT_LEAF_RE = re.compile(
-    r"^(mlp\.experts|block_sparse_moe\.experts)\.(\d+)\.(gate_proj|up_proj|down_proj|w1|w3|w2)\.weight$"
+    r"^(mlp\.experts|feed_forward\.experts|block_sparse_moe\.experts|mixer\.experts)"
+    r"\.(\d+)\.(gate_proj|up_proj|down_proj|w1|w3|w2)\.weight$"
+)
+_HF_PACKED_EXPERT_LEAF_RE = re.compile(
+    r"^(mlp\.experts|feed_forward\.experts|block_sparse_moe\.experts|mixer\.experts)"
+    r"\.(gate_up_proj|up_proj|down_proj|gate_up_proj_bias|down_proj_bias)(?:\.weight)?$"
 )
 _HF_EXPERT_ROLE = {
     "gate_proj": "gate",
@@ -1168,12 +1470,13 @@ _HF_EXPERT_ROLE = {
 
 
 class _HFExpertCacheAndLoader:
-    """Contiguous single-arena VRAM LRU cache + 4-worker pinned loader for per-expert HF MoE shards."""
+    """Contiguous single-arena VRAM LRU cache + 4-worker pinned loader for per-expert & 3D HF MoE shards."""
 
     def __init__(
         self,
         reader: PreadSafetensorsReader,
         routed_experts: dict[int, dict[int, dict[str, tuple[str, str]]]],
+        packed_experts: dict[int, dict[str, tuple[str, str]]],
         device: Any,
         dtype: Any,
         budget_bytes: int,
@@ -1185,28 +1488,114 @@ class _HFExpertCacheAndLoader:
         self.elem_size = torch.empty((), dtype=dtype).element_size()
         self.hits = 0
         self.misses = 0
+        self.has_gate = True
+        self._biases: dict[int, tuple[Any, Any, Any]] = {}
 
-        # Pre-index byte spans (path, abs_offset, nbytes, raw_torch_dtype) for every expert once.
-        self._spans: dict[tuple[int, int], tuple[tuple[str, int, int], tuple[str, int, int], tuple[str, int, int], Any]] = {}
+        # Per-(layer_idx, exp_id) record: (mode, spans_tuple, raw_torch_dtype)
+        # mode == "std3": (g_span, u_span, d_span) each (I, H) / (H, I)
+        # mode == "std2": (u_span, d_span) for 2-proj NemotronH
+        # mode == "tr_chunk": (gu_span (H, 2*I), d_span (I, H)) for Llama4
+        # mode == "tr_inter": (gu_span (H, 2*I), d_span (I, H)) for GptOss
+        self._spans: dict[tuple[int, int], tuple[str, tuple[tuple[str, int, int], ...], Any]] = {}
+        self.num_experts_by_layer: dict[int, int] = {}
         inter_dim = 0
         hidden_dim = 0
         uniform_shapes = True
         max_expert_raw_bytes = 0
+
         for l_idx, by_id in routed_experts.items():
+            self.num_experts_by_layer[l_idx] = len(by_id)
             for exp_id, parts in by_id.items():
-                gp, goff, gn, gdt, gsh = reader.tensor_span(*parts["gate"])
                 up, uoff, un, udt, ush = reader.tensor_span(*parts["up"])
                 dp, doff, dn, ddt, dsh = reader.tensor_span(*parts["down"])
                 if inter_dim == 0 and hidden_dim == 0:
-                    inter_dim, hidden_dim = int(gsh[0]), int(gsh[1])
-                if gsh != (inter_dim, hidden_dim) or ush != (inter_dim, hidden_dim) or dsh != (hidden_dim, inter_dim):
+                    inter_dim, hidden_dim = int(ush[0]), int(ush[1])
+                if ush != (inter_dim, hidden_dim) or dsh != (hidden_dim, inter_dim) or udt != ddt:
                     uniform_shapes = False
-                if not (gdt == udt == ddt):
-                    uniform_shapes = False
-                raw_dt = getattr(torch, gdt)
-                self._spans[(l_idx, exp_id)] = ((gp, goff, gn), (up, uoff, un), (dp, doff, dn), raw_dt)
-                max_expert_raw_bytes = max(max_expert_raw_bytes, gn + un + dn)
+                raw_dt = getattr(torch, udt)
+                if "gate" in parts:
+                    gp, goff, gn, gdt, gsh = reader.tensor_span(*parts["gate"])
+                    if gsh != (inter_dim, hidden_dim) or gdt != udt:
+                        uniform_shapes = False
+                    self._spans[(l_idx, exp_id)] = ("std3", ((gp, goff, gn), (up, uoff, un), (dp, doff, dn)), raw_dt)
+                    max_expert_raw_bytes = max(max_expert_raw_bytes, gn + un + dn)
+                else:
+                    self.has_gate = False
+                    self._spans[(l_idx, exp_id)] = ("std2", ((up, uoff, un), (dp, doff, dn)), raw_dt)
+                    max_expert_raw_bytes = max(max_expert_raw_bytes, un + dn)
 
+        for l_idx, pmap in packed_experts.items():
+            dp, doff, dn, ddt, dsh = reader.tensor_span(*pmap["down_proj"])
+            raw_dt = getattr(torch, ddt)
+            n_exp = int(dsh[0])
+            self.num_experts_by_layer[l_idx] = n_exp
+            if "gate_up_proj" in pmap:
+                gp, goff, gn, gdt, gsh = reader.tensor_span(*pmap["gate_up_proj"])
+                if gdt != ddt or int(gsh[0]) != n_exp:
+                    uniform_shapes = False
+                # Disambiguate standard [E, 2*I, H] + [E, H, I] vs transposed [E, H, 2*I] + [E, I, H]
+                if int(gsh[1]) == 2 * int(dsh[2]) and int(gsh[2]) == int(dsh[1]):
+                    I_cur, H_cur = int(dsh[2]), int(dsh[1])
+                    b_gu_exp = gn // n_exp
+                    b_ih = b_gu_exp // 2
+                    b_d = dn // n_exp
+                    if inter_dim == 0 and hidden_dim == 0:
+                        inter_dim, hidden_dim = I_cur, H_cur
+                    if (I_cur, H_cur) != (inter_dim, hidden_dim):
+                        uniform_shapes = False
+                    for eid in range(n_exp):
+                        g_sp = (gp, goff + eid * b_gu_exp, b_ih)
+                        u_sp = (gp, goff + eid * b_gu_exp + b_ih, b_ih)
+                        d_sp = (dp, doff + eid * b_d, b_d)
+                        self._spans[(l_idx, eid)] = ("std3", (g_sp, u_sp, d_sp), raw_dt)
+                    max_expert_raw_bytes = max(max_expert_raw_bytes, b_gu_exp + b_d)
+                elif int(gsh[1]) == int(dsh[2]) and int(gsh[2]) == 2 * int(dsh[1]):
+                    H_cur, I_cur = int(gsh[1]), int(dsh[1])
+                    b_gu_exp = gn // n_exp
+                    b_d = dn // n_exp
+                    if inter_dim == 0 and hidden_dim == 0:
+                        inter_dim, hidden_dim = I_cur, H_cur
+                    if (I_cur, H_cur) != (inter_dim, hidden_dim):
+                        uniform_shapes = False
+                    mode = "tr_inter" if "gate_up_proj_bias" in pmap else "tr_chunk"
+                    for eid in range(n_exp):
+                        gu_sp = (gp, goff + eid * b_gu_exp, b_gu_exp)
+                        d_sp = (dp, doff + eid * b_d, b_d)
+                        self._spans[(l_idx, eid)] = (mode, (gu_sp, d_sp), raw_dt)
+                    max_expert_raw_bytes = max(max_expert_raw_bytes, b_gu_exp + b_d)
+                    if "gate_up_proj_bias" in pmap or "down_proj_bias" in pmap:
+                        gub = (
+                            reader.read_tensor(*pmap["gate_up_proj_bias"]).to(device=self.device, dtype=dtype)
+                            if "gate_up_proj_bias" in pmap
+                            else None
+                        )
+                        db = (
+                            reader.read_tensor(*pmap["down_proj_bias"]).to(device=self.device, dtype=dtype)
+                            if "down_proj_bias" in pmap
+                            else None
+                        )
+                        gb = gub[:, 0::2].contiguous() if gub is not None else None
+                        ub = gub[:, 1::2].contiguous() if gub is not None else None
+                        self._biases[l_idx] = (gb, ub, db)
+                else:
+                    raise UnsupportedModelError(
+                        f"Unrecognised 3D MoE tensor shapes gate_up_proj={gsh}, down_proj={dsh}"
+                    )
+            else:
+                self.has_gate = False
+                up, uoff, un, udt, ush = reader.tensor_span(*pmap["up_proj"])
+                I_cur, H_cur = int(ush[1]), int(ush[2])
+                if inter_dim == 0 and hidden_dim == 0:
+                    inter_dim, hidden_dim = I_cur, H_cur
+                if (I_cur, H_cur) != (inter_dim, hidden_dim) or dsh != (n_exp, H_cur, I_cur) or udt != ddt:
+                    uniform_shapes = False
+                b_u = un // n_exp
+                b_d = dn // n_exp
+                for eid in range(n_exp):
+                    self._spans[(l_idx, eid)] = ("std2", ((up, uoff + eid * b_u, b_u), (dp, doff + eid * b_d, b_d)), raw_dt)
+                max_expert_raw_bytes = max(max_expert_raw_bytes, b_u + b_d)
+
+        self.n_proj = 3 if self.has_gate else 2
         self.inter_dim = inter_dim
         self.hidden_dim = hidden_dim
         self._staging = _ParallelSliceStagingPool(
@@ -1214,7 +1603,7 @@ class _HFExpertCacheAndLoader:
             device=self.device,
         )
 
-        expert_vram_bytes = 3 * inter_dim * hidden_dim * self.elem_size
+        expert_vram_bytes = self.n_proj * inter_dim * hidden_dim * self.elem_size
         total_experts = len(self._spans)
         if self.device.type == "cuda" and uniform_shapes and expert_vram_bytes > 0 and budget_bytes >= expert_vram_bytes * _MAX_EXPERT_DEQUANT_BATCH:
             num_slots = min(total_experts, int(budget_bytes) // expert_vram_bytes)
@@ -1223,7 +1612,7 @@ class _HFExpertCacheAndLoader:
 
         self.num_slots = num_slots
         self.arena = (
-            torch.empty((num_slots, 3, inter_dim, hidden_dim), dtype=dtype, device=self.device)
+            torch.empty((num_slots, self.n_proj, inter_dim, hidden_dim), dtype=dtype, device=self.device)
             if num_slots > 0
             else None
         )
@@ -1241,24 +1630,55 @@ class _HFExpertCacheAndLoader:
             "hit_rate_pct": round(100.0 * self.hits / max(1, total), 1) if total > 0 else 0.0,
         }
 
+    def lookup_biases(self, layer_idx: int, exp_ids: list[int], dev: Any, comp_dtype: Any):
+        import torch
+
+        entry = self._biases.get(layer_idx)
+        if entry is None:
+            return None
+        gb, ub, db = entry
+        idx_t = torch.tensor(exp_ids, dtype=torch.long, device=self.device)
+        g_sel = gb.index_select(0, idx_t).to(device=dev, dtype=comp_dtype) if gb is not None else None
+        u_sel = ub.index_select(0, idx_t).to(device=dev, dtype=comp_dtype) if ub is not None else None
+        d_sel = db.index_select(0, idx_t).to(device=dev, dtype=comp_dtype) if db is not None else None
+        return g_sel, u_sel, d_sel
+
     def _fetch_raw_experts(self, layer_idx: int, exp_ids: list[int], dtype: Any):
-        """Fetches ``exp_ids`` in parallel into ``(K, 3, I, D)`` on ``self.device``."""
+        """Fetches ``exp_ids`` in parallel into ``(K, n_proj, I, D)`` on ``self.device``."""
         import torch
 
         k = len(exp_ids)
         I, D = self.inter_dim, self.hidden_dim
         tasks: list[tuple[str, int, int, int]] = []
         cursor = 0
+        mode = "std3"
         raw_dt = self.dtype
         for eid in exp_ids:
-            g_sp, u_sp, d_sp, raw_dt = self._spans[(layer_idx, eid)]
-            for path, off, nbytes in (g_sp, u_sp, d_sp):
+            mode, span_list, raw_dt = self._spans[(layer_idx, eid)]
+            for path, off, nbytes in span_list:
                 tasks.append((path, off, cursor, nbytes))
                 cursor += nbytes
         u8 = self._staging.fetch_to_device(tasks, cursor)
         vals = u8.view(raw_dt).to(dtype=dtype)
-        # Stored per expert as [gate (I, D), up (I, D), down (D, I)] — all three have I * D elements!
-        return vals.reshape(k, 3, I, D)
+        if mode in ("std3", "std2"):
+            return vals.reshape(k, self.n_proj, I, D)
+        # Transposed 3D per-expert blocks: each expert has [gu (D, 2*I), down (I, D)] -> 3 * I * D elements
+        per_exp = vals.reshape(k, 3 * I * D)
+        gu_t = per_exp[:, : 2 * I * D].reshape(k, D, 2 * I).transpose(1, 2).contiguous()
+        dn_t = per_exp[:, 2 * I * D :].reshape(k, I, D).transpose(1, 2).contiguous().reshape(k, 1, I, D)
+        if mode == "tr_inter":
+            gate = gu_t[:, 0::2, :].unsqueeze(1)
+            up = gu_t[:, 1::2, :].unsqueeze(1)
+        else:
+            gate = gu_t[:, :I, :].unsqueeze(1)
+            up = gu_t[:, I:, :].unsqueeze(1)
+        return torch.cat([gate, up, dn_t], dim=1)
+
+    def _unpack_batch(self, packed: Any, k: int):
+        I, D = self.inter_dim, self.hidden_dim
+        if self.n_proj == 2:
+            return None, packed[:, 0], packed[:, 1].reshape(k, D, I)
+        return packed[:, 0], packed[:, 1], packed[:, 2].reshape(k, D, I)
 
     def load_batch(self, layer_idx: int, batch_ids: list[int], dev: Any, comp_dtype: Any, allow_evict: bool):
         import torch
@@ -1269,7 +1689,7 @@ class _HFExpertCacheAndLoader:
         if self.arena is None or dev != self.device:
             self.misses += k
             packed = self._fetch_raw_experts(layer_idx, batch_ids, comp_dtype).to(device=dev)
-            return packed[:, 0], packed[:, 1], packed[:, 2].reshape(k, D, I)
+            return self._unpack_batch(packed, k)
 
         # Touch hits first so none of this batch's experts can be chosen as LRU victims.
         miss_ids: list[int] = []
@@ -1289,7 +1709,7 @@ class _HFExpertCacheAndLoader:
         if not miss_ids:
             slots = torch.tensor([self._lru[(layer_idx, eid)] for eid in batch_ids], dtype=torch.long, device=dev)
             packed = self.arena.index_select(0, slots).to(dtype=comp_dtype)
-            return packed[:, 0], packed[:, 1], packed[:, 2].reshape(k, D, I)
+            return self._unpack_batch(packed, k)
 
         can_admit = (allow_evict and self.num_slots >= len(batch_ids)) or (
             len(self._lru) + len(miss_ids) <= self.num_slots
@@ -1309,22 +1729,23 @@ class _HFExpertCacheAndLoader:
             self.arena.index_copy_(0, slot_t, miss_packed)
             all_slots = torch.tensor([self._lru[(layer_idx, eid)] for eid in batch_ids], dtype=torch.long, device=dev)
             packed = self.arena.index_select(0, all_slots).to(dtype=comp_dtype)
-            return packed[:, 0], packed[:, 1], packed[:, 2].reshape(k, D, I)
+            return self._unpack_batch(packed, k)
 
         # Prefill anti-thrashing path when arena is full: combine arena hits + transient misses.
         miss_pos = {eid: idx for idx, eid in enumerate(miss_ids)}
-        out = torch.empty((k, 3, I, D), dtype=comp_dtype, device=dev)
+        out = torch.empty((k, self.n_proj, I, D), dtype=comp_dtype, device=dev)
         for i, eid in enumerate(batch_ids):
             key = (layer_idx, eid)
             if key in self._lru:
                 out[i].copy_(self.arena[self._lru[key]])
             else:
                 out[i].copy_(miss_packed[miss_pos[eid]])
-        return out[:, 0], out[:, 1], out[:, 2].reshape(k, D, I)
+        return self._unpack_batch(out, k)
 
     def close(self) -> None:
         self._staging.close()
         self._lru.clear()
+        self._biases.clear()
         self.arena = None
 
 
@@ -1332,8 +1753,8 @@ class HFShardedSource:
     """Maps a standard Hugging Face checkpoint onto the engine's canonical tensor names.
 
     Canonical names: ``model.layers.{i}.<param>``, ``model.embed_tokens.weight``,
-    ``model.norm.weight``, ``lm_head.weight`` and ``mtp.*``. Per-expert MoE weights
-    (such as ``OLMoE`` / ``Qwen3Moe`` / ``Mixtral``) stay on disk and are fetched with
+    ``model.norm.weight``, ``lm_head.weight`` (+ optional biases/positional embeddings)
+    and ``mtp.*``. Per-expert and 3D-packed MoE weights stay on disk and are fetched with
     positioned reads (and cached in a budgeted VRAM slot arena) for only the routed experts.
     """
 
@@ -1343,12 +1764,18 @@ class HFShardedSource:
         self.model_dir = Path(model_dir).resolve()
         if detect_format(self.model_dir) != "hf":
             raise UnsupportedModelError(f"{self.model_dir}: not a Hugging Face safetensors checkpoint")
+        cfg = raw_text_config_dict(self.model_dir)
+        model_type = str(cfg.get("model_type") or "")
+
         index = self.model_dir / "model.safetensors.index.json"
         if index.is_file():
-            weight_map = _read_json(index)["weight_map"]
+            weight_map = dict(_read_json(index)["weight_map"])
         else:
-            header, _ = read_safetensors_header(self.model_dir / "model.safetensors")
-            weight_map = {k: "model.safetensors" for k in header if k != "__metadata__"}
+            single_st = _single_hf_safetensors(self.model_dir)
+            if single_st is None:
+                raise UnsupportedModelError(f"{self.model_dir}: no safetensors file found")
+            header, _ = read_safetensors_header(single_st)
+            weight_map = {k: single_st.name for k in header if k != "__metadata__"}
         # Separate MTP files shipped next to the shards (e.g. ``model-mtp.safetensors``).
         for extra in sorted(self.model_dir.glob("*mtp*.safetensors")):
             header, _ = read_safetensors_header(extra)
@@ -1359,14 +1786,34 @@ class HFShardedSource:
         self._stored: dict[str, tuple[str, str]] = {}
         self._layers: dict[int, dict[str, tuple[str, str]]] = {}
         self._routed_experts: dict[int, dict[int, dict[str, tuple[str, str]]]] = {}
+        self._packed_experts: dict[int, dict[str, tuple[str, str]]] = {}
         self._routed_expert_container: dict[int, str] = {}
         self._mtp: dict[str, tuple[str, str]] = {}
         for stored_key, filename in weight_map.items():
             entry = (str(self.model_dir / filename), stored_key)
-            m = _LAYER_RE.match(stored_key)
-            if m and not stored_key.startswith("mtp."):
+            if stored_key.startswith("mtp."):
+                self._mtp[stored_key] = entry
+                continue
+            if stored_key.startswith(_VISION_OR_AUDIO_PREFIXES) or stored_key.endswith(_IGNORED_BUFFER_SUFFIXES):
+                continue
+
+            norm_key = stored_key
+            if model_type == "nemotron_h" and norm_key.startswith("backbone."):
+                norm_key = "model." + norm_key[len("backbone.") :]
+
+            m = _LAYER_RE.match(norm_key)
+            if m:
                 idx = int(m.group(1))
                 leaf = m.group(2)
+                if leaf.startswith("block_sparse_moe.") and not model_type.startswith("granitemoe"):
+                    leaf = "mlp." + leaf[len("block_sparse_moe.") :]
+                    if model_type == "phimoe" and leaf == "mlp.gate.weight":
+                        leaf = "mlp.router.weight"
+                elif model_type == "ernie4_5_moe" and leaf == "mlp.moe_statics.e_score_correction_bias":
+                    leaf = "mlp.gate.moe_statics.e_score_correction_bias"
+                elif model_type in ("exaone_moe", "exaone4") and leaf == "mlp.e_score_correction_bias":
+                    leaf = "mlp.gate.e_score_correction_bias"
+
                 em = _HF_EXPERT_LEAF_RE.match(leaf)
                 if em:
                     exp_path, exp_id_s, proj_name = em.groups()
@@ -1375,30 +1822,59 @@ class HFShardedSource:
                         _HF_EXPERT_ROLE[proj_name]
                     ] = entry
                     continue
+                pm = _HF_PACKED_EXPERT_LEAF_RE.match(leaf)
+                if pm:
+                    exp_path, packed_name = pm.groups()
+                    self._routed_expert_container[idx] = exp_path
+                    self._packed_experts.setdefault(idx, {})[packed_name] = entry
+                    continue
                 self._layers.setdefault(idx, {})[f"model.layers.{idx}.{leaf}"] = entry
                 continue
-            if stored_key.startswith("mtp."):
-                self._mtp[stored_key] = entry
-                continue
-            self._stored[stored_key] = entry
+
+            self._stored[norm_key] = entry
 
         for idx, exp_by_id in self._routed_experts.items():
             for exp_id, parts in exp_by_id.items():
-                if set(parts) != {"gate", "up", "down"}:
+                if set(parts) not in ({"gate", "up", "down"}, {"up", "down"}):
                     raise UnsupportedModelError(
                         f"{self.model_dir}: layer {idx} expert {exp_id} misses projections ({sorted(parts)})"
                     )
+        for idx, pmap in self._packed_experts.items():
+            has_3 = {"gate_up_proj", "down_proj"}.issubset(pmap)
+            has_2 = {"up_proj", "down_proj"}.issubset(pmap)
+            if not (has_3 or has_2):
+                raise UnsupportedModelError(
+                    f"{self.model_dir}: layer {idx} packed experts miss projections ({sorted(pmap)})"
+                )
 
         self._globals: dict[str, tuple[str, str]] = {}
+        consumed_stored: set[str] = set()
         for canonical, aliases in _GLOBAL_ALIASES.items():
             for alias in aliases:
                 if alias in self._stored:
                     self._globals[canonical] = self._stored[alias]
+                    consumed_stored.add(alias)
                     break
-        cfg = raw_text_config_dict(self.model_dir)
+        for canonical, aliases in _OPTIONAL_GLOBAL_ALIASES.items():
+            for alias in aliases:
+                if alias in self._stored:
+                    self._globals[canonical] = self._stored[alias]
+                    consumed_stored.add(alias)
+                    break
         if "lm_head.weight" not in self._globals and "model.embed_tokens.weight" in self._globals:
-            if cfg.get("tie_word_embeddings", False):
+            if cfg.get("tie_word_embeddings", True):
                 self._globals["lm_head.weight"] = self._globals["model.embed_tokens.weight"]
+        for raw_k, entry in self._stored.items():
+            if raw_k in consumed_stored:
+                continue
+            target_k = _EXTRA_GLOBAL_RENAMES.get(raw_k, raw_k)
+            if target_k.startswith("model.language_model."):
+                target_k = "model." + target_k[len("model.language_model.") :]
+            elif target_k.startswith("language_model.model."):
+                target_k = "model." + target_k[len("language_model.model.") :]
+            if target_k not in self._globals:
+                self._globals[target_k] = entry
+
         missing = [k for k in _GLOBAL_ALIASES if k not in self._globals]
         if missing:
             raise UnsupportedModelError(f"{self.model_dir}: checkpoint misses global tensors {missing}")
@@ -1454,13 +1930,13 @@ class HFShardedSource:
     def prepare_model(self, model: Any, device: Any = None, dtype: Any = None, expert_cache_bytes: int = 0) -> None:
         """Strips meta routed-expert parameters on HF MoE models and binds positioned-read expert routing."""
         import torch
+        import torch.nn.functional as F
 
-        if not self._routed_experts:
+        if not self._routed_experts and not self._packed_experts:
             return
-        inner = getattr(model, "model", None)
-        layers = getattr(inner, "layers", None) if inner is not None else None
+        layers = resolve_decoder_layers(model)
         if layers is None:
-            raise UnsupportedModelError(f"{type(model).__name__} has no model.layers stack for HF MoE preparation")
+            raise UnsupportedModelError(f"{type(model).__name__} has no decoder layer stack for HF MoE preparation")
 
         if self._expert_loader is not None:
             self._expert_loader.close()
@@ -1468,22 +1944,28 @@ class HFShardedSource:
         loader = _HFExpertCacheAndLoader(
             self._pread_reader,
             self._routed_experts,
+            self._packed_experts,
             device=device,
             dtype=default_dtype,
             budget_bytes=int(expert_cache_bytes),
         )
         self._expert_loader = loader
 
-        for layer_idx, exp_by_id in sorted(self._routed_experts.items()):
+        moe_layers = sorted(set(self._routed_experts) | set(self._packed_experts))
+        for layer_idx in moe_layers:
             exp_path = self._routed_expert_container[layer_idx]
             experts_mod = layers[layer_idx].get_submodule(exp_path)
-            experts_mod._parameters.pop("gate_up_proj", None)
-            experts_mod._parameters.pop("down_proj", None)
+            for pname in ("gate_up_proj", "up_proj", "down_proj", "gate_up_proj_bias", "down_proj_bias"):
+                experts_mod._parameters.pop(pname, None)
             for child in experts_mod.modules():
                 if child is not experts_mod:
                     child._parameters.clear()
 
-            num_exp_layer = len(exp_by_id)
+            parent_path = exp_path.rsplit(".", 1)[0] if "." in exp_path else ""
+            moe_parent = layers[layer_idx].get_submodule(parent_path) if parent_path else layers[layer_idx]
+            is_llama4 = type(moe_parent).__name__ == "Llama4TextMoe"
+            has_bias = layer_idx in loader._biases
+            num_exp_layer = loader.num_experts_by_layer[layer_idx]
 
             def _hf_sliced_experts_forward(
                 self_exp,
@@ -1492,6 +1974,8 @@ class HFShardedSource:
                 top_k_weights: torch.Tensor,
                 _layer_idx=layer_idx,
                 _num_exp=num_exp_layer,
+                _is_llama4=is_llama4,
+                _has_bias=has_bias,
             ) -> torch.Tensor:
                 n_e = int(getattr(self_exp, "num_experts", _num_exp))
                 return _fast_moe_dispatch(
@@ -1501,9 +1985,26 @@ class HFShardedSource:
                     top_k_weights,
                     n_e,
                     lambda ids, dev, dt, evict: loader.load_batch(_layer_idx, ids, dev, dt, evict),
+                    bias_lookup_fn=(
+                        (lambda ids, dev, dt: loader.lookup_biases(_layer_idx, ids, dev, dt)) if _has_bias else None
+                    ),
+                    input_weighted=_is_llama4,
                 )
 
             experts_mod.forward = types.MethodType(_hf_sliced_experts_forward, experts_mod)
+
+            if is_llama4:
+                def _llama4_moe_forward(self_moe, hidden_states: torch.Tensor):
+                    orig_shape = hidden_states.shape
+                    flat = hidden_states.reshape(-1, self_moe.hidden_dim)
+                    router_logits = F.linear(flat, self_moe.router.weight, self_moe.router.bias)
+                    top_vals, top_idx = torch.topk(router_logits, self_moe.router.top_k, dim=-1)
+                    top_scores = torch.sigmoid(top_vals.float()).to(flat.dtype)
+                    routed_out = self_moe.experts(flat, top_idx, top_scores)
+                    out = self_moe.shared_expert(flat) + routed_out
+                    return out.reshape(orig_shape), router_logits
+
+                moe_parent.forward = types.MethodType(_llama4_moe_forward, moe_parent)
 
     def close(self) -> None:
         if self._expert_loader is not None:
@@ -1649,6 +2150,7 @@ class _GGUFGlobalsMap(collections.abc.MutableMapping):
 def _apply_shape_ops(torch_shape: tuple[int, ...], operations: Iterable[Any]) -> tuple[int, ...]:
     """Computes the target PyTorch shape after 1-to-1 GGUF ``ConversionOps`` (without reading bytes)."""
     from transformers.integrations.gguf.gguf_conversion_mapping import Unsqueeze
+    from aircolibri_cli.gguf_arch_registry import Transpose2D
 
     shape = tuple(torch_shape)
     for op in operations:
@@ -1657,7 +2159,16 @@ def _apply_shape_ops(torch_shape: tuple[int, ...], operations: Iterable[Any]) ->
                 continue
             pos = op.dim if op.dim >= 0 else len(shape) + 1 + op.dim
             shape = shape[:pos] + (1,) + shape[pos:]
+        elif isinstance(op, Transpose2D) and len(shape) == 2:
+            shape = (shape[1], shape[0])
     return shape
+
+
+_GGUF_PACKED_EXPERT_LEAF_RE = re.compile(
+    r"^(mlp\.experts|feed_forward\.experts|block_sparse_moe\.experts|mixer\.experts)"
+    r"\.(gate_up_proj|gate_proj|up_proj|down_proj)(?:\.(weight|bias))?$"
+)
+_GGUF_EXPS_BIAS_RE = re.compile(r"^blk\.(\d+)\.ffn_(gate|up|down)_exps\.bias$")
 
 
 class _GGUFExpertCacheAndLoader:
@@ -1667,17 +2178,22 @@ class _GGUFExpertCacheAndLoader:
         self,
         gguf_path: Path,
         routed_experts: dict[int, dict[str, dict[str, Any]]],
+        per_expert_gguf: dict[int, dict[int, dict[str, dict[str, Any]]]],
+        routed_biases: dict[int, dict[str, dict[str, Any]]],
         source: "GGUFModelSource",
         device: Any,
+        dtype: Any,
         budget_bytes: int,
     ):
         import torch
 
-        self.gguf_str = str(gguf_path)
+        self.default_gguf_str = str(gguf_path)
         self.source = source
         self.device = _canonical_device(device)
+        self.dtype = dtype or torch.bfloat16
         self.hits = 0
         self.misses = 0
+        self._biases: dict[int, tuple[Any, Any, Any]] = {}
 
         self._layer_meta: dict[int, dict[str, Any]] = {}
         max_expert_bytes = 0
@@ -1692,6 +2208,7 @@ class _GGUFExpertCacheAndLoader:
             max_expert_bytes = max(max_expert_bytes, tot)
             total_experts += n_exp
             self._layer_meta[l_idx] = {
+                "kind": "3d",
                 "num_experts": n_exp,
                 "bg": bg,
                 "bu": bu,
@@ -1701,6 +2218,45 @@ class _GGUFExpertCacheAndLoader:
                 "up": u_inf,
                 "down": d_inf,
             }
+
+        for l_idx, by_id in per_expert_gguf.items():
+            n_exp = len(by_id)
+            sample = by_id[0]
+            g0, u0, d0 = sample["gate"], sample["up"], sample["down"]
+            bg, bu, bd = int(g0["nbytes"]), int(u0["nbytes"]), int(d0["nbytes"])
+            tot = bg + bu + bd
+            max_expert_bytes = max(max_expert_bytes, tot)
+            total_experts += n_exp
+            self._layer_meta[l_idx] = {
+                "kind": "2d",
+                "num_experts": n_exp,
+                "bg": bg,
+                "bu": bu,
+                "bd": bd,
+                "tot": tot,
+                "by_id": by_id,
+                "gate": {"ggml_type": g0["ggml_type"], "torch_shape": (n_exp, *g0["torch_shape"])},
+                "up": {"ggml_type": u0["ggml_type"], "torch_shape": (n_exp, *u0["torch_shape"])},
+                "down": {"ggml_type": d0["ggml_type"], "torch_shape": (n_exp, *d0["torch_shape"])},
+            }
+
+        for l_idx, bmap in routed_biases.items():
+            gb = (
+                source.read_converted_tensor(bmap["gate"]["name"], dtype=self.dtype, device=self.device)
+                if "gate" in bmap
+                else None
+            )
+            ub = (
+                source.read_converted_tensor(bmap["up"]["name"], dtype=self.dtype, device=self.device)
+                if "up" in bmap
+                else None
+            )
+            db = (
+                source.read_converted_tensor(bmap["down"]["name"], dtype=self.dtype, device=self.device)
+                if "down" in bmap
+                else None
+            )
+            self._biases[l_idx] = (gb, ub, db)
 
         self.max_expert_bytes = max_expert_bytes
         self._staging = _ParallelSliceStagingPool(
@@ -1733,18 +2289,49 @@ class _GGUFExpertCacheAndLoader:
             "hit_rate_pct": round(100.0 * self.hits / max(1, total), 1) if total > 0 else 0.0,
         }
 
+    def lookup_biases(self, layer_idx: int, exp_ids: list[int], dev: Any, comp_dtype: Any):
+        import torch
+
+        entry = self._biases.get(layer_idx)
+        if entry is None:
+            return None
+        gb, ub, db = entry
+        idx_t = torch.tensor(exp_ids, dtype=torch.long, device=self.device)
+        g_sel = gb.index_select(0, idx_t).to(device=dev, dtype=comp_dtype) if gb is not None else None
+        u_sel = ub.index_select(0, idx_t).to(device=dev, dtype=comp_dtype) if ub is not None else None
+        d_sel = db.index_select(0, idx_t).to(device=dev, dtype=comp_dtype) if db is not None else None
+        return g_sel, u_sel, d_sel
+
     def _fetch_grouped_u8(self, meta: dict[str, Any], exp_ids: list[int]):
         """Reads ``[all_gates | all_ups | all_downs]`` so consecutive experts coalesce into sequential NVMe reads."""
         k = len(exp_ids)
         bg, bu, bd, tot = meta["bg"], meta["bu"], meta["bd"], meta["tot"]
-        g_base = int(meta["gate"]["abs_offset"])
-        u_base = int(meta["up"]["abs_offset"])
-        d_base = int(meta["down"]["abs_offset"])
         u_dst0 = k * bg
         d_dst0 = k * (bg + bu)
-        g_tasks = [(self.gguf_str, g_base + eid * bg, idx * bg, bg) for idx, eid in enumerate(exp_ids)]
-        u_tasks = [(self.gguf_str, u_base + eid * bu, u_dst0 + idx * bu, bu) for idx, eid in enumerate(exp_ids)]
-        d_tasks = [(self.gguf_str, d_base + eid * bd, d_dst0 + idx * bd, bd) for idx, eid in enumerate(exp_ids)]
+        if meta["kind"] == "3d":
+            g_path = str(meta["gate"].get("shard_path") or self.default_gguf_str)
+            u_path = str(meta["up"].get("shard_path") or self.default_gguf_str)
+            d_path = str(meta["down"].get("shard_path") or self.default_gguf_str)
+            g_base = int(meta["gate"]["abs_offset"])
+            u_base = int(meta["up"]["abs_offset"])
+            d_base = int(meta["down"]["abs_offset"])
+            g_tasks = [(g_path, g_base + eid * bg, idx * bg, bg) for idx, eid in enumerate(exp_ids)]
+            u_tasks = [(u_path, u_base + eid * bu, u_dst0 + idx * bu, bu) for idx, eid in enumerate(exp_ids)]
+            d_tasks = [(d_path, d_base + eid * bd, d_dst0 + idx * bd, bd) for idx, eid in enumerate(exp_ids)]
+        else:
+            by_id = meta["by_id"]
+            g_tasks = [
+                (str(by_id[eid]["gate"].get("shard_path") or self.default_gguf_str), int(by_id[eid]["gate"]["abs_offset"]), idx * bg, bg)
+                for idx, eid in enumerate(exp_ids)
+            ]
+            u_tasks = [
+                (str(by_id[eid]["up"].get("shard_path") or self.default_gguf_str), int(by_id[eid]["up"]["abs_offset"]), u_dst0 + idx * bu, bu)
+                for idx, eid in enumerate(exp_ids)
+            ]
+            d_tasks = [
+                (str(by_id[eid]["down"].get("shard_path") or self.default_gguf_str), int(by_id[eid]["down"]["abs_offset"]), d_dst0 + idx * bd, bd)
+                for idx, eid in enumerate(exp_ids)
+            ]
         u8 = self._staging.fetch_to_device(g_tasks + u_tasks + d_tasks, k * tot)
         return (
             u8[:u_dst0].reshape(k, bg),
@@ -1846,19 +2433,21 @@ class _GGUFExpertCacheAndLoader:
     def close(self) -> None:
         self._staging.close()
         self._lru.clear()
+        self._biases.clear()
         self.arena = None
 
 
 class GGUFModelSource:
     """Positioned-read GGUF weight source for the unified BF16 ring engine.
 
-    * Dense layer trunk tensors are mapped through ``transformers`` GGUF conversion ops into
+    * Dense layer trunk tensors are mapped through extended zero-gguf conversion ops into
       canonical parameter names and shapes for ``StableWeightManager`` / ``GPURingPipeline``.
-    * Routed MoE expert tensors (``blk.{i}.ffn_{gate,up,down}_exps.weight``) stay excluded from
-      ring slots; ``prepare_model`` strips the meta expert parameters and binds an on-demand
-      forward pass that reads and NVRTC-dequantizes only the routed experts' byte slices (backed
-      by a single-allocation VRAM hot-expert slot cache within the spare VRAM budget).
-    * Never calls ``mmap`` and never writes files into ``model_dir``.
+    * Routed MoE expert tensors (``blk.{i}.ffn_{gate,up,down}_exps.weight`` or per-expert 2D)
+      stay excluded from ring slots; ``prepare_model`` strips the meta expert parameters and
+      binds an on-demand forward pass that reads and NVRTC-dequantizes only the routed experts'
+      byte slices (backed by a single-allocation VRAM hot-expert slot cache).
+    * Supports single GGUF files and split ``-00001-of-0000N.gguf`` shards while ignoring
+      ``mmproj`` vision projectors. Never calls ``mmap`` and never writes files into ``model_dir``.
     """
 
     kind = "gguf"
@@ -1866,29 +2455,26 @@ class GGUFModelSource:
     def __init__(self, model_dir: str | Path):
         from transformers.core_model_loading import WeightConverter, WeightRenaming, rename_source_key
         from transformers.integrations.gguf.dequant import GGML_BLOCK
-        from transformers.integrations.gguf.utils import get_gguf_conversion_mapping
+        from aircolibri_cli.gguf_arch_registry import get_extended_gguf_mapping
 
         self.model_dir = Path(model_dir).resolve()
         if detect_format(self.model_dir) != "gguf":
             raise UnsupportedModelError(f"{self.model_dir}: not a GGUF model folder")
-        self.gguf_path = find_gguf_file(self.model_dir)
+        self.gguf_paths = find_gguf_files(self.model_dir)
+        self.gguf_path = self.gguf_paths[0]
         self.gguf_file = self.gguf_path.name
         self.arch = _validate_gguf_header(self.gguf_path)
-        meta, raw_tensors = _read_gguf_header_cached(self.gguf_path)
+        meta, raw_tensors = _read_gguf_shards_cached(self.gguf_paths)
         self.metadata = meta
-
-        for t in raw_tensors:
-            gt = int(t["ggml_type"])
-            if self._raw_torch_dtype(gt) is None and gt not in GGML_BLOCK and gt not in _EXTRA_GGML_BLOCKS:
-                raise UnsupportedModelError(
-                    f"{self.gguf_path}: tensor {t['name']!r} uses unsupported ggml quantization {t['type_name']} ({gt})"
-                )
 
         cfg_obj = load_runtime_config(self.model_dir)
         text_cfg = cfg_obj.get_text_config() if hasattr(cfg_obj, "get_text_config") else cfg_obj
-        cfg_dict = text_cfg.to_dict()
+        cfg_dict = _normalize_decoder_shape_keys(text_cfg.to_dict())
+        hf_type = str(cfg_dict.get("model_type") or "")
+        expected_layers = int(cfg_dict.get("num_hidden_layers") or 0)
 
-        mapping = deepcopy(get_gguf_conversion_mapping(self.arch, text_cfg))
+        all_names = tuple(t["name"] for t in raw_tensors)
+        mapping = deepcopy(get_extended_gguf_mapping(self.arch, text_cfg, tensor_names=all_names))
         renamings = [e for e in mapping if isinstance(e, WeightRenaming)]
         converters = [e for e in mapping if isinstance(e, WeightConverter)]
         pattern_to_converter = {pat: conv for conv in converters for pat in conv.source_patterns}
@@ -1899,16 +2485,41 @@ class GGUFModelSource:
         self._post_shapes: dict[str, tuple[int, ...]] = {}
         self._layers: dict[int, dict[str, tuple[str, str]]] = {}
         self._routed_experts: dict[int, dict[str, dict[str, Any]]] = {}
+        self._per_expert_gguf: dict[int, dict[int, dict[str, dict[str, Any]]]] = {}
+        self._routed_expert_biases: dict[int, dict[str, dict[str, Any]]] = {}
+        self._routed_expert_container: dict[int, str] = {}
         self._stored: dict[str, tuple[str, str]] = {}
         self._mtp: dict[str, tuple[str, str]] = {}
 
-        gguf_str = str(self.gguf_path)
+        default_shard_str = str(self.gguf_path)
         for t in raw_tensors:
             gguf_name = t["name"]
+            if gguf_name.startswith(("v.", "mm.", "audio.", "mtp.")):
+                continue
+            blk_m = re.match(r"^blk\.(\d+)\.", gguf_name)
+            if blk_m and expected_layers > 0 and int(blk_m.group(1)) >= expected_layers:
+                # Skip extra MTP/NextN block stored past block_count - nextn_predict_layers.
+                continue
+
+            gt = int(t["ggml_type"])
+            if self._raw_torch_dtype(gt) is None and gt not in GGML_BLOCK and gt not in _EXTRA_GGML_BLOCKS:
+                raise UnsupportedModelError(
+                    f"{self.gguf_path}: tensor {gguf_name!r} uses unsupported ggml quantization {t['type_name']} ({gt})"
+                )
+
+            shard_str = str(t.get("shard_path") or default_shard_str)
             torch_shape = tuple(int(d) for d in reversed(t["dims"]))
             info = dict(t)
+            info["shard_path"] = shard_str
             info["torch_shape"] = torch_shape
             self._tensor_info[gguf_name] = info
+
+            eb_m = _GGUF_EXPS_BIAS_RE.match(gguf_name)
+            if eb_m:
+                b_idx, b_slot = int(eb_m.group(1)), eb_m.group(2)
+                self._post_shapes[gguf_name] = torch_shape
+                self._routed_expert_biases.setdefault(b_idx, {})[b_slot] = info
+                continue
 
             canonical, src_pat = rename_source_key(gguf_name, renamings, converters)
             conv = pattern_to_converter.get(src_pat) if src_pat is not None else None
@@ -1919,37 +2530,98 @@ class GGUFModelSource:
             if m and not canonical.startswith("mtp."):
                 idx = int(m.group(1))
                 leaf = m.group(2)
-                if leaf == "mlp.experts.gate_up_proj":
-                    slot = "gate" if "gate_exps" in gguf_name else "up"
-                    self._routed_experts.setdefault(idx, {})[slot] = info
+                pm = _GGUF_PACKED_EXPERT_LEAF_RE.match(leaf)
+                if pm:
+                    exp_path, proj_kind, suffix = pm.groups()
+                    self._routed_expert_container[idx] = exp_path
+                    if proj_kind == "gate_up_proj":
+                        slot = "gate" if "gate_exps" in gguf_name or "gate_projs" in gguf_name else "up"
+                    else:
+                        slot = _HF_EXPERT_ROLE[proj_kind]
+                    if suffix == "bias":
+                        self._post_shapes[gguf_name] = torch_shape
+                        self._routed_expert_biases.setdefault(idx, {})[slot] = info
+                    else:
+                        self._routed_experts.setdefault(idx, {})[slot] = info
                     continue
-                if leaf == "mlp.experts.down_proj":
-                    self._routed_experts.setdefault(idx, {})["down"] = info
+                em2 = _HF_EXPERT_LEAF_RE.match(leaf)
+                if em2:
+                    exp_path, exp_id_s, proj_name = em2.groups()
+                    self._routed_expert_container[idx] = exp_path
+                    self._per_expert_gguf.setdefault(idx, {}).setdefault(int(exp_id_s), {})[
+                        _HF_EXPERT_ROLE[proj_name]
+                    ] = info
                     continue
+
                 ops = getattr(conv, "operations", ()) if conv is not None else ()
-                self._post_shapes[gguf_name] = _apply_shape_ops(torch_shape, ops)
-                self._layers.setdefault(idx, {})[f"model.layers.{idx}.{leaf}"] = (gguf_str, gguf_name)
+                post_sh = _apply_shape_ops(torch_shape, ops)
+                self._post_shapes[gguf_name] = post_sh
+
+                # Phi-2 GGUFs store fused attn_qkv.{weight,bias} while HF PhiForCausalLM uses separate q/k/v_proj
+                if hf_type == "phi" and leaf in ("self_attn.qkv_proj.weight", "self_attn.qkv_proj.bias"):
+                    sfx = "weight" if leaf.endswith(".weight") else "bias"
+                    n_h = int(cfg_dict.get("num_attention_heads") or 1)
+                    n_kv = int(cfg_dict.get("num_key_value_heads") or n_h)
+                    hd = int(cfg_dict.get("hidden_size") or 0) // max(1, n_h)
+                    q_rows = n_h * hd
+                    kv_rows = n_kv * hd
+                    tail = post_sh[1:]
+                    for sub_proj, r0, r1 in (
+                        ("q_proj", 0, q_rows),
+                        ("k_proj", q_rows, q_rows + kv_rows),
+                        ("v_proj", q_rows + kv_rows, q_rows + 2 * kv_rows),
+                    ):
+                        virt = f"{gguf_name}#row_slice:{r0}:{r1}"
+                        self._post_shapes[virt] = (r1 - r0, *tail)
+                        self._layers.setdefault(idx, {})[f"model.layers.{idx}.self_attn.{sub_proj}.{sfx}"] = (
+                            shard_str,
+                            virt,
+                        )
+                    continue
+
+                self._layers.setdefault(idx, {})[f"model.layers.{idx}.{leaf}"] = (shard_str, gguf_name)
                 continue
 
             ops = getattr(conv, "operations", ()) if conv is not None else ()
             self._post_shapes[gguf_name] = _apply_shape_ops(torch_shape, ops)
-            self._stored[canonical] = (gguf_str, gguf_name)
+            self._stored[canonical] = (shard_str, gguf_name)
 
         for idx, exp_parts in self._routed_experts.items():
             if set(exp_parts) != {"gate", "up", "down"}:
                 raise UnsupportedModelError(
                     f"{self.gguf_path}: layer {idx} has incomplete routed expert tensors {sorted(exp_parts)}"
                 )
+        for idx, by_id in self._per_expert_gguf.items():
+            for eid, exp_parts in by_id.items():
+                if set(exp_parts) != {"gate", "up", "down"}:
+                    raise UnsupportedModelError(
+                        f"{self.gguf_path}: layer {idx} expert {eid} has incomplete 2D tensors {sorted(exp_parts)}"
+                    )
 
         self._globals: dict[str, tuple[str, str]] = {}
+        consumed_stored: set[str] = set()
         for canonical, aliases in _GLOBAL_ALIASES.items():
             for alias in aliases:
                 if alias in self._stored:
                     self._globals[canonical] = self._stored[alias]
+                    consumed_stored.add(alias)
+                    break
+        for canonical, aliases in _OPTIONAL_GLOBAL_ALIASES.items():
+            for alias in aliases:
+                if alias in self._stored:
+                    self._globals[canonical] = self._stored[alias]
+                    consumed_stored.add(alias)
                     break
         if "lm_head.weight" not in self._globals and "model.embed_tokens.weight" in self._globals:
             if cfg_dict.get("tie_word_embeddings", True):
                 self._globals["lm_head.weight"] = self._globals["model.embed_tokens.weight"]
+        for raw_k, entry in self._stored.items():
+            if raw_k in consumed_stored or raw_k.startswith(("mtp.", "v.", "mm.", "audio.")):
+                continue
+            target_k = _EXTRA_GLOBAL_RENAMES.get(raw_k, raw_k)
+            if target_k not in self._globals:
+                self._globals[target_k] = entry
+
         missing = [k for k in _GLOBAL_ALIASES if k not in self._globals]
         if missing:
             raise UnsupportedModelError(f"{self.gguf_path}: GGUF misses global tensors {missing}")
@@ -1960,33 +2632,37 @@ class GGUFModelSource:
             raise UnsupportedModelError(f"{self.gguf_path}: GGUF misses decoder layers {absent[:8]}")
 
         self._io_lock = threading.Lock()
-        self._file_handle: Any = None
+        self._file_handles: dict[str, Any] = {}
         self._preferred_device: Any = None
         self._expert_loader: _GGUFExpertCacheAndLoader | None = None
 
     # -- file I/O (positioned reads, zero mmap) ----------------------------------------
 
-    def _ensure_file(self):
-        if self._file_handle is None or self._file_handle.closed:
-            self._file_handle = open(self.gguf_path, "rb", buffering=0)
-        return self._file_handle
+    def _ensure_file(self, shard_path: str | Path | None = None):
+        key = str(shard_path or self.gguf_path)
+        f = self._file_handles.get(key)
+        if f is None or f.closed:
+            f = open(key, "rb", buffering=0)
+            self._file_handles[key] = f
+        return f
 
-    def _read_into(self, abs_offset: int, buf: bytearray | memoryview) -> None:
+    def _read_into(self, abs_offset: int, buf: bytearray | memoryview, shard_path: str | None = None) -> None:
         view = buf if isinstance(buf, memoryview) else memoryview(buf)
         if len(view) == 0:
             return
+        target = str(shard_path or self.gguf_path)
         with self._io_lock:
-            f = self._ensure_file()
-            _pread_or_seek_into(f, abs_offset, view, str(self.gguf_path))
+            f = self._ensure_file(target)
+            _pread_or_seek_into(f, abs_offset, view, target)
 
     def release_handle(self) -> None:
         with self._io_lock:
-            if self._file_handle is not None:
+            for f in self._file_handles.values():
                 try:
-                    self._file_handle.close()
+                    f.close()
                 except OSError:
                     pass
-                self._file_handle = None
+            self._file_handles.clear()
 
     def close(self) -> None:
         if self._expert_loader is not None:
@@ -2020,16 +2696,24 @@ class GGUFModelSource:
 
     def layer_identity(self, layer_idx: int) -> dict[str, Any]:
         tensors: dict[str, Any] = {}
-        for name, (_, gguf_name) in sorted(self.layer_entries(layer_idx).items()):
-            info = self._tensor_info[gguf_name]
+        files: dict[str, Any] = {}
+        for name, (shard_path, gguf_name) in sorted(self.layer_entries(layer_idx).items()):
+            base_name = gguf_name.split("#row_slice:", 1)[0]
+            info = self._tensor_info[base_name]
             tensors[name] = {
                 "shape": list(self._post_shapes[gguf_name]),
                 "ggml_type": int(info["ggml_type"]),
+                "file": os.path.basename(shard_path),
                 "offset": int(info["abs_offset"]),
                 "nbytes": int(info["nbytes"]),
             }
-        st = os.stat(self.gguf_path)
-        payload = {"file": self.gguf_file, "size": st.st_size, "mtime_ns": st.st_mtime_ns, "tensors": tensors}
+            if shard_path not in files:
+                st = os.stat(shard_path)
+                files[shard_path] = {"size": st.st_size, "mtime_ns": st.st_mtime_ns}
+        payload = {
+            "files": {os.path.basename(k): v for k, v in sorted(files.items())},
+            "tensors": tensors,
+        }
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         return {"sha256": digest, "tensors": {k: {"shape": v["shape"]} for k, v in tensors.items()}}
 
@@ -2090,6 +2774,12 @@ class GGUFModelSource:
         import torch
         from transformers.integrations.gguf.gguf_conversion_mapping import LogNegate, SubtractOne
 
+        row_slice: tuple[int, int] | None = None
+        if "#row_slice:" in gguf_name:
+            gguf_name, bounds = gguf_name.split("#row_slice:", 1)
+            r0_s, r1_s = bounds.split(":", 1)
+            row_slice = (int(r0_s), int(r1_s))
+
         target_dtype = dtype or torch.bfloat16
         info = self._tensor_info[gguf_name]
         conv_entry = self._converter_by_gguf.get(gguf_name)
@@ -2098,7 +2788,7 @@ class GGUFModelSource:
         work_dtype = torch.float32 if needs_fp32 else target_dtype
 
         buf = bytearray(int(info["nbytes"]))
-        self._read_into(int(info["abs_offset"]), buf)
+        self._read_into(int(info["abs_offset"]), buf, shard_path=info.get("shard_path"))
         tensor = self._decode_bytes(buf, int(info["ggml_type"]), info["torch_shape"], dtype=work_dtype, device=device)
 
         if conv_entry is not None:
@@ -2113,6 +2803,9 @@ class GGUFModelSource:
                     full_layer_name=canonical,
                 )
             tensor = next(iter(cur.values()))
+
+        if row_slice is not None:
+            tensor = tensor[row_slice[0] : row_slice[1]]
 
         if tensor.dtype != target_dtype:
             tensor = tensor.to(dtype=target_dtype)
@@ -2151,7 +2844,7 @@ class GGUFModelSource:
             return torch.empty((0, cols), dtype=target_dtype, device=dev)
         stride = self._row_byte_stride(info)
         buf = bytearray(count * stride)
-        self._read_into(int(info["abs_offset"]) + r0 * stride, buf)
+        self._read_into(int(info["abs_offset"]) + r0 * stride, buf, shard_path=info.get("shard_path"))
         return self._decode_bytes(buf, int(info["ggml_type"]), (count, cols), dtype=target_dtype, device=dev)
 
     def lookup_matrix_rows(self, gguf_name: str, indices: Any, dtype: Any = None):
@@ -2168,6 +2861,7 @@ class GGUFModelSource:
         uniq_list = uniq_ids.tolist()
         stride = self._row_byte_stride(info)
         base = int(info["abs_offset"])
+        shard = info.get("shard_path")
         buf = bytearray(len(uniq_list) * stride)
         view = memoryview(buf)
 
@@ -2179,7 +2873,11 @@ class GGUFModelSource:
             while end < n and uniq_list[end] == uniq_list[end - 1] + 1:
                 end += 1
             run_len = end - pos
-            self._read_into(base + int(uniq_list[pos]) * stride, view[pos * stride : (pos + run_len) * stride])
+            self._read_into(
+                base + int(uniq_list[pos]) * stride,
+                view[pos * stride : (pos + run_len) * stride],
+                shard_path=shard,
+            )
             pos = end
 
         dev = self._preferred_device or torch.device("cpu")
@@ -2193,6 +2891,7 @@ class GGUFModelSource:
         num_experts, d1, d2 = info["torch_shape"]
         exp_bytes = int(info["nbytes"]) // int(num_experts)
         base = int(info["abs_offset"])
+        shard = info.get("shard_path")
         k = len(expert_ids)
         buf = bytearray(k * exp_bytes)
         view = memoryview(buf)
@@ -2206,6 +2905,7 @@ class GGUFModelSource:
             self._read_into(
                 base + int(expert_ids[pos]) * exp_bytes,
                 view[pos * exp_bytes : (pos + run_len) * exp_bytes],
+                shard_path=shard,
             )
             pos = end
 
@@ -2217,37 +2917,46 @@ class GGUFModelSource:
 
         if device is not None:
             self._preferred_device = torch.device(device)
-        if not self._routed_experts:
+        if not self._routed_experts and not self._per_expert_gguf:
             return
 
-        inner = getattr(model, "model", None)
-        layers = getattr(inner, "layers", None) if inner is not None else None
+        layers = resolve_decoder_layers(model)
         if layers is None:
-            raise UnsupportedModelError(f"{type(model).__name__} has no model.layers stack for GGUF MoE preparation")
+            raise UnsupportedModelError(f"{type(model).__name__} has no decoder layer stack for GGUF MoE preparation")
 
         if self._expert_loader is not None:
             self._expert_loader.close()
         loader = _GGUFExpertCacheAndLoader(
             self.gguf_path,
             self._routed_experts,
+            self._per_expert_gguf,
+            self._routed_expert_biases,
             source=self,
             device=device,
+            dtype=dtype,
             budget_bytes=int(expert_cache_bytes),
         )
         self._expert_loader = loader
 
-        for layer_idx, exp_spec in sorted(self._routed_experts.items()):
-            layer_mod = layers[layer_idx]
-            mlp_mod = getattr(layer_mod, "mlp", None)
-            experts_mod = getattr(mlp_mod, "experts", None) if mlp_mod is not None else None
-            if experts_mod is None:
-                raise UnsupportedModelError(f"Layer {layer_idx} has no mlp.experts module for GGUF routed experts")
+        moe_layers = sorted(set(self._routed_experts) | set(self._per_expert_gguf))
+        for layer_idx in moe_layers:
+            exp_path = self._routed_expert_container.get(layer_idx, "mlp.experts")
+            try:
+                experts_mod = layers[layer_idx].get_submodule(exp_path)
+            except AttributeError as exc:
+                raise UnsupportedModelError(
+                    f"Layer {layer_idx} has no {exp_path} module for GGUF routed experts"
+                ) from exc
 
             # Remove meta parameters so neither _load_resident_layer nor ring hooks expect them in slots.
-            experts_mod._parameters.pop("gate_up_proj", None)
-            experts_mod._parameters.pop("down_proj", None)
+            for pname in ("gate_up_proj", "up_proj", "down_proj", "gate_up_proj_bias", "down_proj_bias"):
+                experts_mod._parameters.pop(pname, None)
+            for child in experts_mod.modules():
+                if child is not experts_mod:
+                    child._parameters.clear()
 
-            num_exp_layer = int(exp_spec["gate"]["torch_shape"][0])
+            num_exp_layer = int(loader._layer_meta[layer_idx]["num_experts"])
+            has_bias = layer_idx in loader._biases
 
             def _sliced_experts_forward(
                 self_exp,
@@ -2256,6 +2965,7 @@ class GGUFModelSource:
                 top_k_weights: torch.Tensor,
                 _layer_idx=layer_idx,
                 _num_exp=num_exp_layer,
+                _has_bias=has_bias,
             ) -> torch.Tensor:
                 n_e = int(getattr(self_exp, "num_experts", _num_exp))
                 return _fast_moe_dispatch(
@@ -2265,6 +2975,9 @@ class GGUFModelSource:
                     top_k_weights,
                     n_e,
                     lambda ids, dev, dt, evict: loader.load_batch(_layer_idx, ids, dev, dt, evict),
+                    bias_lookup_fn=(
+                        (lambda ids, dev, dt: loader.lookup_biases(_layer_idx, ids, dev, dt)) if _has_bias else None
+                    ),
                 )
 
             experts_mod.forward = types.MethodType(_sliced_experts_forward, experts_mod)

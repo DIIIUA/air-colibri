@@ -39,21 +39,31 @@ aircolibri doctor --model Qwen/Qwen3.5-9B      # downloads once (~19 GB) and che
 ```
 
 You can also point `--model` at a local folder, or place the folder in `models/`. A Qwen3.5
-hybrid whose geometry matches the fused kernels stays on the fast Q4/MTP engine. Any other
-complete decoder checkpoint (OLMoE, Llama, Mistral, Gemma, Phi, …) runs in BF16 on the same
-ring and is streamed layer by layer when it does not fit. When both are present, Qwen stays
-the default. A broken folder is skipped. Colibrì per-layer containers
-(`config.hf.json` + `model-00000.safetensors` …) keep working.
+hybrid whose geometry matches the fused kernels stays on the fast Q4/MTP engine. Other supported
+Hugging Face checkpoints — dense, MoE (2D per-expert or 3D packed `Mixtral`, `Qwen3/3.5-MoE`,
+`DeepSeek-V2/V3`, `Llama-4`, `GPT-OSS`, `OLMoE`, `GLM-4-MoE`, `Phi-MoE`, `MiniMax-M2`,
+`Nemotron-H`, `GraniteMoE`), SSM/hybrid (`Mamba`, `Mamba2`, `Falcon-H1`, `Jamba`, `Bamba`,
+`LFM2`, `RWKV`), multimodal VLM checkpoints (unwrapping `text_config` and skipping vision/audio
+towers for `Qwen-VL`, `Gemma 3/4`, `Llama-4`, `Mistral-3`, `GLM-4V`, `LLaVA`), and classic
+decoders (`Llama`, `Mistral`, `Gemma 1/2/3/4`, `Phi`, `Command-R`, `GPT-2`, `GPT-NeoX`, `OPT`,
+`BLOOM`, `MPT`) — run in BF16 on the same ring and stream layer by layer when they do not fit.
+Single custom-named `.safetensors` files, sharded `model.safetensors.index.json` folders, and
+Colibrì per-layer containers (`config.hf.json` + `model-00000.safetensors` …) all work directly.
 
-A folder that contains a supported GGUF checkpoint (`qwen35moe` / `qwen35`, one `.gguf`) runs on
-the same BF16 ring directly from the `.gguf` file — without `mmap`, without unpacking onto disk,
-and without writing extra files next to it. Dense layer trunks live in VRAM or stream through the
-ring, while routed MoE experts stay in the `.gguf`: only the selected experts' byte slices are read
-and NVRTC-dequantized per step, with hot experts cached in spare VRAM within the mode budget.
-Self-contained NVRTC CUDA kernels (`data/native/ptx-cache/`) accelerate `GatedDeltaNet`,
-`CausalConv1d`, and gated/zero-centered `RMSNorm` across all hybrid models without requiring
-`causal-conv1d`, `flash-linear-attention`, or Triton. The 9B Q4 fused kernels and MTP stay off on
-non-9B checkpoints, and `Qwen3.5-9B` remains the default when both are present.
+A folder containing a supported GGUF checkpoint (35+ families including `qwen2`/`qwen3`/`qwen3moe`/
+`qwen35`/`qwen35moe`, `llama`/`llama4`, `mistral`/`mixtral`, `gemma`–`gemma4`, `deepseek2`,
+`phi2`/`phi3`/`phimoe`, `olmo`/`olmo2`/`olmoe`, `glm4`/`glm4moe`, `gpt-oss`, `command-r`, `internlm2`,
+`granite`/`granitemoe`/`granitehybrid`, `falcon`/`falcon-h1`/`jamba`/`bamba`/`mamba`/`mamba2`/`rwkv6`,
+`lfm2`, `gpt2`, `gptneox`, `opt`, `bloom`, `starcoder2`, `nemotron`, `exaone`, `minimax-m2` — single
+`.gguf` or split `*-00001-of-0000N.gguf`, automatically ignoring `mmproj*.gguf`) runs on the BF16
+ring directly from the `.gguf` file(s) with zero `mmap`, zero external `gguf` package, and zero
+sidecar files written to disk. Dense layer trunks live in VRAM or stream through the ring, while
+routed MoE experts stay on disk: only the selected experts' byte slices are read and dequantized per
+step (`F32`/`F16`/`BF16`, `Q4_0`–`Q8_1`, `Q2_K`–`Q8_K`, `IQ1`–`IQ4`, `MXFP4`, ternary `TQ1_0`/`TQ2_0`),
+with hot experts cached in spare VRAM within the mode budget. Self-contained NVRTC CUDA kernels
+(`data/native/ptx-cache/`) accelerate `GatedDeltaNet`, `CausalConv1d`, and gated/zero-centered
+`RMSNorm` without requiring `causal-conv1d`, `flash-linear-attention`, or Triton. The 9B Q4 fused
+kernels and MTP stay off on non-9B checkpoints, and `Qwen3.5-9B` remains the default when present.
 
 ## Usage
 

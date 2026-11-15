@@ -900,3 +900,877 @@ def test_nvrtc_deltanet_kernels_and_zero_fallback_warnings(tmp_path):
     ):
         assert KERNEL_CALL_STATS[key] > before[key], f"Kernel {key} was not invoked during model forward"
 
+
+def _write_tiny_hf_tokenizer(folder, vocab_size: int = 64, *, with_chat_template: bool = True):
+    tok_json = {
+        "version": "1.0",
+        "truncation": None,
+        "padding": None,
+        "added_tokens": [
+            {
+                "id": 0,
+                "content": "<eos>",
+                "single_word": False,
+                "lstrip": False,
+                "rstrip": False,
+                "normalized": False,
+                "special": True,
+            }
+        ],
+        "normalizer": None,
+        "pre_tokenizer": {"type": "ByteLevel", "add_prefix_space": False, "trim_offsets": True, "use_regex": True},
+        "post_processor": None,
+        "decoder": {"type": "ByteLevel", "add_prefix_space": True, "trim_offsets": True, "use_regex": True},
+        "model": {
+            "type": "BPE",
+            "dropout": None,
+            "unk_token": None,
+            "continuing_subword_prefix": None,
+            "end_of_word_suffix": None,
+            "fuse_unk": False,
+            "byte_fallback": False,
+            "vocab": {f"t{i}": i for i in range(vocab_size)},
+            "merges": [],
+        },
+    }
+    (folder / "tokenizer.json").write_text(json.dumps(tok_json), encoding="utf-8")
+    tcfg = {"eos_token": "<eos>"}
+    if with_chat_template:
+        tcfg["chat_template"] = "{% for m in messages %}{{ m['role'] }}:{{ m['content'] }}<eos>{% endfor %}assistant:"
+    (folder / "tokenizer_config.json").write_text(json.dumps(tcfg), encoding="utf-8")
+
+
+def _serialize_gguf_v3(gguf_path, meta_items, tensor_items):
+    """Writes a valid GGUF v3 file from ``meta_items=[(key, vtype, val)]`` and ``tensor_items=[(name, torch_t)]``."""
+
+    def _s(text: str) -> bytes:
+        b = text.encode("utf-8")
+        return struct.pack("<Q", len(b)) + b
+
+    def _val(vtype: int, v) -> bytes:
+        if vtype == 4:
+            return struct.pack("<I", int(v))
+        if vtype == 5:
+            return struct.pack("<i", int(v))
+        if vtype == 6:
+            return struct.pack("<f", float(v))
+        if vtype == 8:
+            return _s(str(v))
+        if vtype == 9:
+            elem_t, items = v
+            return struct.pack("<IQ", elem_t, len(items)) + b"".join(_val(elem_t, it) for it in items)
+        raise AssertionError(vtype)
+
+    encoded = []
+    for name, t in tensor_items:
+        arr = t.detach().to(torch.float32).contiguous()
+        gguf_dims = tuple(reversed(arr.shape)) if arr.ndim > 0 else (1,)
+        encoded.append((name, gguf_dims, 0, arr.numpy().tobytes()))
+
+    buf = bytearray()
+    buf += b"GGUF"
+    buf += struct.pack("<IQQ", 3, len(encoded), len(meta_items))
+    for k, vt, val in meta_items:
+        buf += _s(k) + struct.pack("<I", vt) + _val(vt, val)
+
+    offsets = []
+    cur = 0
+    for _, _, _, raw in encoded:
+        cur = (cur + 31) // 32 * 32
+        offsets.append(cur)
+        cur += len(raw)
+
+    for (name, gguf_dims, gtype, _), off in zip(encoded, offsets):
+        buf += _s(name) + struct.pack("<I", len(gguf_dims))
+        for d in gguf_dims:
+            buf += struct.pack("<Q", int(d))
+        buf += struct.pack("<IQ", int(gtype), int(off))
+
+    data_start = (len(buf) + 31) // 32 * 32
+    buf += b"\x00" * (data_start - len(buf))
+    for (_, _, _, raw), off in zip(encoded, offsets):
+        pad = (data_start + off) - len(buf)
+        if pad > 0:
+            buf += b"\x00" * pad
+        buf += raw
+    gguf_path.write_bytes(bytes(buf))
+
+
+def _gguf_bpe_meta(vocab_size: int = 259, *, with_template: bool = True, with_merges: bool = True):
+    from transformers.convert_slow_tokenizer import bytes_to_unicode
+
+    b2u = list(bytes_to_unicode().values())
+    extra = [f"<tok_{i}>" for i in range(max(0, vocab_size - len(b2u)))]
+    tokens = (b2u + extra)[:vocab_size]
+    items = [
+        ("tokenizer.ggml.model", 8, "gpt2"),
+        ("tokenizer.ggml.pre", 8, "gpt2"),
+        ("tokenizer.ggml.tokens", 9, (8, tokens)),
+        ("tokenizer.ggml.eos_token_id", 4, len(tokens) - 1),
+    ]
+    if with_merges:
+        items.append(("tokenizer.ggml.merges", 9, (8, [])))
+    if with_template:
+        items.append(
+            (
+                "tokenizer.chat_template",
+                8,
+                "{% for m in messages %}{{ m['role'] }}: {{ m['content'] }}\n{% endfor %}assistant: ",
+            )
+        )
+    return items, len(tokens)
+
+
+def test_ternary_tq1_tq2_and_q8_1_dequantizers():
+    from aircolibri_cli.model_source import (
+        GGML_TYPE_Q8_1,
+        GGML_TYPE_TQ1_0,
+        GGML_TYPE_TQ2_0,
+        dequantize_gguf_tensor,
+    )
+
+    # Q8_1: 32 int8 + fp16 d + fp16 s -> 36 bytes (note layout: d fp16 [2B], s fp16 [2B], qs int8[32])
+    d_h = torch.tensor([0.5], dtype=torch.float16).numpy().tobytes()
+    s_h = torch.tensor([8.0], dtype=torch.float16).numpy().tobytes()
+    qs = bytes([(i - 16) & 0xFF for i in range(32)])
+    q81 = dequantize_gguf_tensor(torch.frombuffer(bytearray(d_h + s_h + qs), dtype=torch.uint8), GGML_TYPE_Q8_1)
+    expected_q81 = torch.tensor([(i - 16) * 0.5 for i in range(32)], dtype=torch.bfloat16)
+    assert q81.shape == (32,) and torch.equal(q81, expected_q81)
+
+    # TQ2_0: 64 bytes of 2-bit trits (0->-1, 1->0, 2->+1) + 2B fp16 d -> 66 bytes for 256 elems
+    # Byte 0x90 = (0 << 0) | (0 << 2) | (1 << 4) | (2 << 6) -> lane0=-1, lane1=-1, lane2=0, lane3=+1
+    d_tq = torch.tensor([2.0], dtype=torch.float16).numpy().tobytes()
+    tq2_raw = bytes([0x90] * 64) + d_tq
+    tq2 = dequantize_gguf_tensor(torch.frombuffer(bytearray(tq2_raw), dtype=torch.uint8), GGML_TYPE_TQ2_0)
+    assert tq2.shape == (256,)
+    assert torch.equal(tq2[:32].float(), torch.full((32,), -2.0))
+    assert torch.equal(tq2[64:96].float(), torch.zeros(32))
+    assert torch.equal(tq2[96:128].float(), torch.full((32,), 2.0))
+
+    # TQ1_0: 48B qs + 4B qh + 2B fp16 d -> 54 bytes for 256 elems; all-zero bytes map to trit 0 -> -1 * d
+    tq1_zero = bytes(48) + bytes(4) + d_tq
+    tq1 = dequantize_gguf_tensor(torch.frombuffer(bytearray(tq1_zero), dtype=torch.uint8), GGML_TYPE_TQ1_0)
+    assert tq1.shape == (256,)
+    assert torch.equal(tq1.float(), torch.full((256,), -2.0))
+
+
+def test_gpt2_hf_custom_safetensors_and_gguf_exact_logit_parity(tmp_path):
+    from transformers import AutoModelForCausalLM, GPT2Config
+    from src.aircolibri_integrated import AirColibriModel
+
+    torch.manual_seed(7)
+    vocab = 259
+    cfg = GPT2Config(
+        vocab_size=vocab,
+        n_embd=32,
+        n_layer=2,
+        n_head=4,
+        n_inner=64,
+        n_positions=64,
+        resid_pdrop=0.0,
+        embd_pdrop=0.0,
+        attn_pdrop=0.0,
+        bos_token_id=vocab - 2,
+        eos_token_id=vocab - 1,
+    )
+    ref = AutoModelForCausalLM.from_config(cfg, dtype=torch.bfloat16).eval()
+    with torch.no_grad():
+        for p in ref.parameters():
+            if p.ndim >= 2:
+                p.copy_(torch.randn_like(p) * 0.04)
+            else:
+                p.copy_(torch.randn_like(p) * 0.02 + (1.0 if p.shape == (32,) else 0.0))
+        out_pre = ref(torch.tensor([[1, 2, 3, 4]]), use_cache=True)
+        ref_pre = out_pre.logits[:, -1, :].float()
+        out_dec = ref(torch.tensor([[5]]), past_key_values=out_pre.past_key_values, use_cache=True)
+        ref_dec = out_dec.logits[:, -1, :].float()
+
+    # 1) HF checkpoint with custom single-file safetensors name (not model.safetensors)
+    hf_dir = tmp_path / "gpt2-hf-custom"
+    hf_dir.mkdir(parents=True)
+    cfg.save_pretrained(hf_dir)
+    _write_tiny_hf_tokenizer(hf_dir, vocab_size=vocab)
+    sd = {k: v.detach().clone() for k, v in ref.state_dict().items() if not k.endswith(".attn.bias")}
+    # Tied lm_head omitted from disk to verify tied-embedding resolution
+    sd.pop("lm_head.weight", None)
+    save_file(sd, str(hf_dir / "custom_gpt2_weights.safetensors"))
+
+    with AirColibriModel(
+        str(hf_dir),
+        pipeline_mode="triple_ring_prefetch",
+        vram_resident_layers=0,
+        num_slots=2,
+        device=torch.device("cpu"),
+        weight_format="bf16",
+        model_source=open_model_source(hf_dir),
+    ) as eng:
+        lg_pre, past = eng._forward_step(
+            torch.tensor([[1, 2, 3, 4]]),
+            past_key_values=None,
+            prefetch_next=True,
+            cache_position=torch.arange(0, 4),
+        )
+        lg_dec, _ = eng._forward_step(
+            torch.tensor([[5]]),
+            past_key_values=past,
+            prefetch_next=False,
+            cache_position=torch.tensor([4]),
+        )
+    assert (lg_pre.float() - ref_pre).abs().max().item() < 1e-2
+    assert (lg_dec.float() - ref_dec).abs().max().item() < 1e-2
+    assert int(lg_pre.argmax()) == int(ref_pre.argmax())
+    assert int(lg_dec.argmax()) == int(ref_dec.argmax())
+
+    # 2) GGUF gpt2 checkpoint (llama.cpp stores Conv1D 2D weights transposed as [out, in])
+    gguf_dir = tmp_path / "gpt2-gguf"
+    gguf_dir.mkdir(parents=True)
+    tok_meta, _ = _gguf_bpe_meta(vocab)
+    meta = [
+        ("general.architecture", 8, "gpt2"),
+        ("gpt2.block_count", 4, 2),
+        ("gpt2.context_length", 4, 64),
+        ("gpt2.embedding_length", 4, 32),
+        ("gpt2.feed_forward_length", 4, 64),
+        ("gpt2.attention.head_count", 4, 4),
+        ("gpt2.attention.layer_norm_epsilon", 6, float(cfg.layer_norm_epsilon)),
+        *tok_meta,
+    ]
+    g_tensors = [
+        ("token_embd.weight", sd["transformer.wte.weight"]),
+        ("position_embd.weight", sd["transformer.wpe.weight"]),
+        ("output_norm.weight", sd["transformer.ln_f.weight"]),
+        ("output_norm.bias", sd["transformer.ln_f.bias"]),
+    ]
+    for i in range(2):
+        p = f"transformer.h.{i}."
+        g_tensors.extend(
+            [
+                (f"blk.{i}.attn_norm.weight", sd[p + "ln_1.weight"]),
+                (f"blk.{i}.attn_norm.bias", sd[p + "ln_1.bias"]),
+                (f"blk.{i}.attn_qkv.weight", sd[p + "attn.c_attn.weight"].t().contiguous()),
+                (f"blk.{i}.attn_qkv.bias", sd[p + "attn.c_attn.bias"]),
+                (f"blk.{i}.attn_output.weight", sd[p + "attn.c_proj.weight"].t().contiguous()),
+                (f"blk.{i}.attn_output.bias", sd[p + "attn.c_proj.bias"]),
+                (f"blk.{i}.ffn_norm.weight", sd[p + "ln_2.weight"]),
+                (f"blk.{i}.ffn_norm.bias", sd[p + "ln_2.bias"]),
+                (f"blk.{i}.ffn_up.weight", sd[p + "mlp.c_fc.weight"].t().contiguous()),
+                (f"blk.{i}.ffn_up.bias", sd[p + "mlp.c_fc.bias"]),
+                (f"blk.{i}.ffn_down.weight", sd[p + "mlp.c_proj.weight"].t().contiguous()),
+                (f"blk.{i}.ffn_down.bias", sd[p + "mlp.c_proj.bias"]),
+            ]
+        )
+    _serialize_gguf_v3(gguf_dir / "gpt2.gguf", meta, g_tensors)
+
+    with AirColibriModel(
+        str(gguf_dir),
+        pipeline_mode="triple_ring_prefetch",
+        vram_resident_layers=0,
+        num_slots=2,
+        device=torch.device("cpu"),
+        weight_format="bf16",
+        model_source=open_model_source(gguf_dir),
+    ) as eng_g:
+        gg_pre, g_past = eng_g._forward_step(
+            torch.tensor([[1, 2, 3, 4]]),
+            past_key_values=None,
+            prefetch_next=True,
+            cache_position=torch.arange(0, 4),
+        )
+        gg_dec, _ = eng_g._forward_step(
+            torch.tensor([[5]]),
+            past_key_values=g_past,
+            prefetch_next=False,
+            cache_position=torch.tensor([4]),
+        )
+    assert (gg_pre.float() - ref_pre).abs().max().item() < 1e-2
+    assert (gg_dec.float() - ref_dec).abs().max().item() < 1e-2
+    assert int(gg_pre.argmax()) == int(ref_pre.argmax())
+    assert int(gg_dec.argmax()) == int(ref_dec.argmax())
+
+
+def test_mamba_hf_and_gguf_recurrent_cache_parity(tmp_path):
+    from transformers import AutoModelForCausalLM, MambaConfig
+    from aircolibri_cli.unified_runtime import ColibriKVPrefixSession
+    from src.aircolibri_integrated import AirColibriModel
+
+    torch.manual_seed(11)
+    vocab = 259
+    cfg = MambaConfig(
+        vocab_size=vocab,
+        hidden_size=32,
+        state_size=16,
+        num_hidden_layers=2,
+        conv_kernel=4,
+        expand=2,
+        bos_token_id=0,
+        eos_token_id=0,
+        pad_token_id=0,
+    )
+    ref = AutoModelForCausalLM.from_config(cfg, dtype=torch.bfloat16).eval()
+    with torch.no_grad():
+        for name, p in ref.named_parameters():
+            if "A_log" in name:
+                p.copy_(torch.linspace(0.5, 1.5, p.numel(), dtype=p.dtype).reshape(p.shape))
+            elif p.ndim >= 2:
+                p.copy_(torch.randn_like(p) * 0.04)
+            else:
+                p.copy_(torch.ones_like(p) * 0.5)
+        r0 = ref(torch.tensor([[1, 2, 3]]), use_cache=True)
+        ref_pre = r0.logits[:, -1, :].float()
+        r1 = ref(torch.tensor([[4]]), cache_params=r0.cache_params, use_cache=True)
+        ref_dec = r1.logits[:, -1, :].float()
+
+    hf_dir = tmp_path / "mamba-hf"
+    hf_dir.mkdir(parents=True)
+    cfg.save_pretrained(hf_dir)
+    _write_tiny_hf_tokenizer(hf_dir, vocab_size=vocab)
+    sd = {k: v.detach().clone() for k, v in ref.state_dict().items()}
+    sd.pop("lm_head.weight", None)
+    save_file(sd, str(hf_dir / "model.safetensors"))
+
+    with AirColibriModel(
+        str(hf_dir),
+        pipeline_mode="triple_ring_prefetch",
+        vram_resident_layers=0,
+        num_slots=2,
+        device=torch.device("cpu"),
+        weight_format="bf16",
+        model_source=open_model_source(hf_dir),
+    ) as eng:
+        lg_pre, c_params = eng._forward_step(torch.tensor([[1, 2, 3]]), past_key_values=None, prefetch_next=True)
+        lg_dec, c_params = eng._forward_step(torch.tensor([[4]]), past_key_values=c_params, prefetch_next=False)
+        sess = ColibriKVPrefixSession()
+        sess.record_turn_end(
+            config=eng.config,
+            all_ids_full=[1, 2, 3, 4],
+            past_key_values=c_params,
+            last_fed_h_post=None,
+            engine=eng,
+            mtp_head=None,
+            captured={},
+        )
+        assert sess.tainted is True and sess.kv_prefix_reuse([1, 2, 3, 4, 5]) == 0
+    assert (lg_pre.float() - ref_pre).abs().max().item() < 1e-2
+    assert (lg_dec.float() - ref_dec).abs().max().item() < 1e-2
+
+    # GGUF mamba (ssm_conv1d squeezed to 2D, ssm_a = -exp(A_log))
+    gguf_dir = tmp_path / "mamba-gguf"
+    gguf_dir.mkdir(parents=True)
+    tok_meta, _ = _gguf_bpe_meta(vocab)
+    meta = [
+        ("general.architecture", 8, "mamba"),
+        ("mamba.block_count", 4, 2),
+        ("mamba.context_length", 4, 128),
+        ("mamba.embedding_length", 4, 32),
+        ("mamba.ssm.conv_kernel", 4, 4),
+        ("mamba.ssm.state_size", 4, 16),
+        ("mamba.ssm.inner_size", 4, 64),
+        ("mamba.ssm.time_step_rank", 4, int(cfg.time_step_rank)),
+        ("mamba.attention.layer_norm_rms_epsilon", 6, float(cfg.layer_norm_epsilon)),
+        *tok_meta,
+    ]
+    gt = [
+        ("token_embd.weight", sd["backbone.embeddings.weight"]),
+        ("output_norm.weight", sd["backbone.norm_f.weight"]),
+    ]
+    for i in range(2):
+        p = f"backbone.layers.{i}."
+        gt.extend(
+            [
+                (f"blk.{i}.attn_norm.weight", sd[p + "norm.weight"]),
+                (f"blk.{i}.ssm_in.weight", sd[p + "mixer.in_proj.weight"]),
+                (f"blk.{i}.ssm_conv1d.weight", sd[p + "mixer.conv1d.weight"].squeeze(1)),
+                (f"blk.{i}.ssm_conv1d.bias", sd[p + "mixer.conv1d.bias"]),
+                (f"blk.{i}.ssm_x.weight", sd[p + "mixer.x_proj.weight"]),
+                (f"blk.{i}.ssm_dt.weight", sd[p + "mixer.dt_proj.weight"]),
+                (f"blk.{i}.ssm_dt.bias", sd[p + "mixer.dt_proj.bias"]),
+                (f"blk.{i}.ssm_a", -torch.exp(sd[p + "mixer.A_log"].float())),
+                (f"blk.{i}.ssm_d", sd[p + "mixer.D"]),
+                (f"blk.{i}.ssm_out.weight", sd[p + "mixer.out_proj.weight"]),
+            ]
+        )
+    _serialize_gguf_v3(gguf_dir / "mamba.gguf", meta, gt)
+
+    with AirColibriModel(
+        str(gguf_dir),
+        pipeline_mode="triple_ring_prefetch",
+        vram_resident_layers=0,
+        num_slots=2,
+        device=torch.device("cpu"),
+        weight_format="bf16",
+        model_source=open_model_source(gguf_dir),
+    ) as eng_g:
+        gg_pre, gp = eng_g._forward_step(torch.tensor([[1, 2, 3]]), past_key_values=None, prefetch_next=True)
+        gg_dec, _ = eng_g._forward_step(torch.tensor([[4]]), past_key_values=gp, prefetch_next=False)
+    assert (gg_pre.float() - ref_pre).abs().max().item() < 1e-2
+    assert (gg_dec.float() - ref_dec).abs().max().item() < 1e-2
+
+
+def test_vlm_gemma3_unwrapping_embed_scale_and_gguf_parity(tmp_path):
+    from transformers import AutoModelForCausalLM, Gemma3TextConfig
+    from src.aircolibri_integrated import AirColibriModel
+
+    torch.manual_seed(19)
+    vocab = 259
+    tcfg = Gemma3TextConfig(
+        vocab_size=vocab,
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        sliding_window=16,
+        layer_types=["sliding_attention", "full_attention"],
+        pad_token_id=0,
+        bos_token_id=1,
+        eos_token_id=2,
+    )
+    dev = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    ref = AutoModelForCausalLM.from_config(tcfg, dtype=torch.bfloat16).to(dev).eval()
+    with torch.no_grad():
+        for name, p in ref.named_parameters():
+            if p.ndim >= 2:
+                p.copy_(torch.randn_like(p) * 0.04)
+            else:
+                p.copy_(torch.randn_like(p) * 0.05)
+        r_pre = ref(torch.tensor([[1, 3, 4]], device=dev), use_cache=True)
+        ref_pre = r_pre.logits[:, -1, :].float().cpu()
+
+    # Save as multimodal Gemma3 VLM checkpoint with vision_tower + multi_modal_projector
+    vlm_dir = tmp_path / "gemma3-vlm"
+    vlm_dir.mkdir(parents=True)
+    vlm_cfg = {
+        "model_type": "gemma3",
+        "text_config": tcfg.to_dict(),
+        "vision_config": {"model_type": "siglip_vision_model", "hidden_size": 16, "num_hidden_layers": 1},
+    }
+    (vlm_dir / "config.json").write_text(json.dumps(vlm_cfg), encoding="utf-8")
+    _write_tiny_hf_tokenizer(vlm_dir, vocab_size=vocab)
+    sd_cpu = {k: v.detach().cpu() for k, v in ref.state_dict().items()}
+    vlm_sd = {}
+    for k, v in sd_cpu.items():
+        if k == "lm_head.weight":
+            continue  # tied
+        vlm_sd[f"language_model.{k}"] = v
+    vlm_sd["vision_tower.vision_model.embeddings.patch_embedding.weight"] = torch.randn(16, 3, 4, 4, dtype=torch.bfloat16)
+    vlm_sd["multi_modal_projector.mm_input_projection_weight"] = torch.randn(16, 32, dtype=torch.bfloat16)
+    save_file(vlm_sd, str(vlm_dir / "model.safetensors"))
+
+    with AirColibriModel(
+        str(vlm_dir),
+        pipeline_mode="triple_ring_prefetch",
+        vram_resident_layers=0,
+        num_slots=2,
+        device=dev,
+        weight_format="bf16",
+        model_source=open_model_source(vlm_dir),
+    ) as eng:
+        lg_pre, _ = eng._forward_step(
+            torch.tensor([[1, 3, 4]]),
+            past_key_values=None,
+            prefetch_next=False,
+            cache_position=torch.arange(0, 3),
+        )
+    assert (lg_pre.float().cpu() - ref_pre).abs().max().item() < 1e-2
+    assert int(lg_pre.argmax()) == int(ref_pre.argmax())
+
+
+def test_variable_shape_gemma4_and_coexisting_falcon_h1_ring_streaming(tmp_path):
+    from transformers import AutoModelForCausalLM, FalconH1Config, Gemma4TextConfig
+    from src.aircolibri_integrated import AirColibriModel
+
+    torch.manual_seed(23)
+    # 1) Gemma4: sliding_attention (head_dim=8) vs full_attention (global_head_dim=16) -> different q_proj shapes!
+    g4_cfg = Gemma4TextConfig(
+        vocab_size=64,
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=4,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        global_num_key_value_heads=2,
+        head_dim=8,
+        global_head_dim=16,
+        sliding_window=16,
+        layer_types=["sliding_attention", "full_attention", "sliding_attention", "full_attention"],
+        pad_token_id=0,
+        bos_token_id=1,
+        eos_token_id=2,
+    )
+    g4_ref = AutoModelForCausalLM.from_config(g4_cfg, dtype=torch.bfloat16).eval()
+    with torch.no_grad():
+        for p in g4_ref.parameters():
+            p.copy_(torch.randn_like(p) * 0.04 if p.ndim >= 2 else torch.ones_like(p) * 0.2)
+        g4_exp = g4_ref(torch.tensor([[1, 2, 3, 4]])).logits[:, -1, :].float()
+
+    g4_dir = tmp_path / "gemma4-varshape"
+    g4_dir.mkdir(parents=True)
+    g4_cfg.save_pretrained(g4_dir)
+    _write_tiny_hf_tokenizer(g4_dir, vocab_size=64)
+    g4_sd = {k: v.detach().clone() for k, v in g4_ref.state_dict().items()}
+    assert g4_sd["model.layers.0.self_attn.q_proj.weight"].shape != g4_sd["model.layers.1.self_attn.q_proj.weight"].shape
+    save_file(g4_sd, str(g4_dir / "model.safetensors"))
+
+    with AirColibriModel(
+        str(g4_dir),
+        pipeline_mode="triple_ring_prefetch",
+        vram_resident_layers=0,
+        num_slots=2,
+        device=torch.device("cpu"),
+        weight_format="bf16",
+        model_source=open_model_source(g4_dir),
+    ) as eng_g4:
+        g4_got, _ = eng_g4._forward_step(
+            torch.tensor([[1, 2, 3, 4]]),
+            past_key_values=None,
+            prefetch_next=False,
+            cache_position=torch.arange(0, 4),
+        )
+    assert (g4_got.float() - g4_exp).abs().max().item() < 1e-2
+    assert int(g4_got.argmax()) == int(g4_exp.argmax())
+
+    # 2) FalconH1: BOTH mamba.* AND self_attn.* coexist in the SAME layer!
+    fh_cfg = FalconH1Config(
+        vocab_size=64,
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        mamba_d_ssm=32,
+        mamba_n_heads=4,
+        mamba_headdim=8,
+        mamba_n_groups=1,
+        mamba_d_state=16,
+        mamba_d_conv=4,
+        pad_token_id=0,
+        bos_token_id=1,
+        eos_token_id=2,
+    )
+    fh_ref = AutoModelForCausalLM.from_config(fh_cfg, dtype=torch.bfloat16).eval()
+    with torch.no_grad():
+        for name, p in fh_ref.named_parameters():
+            if "A_log" in name:
+                p.copy_(torch.ones_like(p))
+            elif p.ndim >= 2:
+                p.copy_(torch.randn_like(p) * 0.04)
+            else:
+                p.copy_(torch.ones_like(p) * 0.5)
+        fh_exp = fh_ref(torch.tensor([[1, 2, 3]])).logits[:, -1, :].float()
+
+    fh_dir = tmp_path / "falcon-h1"
+    fh_dir.mkdir(parents=True)
+    fh_cfg.save_pretrained(fh_dir)
+    _write_tiny_hf_tokenizer(fh_dir, vocab_size=64)
+    save_file({k: v.detach().clone() for k, v in fh_ref.state_dict().items()}, str(fh_dir / "model.safetensors"))
+
+    with AirColibriModel(
+        str(fh_dir),
+        pipeline_mode="triple_ring_prefetch",
+        vram_resident_layers=0,
+        num_slots=2,
+        device=torch.device("cpu"),
+        weight_format="bf16",
+        model_source=open_model_source(fh_dir),
+    ) as eng_fh:
+        assert eng_fh.weight_manager.pinned_pool.layout.overlay_prefixes == ()
+        fh_got, _ = eng_fh._forward_step(
+            torch.tensor([[1, 2, 3]]),
+            past_key_values=None,
+            prefetch_next=False,
+            cache_position=torch.arange(0, 3),
+        )
+    assert (fh_got.float() - fh_exp).abs().max().item() < 1e-2
+    assert int(fh_got.argmax()) == int(fh_exp.argmax())
+
+
+def test_hf_moe_all_layouts_and_routing_buffers_exact_parity(tmp_path):
+    from transformers import AutoModelForCausalLM, DeepseekV3Config, GptOssConfig, Llama4TextConfig, MixtralConfig
+    from src.aircolibri_integrated import AirColibriModel
+
+    torch.manual_seed(31)
+
+    def _verify_moe(name: str, cfg, transform_sd=None, init_extra=None):
+        ref = AutoModelForCausalLM.from_config(cfg, dtype=torch.bfloat16).eval()
+        with torch.no_grad():
+            for p in ref.parameters():
+                p.copy_(torch.randn_like(p) * 0.05 if p.ndim >= 2 else torch.ones_like(p) * 0.3)
+            if init_extra is not None:
+                init_extra(ref)
+            exp = ref(torch.tensor([[1, 2, 3, 4]])).logits[:, -1, :].float()
+        sd = {k: v.detach().clone() for k, v in ref.state_dict().items()}
+        if transform_sd is not None:
+            sd = transform_sd(sd)
+        d = tmp_path / name
+        d.mkdir(parents=True)
+        cfg.save_pretrained(d)
+        _write_tiny_hf_tokenizer(d, vocab_size=64)
+        save_file(sd, str(d / "model.safetensors"))
+        with AirColibriModel(
+            str(d),
+            pipeline_mode="triple_ring_prefetch",
+            vram_resident_layers=0,
+            num_slots=2,
+            device=torch.device("cpu"),
+            weight_format="bf16",
+            model_source=open_model_source(d),
+            expert_cache_bytes=64 * 1024,
+        ) as eng:
+            # Confirm routed experts never bloated ring slots
+            assert all(".experts." not in k for k in eng.weight_manager.pinned_pool.layout.specs)
+            got, _ = eng._forward_step(
+                torch.tensor([[1, 2, 3, 4]]),
+                past_key_values=None,
+                prefetch_next=False,
+                cache_position=torch.arange(0, 4),
+            )
+        diff = (got.float() - exp).abs().max().item()
+        assert diff < 2e-2, f"{name} max logit diff={diff}"
+        assert int(got.argmax()) == int(exp.argmax()), f"{name} argmax mismatch"
+
+    # a) Mixtral stored in Hub legacy per-expert w1/w2/w3 under .block_sparse_moe.
+    def _to_hub_mixtral(sd):
+        out = {}
+        for k, v in sd.items():
+            if ".mlp.gate.weight" in k:
+                out[k.replace(".mlp.gate.weight", ".block_sparse_moe.gate.weight")] = v
+            elif k.endswith(".mlp.experts.gate_up_proj"):
+                base = k[: -len(".mlp.experts.gate_up_proj")] + ".block_sparse_moe.experts"
+                inter = v.shape[1] // 2
+                for e in range(v.shape[0]):
+                    out[f"{base}.{e}.w1.weight"] = v[e, :inter].contiguous()
+                    out[f"{base}.{e}.w3.weight"] = v[e, inter:].contiguous()
+            elif k.endswith(".mlp.experts.down_proj"):
+                base = k[: -len(".mlp.experts.down_proj")] + ".block_sparse_moe.experts"
+                for e in range(v.shape[0]):
+                    out[f"{base}.{e}.w2.weight"] = v[e].contiguous()
+            else:
+                out[k] = v
+        return out
+
+    _verify_moe(
+        "mixtral-hub",
+        MixtralConfig(
+            vocab_size=64,
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            num_local_experts=4,
+            num_experts_per_tok=2,
+            pad_token_id=0,
+        ),
+        transform_sd=_to_hub_mixtral,
+    )
+
+    # b) Llama4 transposed 3D packed experts [E, H, 2*I] + input-weighted sigmoid routing
+    _verify_moe(
+        "llama4-3d-transposed",
+        Llama4TextConfig(
+            vocab_size=64,
+            hidden_size=32,
+            intermediate_size=64,
+            intermediate_size_mlp=64,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=8,
+            num_local_experts=4,
+            num_experts_per_tok=2,
+            interleave_moe_layer_step=1,
+            pad_token_id=0,
+        ),
+    )
+
+    # c) GptOss transposed biased 3D packed experts + interleaved clamped GLU
+    _verify_moe(
+        "gptoss-3d-biased",
+        GptOssConfig(
+            vocab_size=64,
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=8,
+            num_local_experts=4,
+            num_experts_per_tok=2,
+            layer_types=["sliding_attention", "full_attention"],
+            pad_token_id=0,
+        ),
+    )
+
+    # d) DeepseekV3 MLA + routed experts + non-zero e_score_correction_bias buffer
+    def _init_dsv3_bias(model):
+        for m in model.modules():
+            if hasattr(m, "e_score_correction_bias"):
+                m.e_score_correction_bias.copy_(torch.tensor([0.8, -0.5, 0.3, -0.6], dtype=m.e_score_correction_bias.dtype))
+
+    _verify_moe(
+        "deepseek-v3-mla",
+        DeepseekV3Config(
+            vocab_size=64,
+            hidden_size=32,
+            intermediate_size=64,
+            moe_intermediate_size=32,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            n_routed_experts=4,
+            num_experts_per_tok=2,
+            n_shared_experts=1,
+            n_group=2,
+            topk_group=1,
+            first_k_dense_replace=0,
+            q_lora_rank=16,
+            kv_lora_rank=16,
+            qk_nope_head_dim=8,
+            qk_rope_head_dim=8,
+            v_head_dim=8,
+            pad_token_id=0,
+        ),
+        init_extra=_init_dsv3_bias,
+    )
+
+
+def test_gguf_llama_rope_permute_split_shards_and_chat_fallback(tmp_path):
+    from transformers import AutoModelForCausalLM, LlamaConfig
+    from aircolibri_cli.gguf_arch_registry import find_gguf_files
+    from aircolibri_cli.unified_runtime import AirColibriUnifiedEngine, ColibriKVPrefixSession
+    from src.aircolibri_integrated import AirColibriModel
+
+    torch.manual_seed(41)
+    vocab = 259
+    n_heads = 4
+    n_kv = 2
+    head_dim = 8
+    hidden = 32
+    cfg = LlamaConfig(
+        vocab_size=vocab,
+        hidden_size=hidden,
+        intermediate_size=64,
+        num_hidden_layers=2,
+        num_attention_heads=n_heads,
+        num_key_value_heads=n_kv,
+        head_dim=head_dim,
+        rms_norm_eps=1e-5,
+        rope_theta=10000.0,
+        tie_word_embeddings=False,
+        bos_token_id=1,
+        eos_token_id=vocab - 1,
+        pad_token_id=0,
+    )
+    ref = AutoModelForCausalLM.from_config(cfg, dtype=torch.bfloat16).eval()
+    with torch.no_grad():
+        for p in ref.parameters():
+            p.copy_(torch.randn_like(p) * 0.05 if p.ndim >= 2 else torch.ones_like(p) * 0.8)
+        r_pre = ref(torch.tensor([[1, 5, 9, 12]]), use_cache=True)
+        ref_pre = r_pre.logits[:, -1, :].float()
+        r_dec = ref(torch.tensor([[15]]), past_key_values=r_pre.past_key_values, use_cache=True)
+        ref_dec = r_dec.logits[:, -1, :].float()
+
+    def _to_gguf_interleaved_rope(w: torch.Tensor, heads: int) -> torch.Tensor:
+        # Inverse of LlamaRopeReversePermute: HF [heads, 2, hd//2, in] -> GGUF [heads, hd//2, 2, in]
+        hd = (w.shape[0] // heads)
+        return w.view(heads, 2, hd // 2, w.shape[1]).transpose(1, 2).reshape_as(w).contiguous()
+
+    sd = {k: v.detach().clone() for k, v in ref.state_dict().items()}
+    gguf_dir = tmp_path / "llama-split-gguf"
+    gguf_dir.mkdir(parents=True)
+    # Place an mmproj vision file alongside split shards; it must be ignored automatically.
+    (gguf_dir / "mmproj-model-f16.gguf").write_bytes(b"not-a-text-gguf")
+
+    tok_meta, _ = _gguf_bpe_meta(vocab, with_template=False, with_merges=False)
+    meta_shard1 = [
+        ("general.architecture", 8, "llama"),
+        ("llama.block_count", 4, 2),
+        ("llama.context_length", 4, 128),
+        ("llama.embedding_length", 4, hidden),
+        ("llama.feed_forward_length", 4, 64),
+        ("llama.attention.head_count", 4, n_heads),
+        ("llama.attention.head_count_kv", 4, n_kv),
+        ("llama.attention.layer_norm_rms_epsilon", 6, 1e-5),
+        ("llama.rope.freq_base", 6, 10000.0),
+        ("llama.rope.dimension_count", 4, head_dim),
+        *tok_meta,
+    ]
+    shard1_tensors = [
+        ("token_embd.weight", sd["model.embed_tokens.weight"]),
+        ("blk.0.attn_norm.weight", sd["model.layers.0.input_layernorm.weight"]),
+        ("blk.0.attn_q.weight", _to_gguf_interleaved_rope(sd["model.layers.0.self_attn.q_proj.weight"], n_heads)),
+        ("blk.0.attn_k.weight", _to_gguf_interleaved_rope(sd["model.layers.0.self_attn.k_proj.weight"], n_kv)),
+        ("blk.0.attn_v.weight", sd["model.layers.0.self_attn.v_proj.weight"]),
+        ("blk.0.attn_output.weight", sd["model.layers.0.self_attn.o_proj.weight"]),
+        ("blk.0.ffn_norm.weight", sd["model.layers.0.post_attention_layernorm.weight"]),
+        ("blk.0.ffn_gate.weight", sd["model.layers.0.mlp.gate_proj.weight"]),
+        ("blk.0.ffn_up.weight", sd["model.layers.0.mlp.up_proj.weight"]),
+        ("blk.0.ffn_down.weight", sd["model.layers.0.mlp.down_proj.weight"]),
+    ]
+    shard2_tensors = [
+        ("output_norm.weight", sd["model.norm.weight"]),
+        ("output.weight", sd["lm_head.weight"]),
+        ("blk.1.attn_norm.weight", sd["model.layers.1.input_layernorm.weight"]),
+        ("blk.1.attn_q.weight", _to_gguf_interleaved_rope(sd["model.layers.1.self_attn.q_proj.weight"], n_heads)),
+        ("blk.1.attn_k.weight", _to_gguf_interleaved_rope(sd["model.layers.1.self_attn.k_proj.weight"], n_kv)),
+        ("blk.1.attn_v.weight", sd["model.layers.1.self_attn.v_proj.weight"]),
+        ("blk.1.attn_output.weight", sd["model.layers.1.self_attn.o_proj.weight"]),
+        ("blk.1.ffn_norm.weight", sd["model.layers.1.post_attention_layernorm.weight"]),
+        ("blk.1.ffn_gate.weight", sd["model.layers.1.mlp.gate_proj.weight"]),
+        ("blk.1.ffn_up.weight", sd["model.layers.1.mlp.up_proj.weight"]),
+        ("blk.1.ffn_down.weight", sd["model.layers.1.mlp.down_proj.weight"]),
+    ]
+    _serialize_gguf_v3(gguf_dir / "tiny-llama-00001-of-00002.gguf", meta_shard1, shard1_tensors)
+    _serialize_gguf_v3(
+        gguf_dir / "tiny-llama-00002-of-00002.gguf",
+        [("general.architecture", 8, "llama")],
+        shard2_tensors,
+    )
+
+    found = [p.name for p in find_gguf_files(gguf_dir)]
+    assert found == ["tiny-llama-00001-of-00002.gguf", "tiny-llama-00002-of-00002.gguf"]
+
+    with AirColibriModel(
+        str(gguf_dir),
+        pipeline_mode="triple_ring_prefetch",
+        vram_resident_layers=0,
+        num_slots=2,
+        device=torch.device("cpu"),
+        weight_format="bf16",
+        model_source=open_model_source(gguf_dir),
+    ) as eng:
+        lg_pre, past = eng._forward_step(
+            torch.tensor([[1, 5, 9, 12]]),
+            past_key_values=None,
+            prefetch_next=True,
+            cache_position=torch.arange(0, 4),
+        )
+        lg_dec, _ = eng._forward_step(
+            torch.tensor([[15]]),
+            past_key_values=past,
+            prefetch_next=False,
+            cache_position=torch.tensor([4]),
+        )
+        # Verify template-less prompt fallback on AirColibriUnifiedEngine._prepare_prompt_and_cache
+        assert getattr(eng.tokenizer, "chat_template", None) in (None, "")
+        dummy = object.__new__(AirColibriUnifiedEngine)
+        dummy.engine = eng
+        dummy.session = ColibriKVPrefixSession()
+        dummy._session_messages = []
+        dummy.mtp_head = None
+        dummy.device = torch.device("cpu")
+        p_ids, reused, p_kv, _ = dummy._prepare_prompt_and_cache(
+            [{"role": "system", "content": "Be brief."}, {"role": "user", "content": "Hi"}],
+            enable_thinking=False,
+            use_session_cache=False,
+        )
+        assert len(p_ids) > 4 and reused == 0 and p_kv is None
+
+    assert (lg_pre.float() - ref_pre).abs().max().item() < 1e-2
+    assert (lg_dec.float() - ref_dec).abs().max().item() < 1e-2
+    assert int(lg_pre.argmax()) == int(ref_pre.argmax())
+    assert int(lg_dec.argmax()) == int(ref_dec.argmax())
+
+
