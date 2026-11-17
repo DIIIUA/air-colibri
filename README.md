@@ -18,6 +18,11 @@ AirColibri combines ideas from [AirLLM](https://github.com/lyogavin/airllm) (lay
 selective weight reads) and [Colibrì](https://github.com/JustVugg/colibri) (tiered placement,
 native MTP speculation) with its own packed Q4/Q6 weights and NVRTC CUDA kernels.
 
+<a href="https://buymeacoffee.com/silentfish">
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" width="217" height="60">
+</a>
+
+
 ## Requirements
 
 - NVIDIA GPU with CUDA (tested: RTX 3060 Ti 8 GB; smaller budgets require streaming and sufficient room for individual operators)
