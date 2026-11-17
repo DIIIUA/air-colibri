@@ -149,12 +149,13 @@ class AirColibriModel:
         model_source=None,
         weight_reader=None,
         expert_cache_bytes: int = 0,
+        universal_quantization: bool = False,
     ):
         if pipeline_mode not in ("sequential", "double_buffer", "triple_ring", "triple_ring_prefetch"):
             raise ValueError("Unsupported pipeline mode")
         if control_mode not in ("off", "observe", "enforce"):
             raise ValueError("Unsupported control mode")
-        if weight_format not in ("bf16", "q4", "q4_g16_asym", "q4_g32_asym", "q4_g64_asym"):
+        if weight_format not in ("bf16", "q4", "q6", "q4_g16_asym", "q4_g32_asym", "q4_g64_asym"):
             raise ValueError("Unsupported weight format")
         if q4_group_size not in (16, 32, 64):
             raise ValueError("Q4 group size must be 16, 32 or 64")
@@ -165,6 +166,7 @@ class AirColibriModel:
         self.trace_adapter = None
         self.native_policy = native_policy
         self._failed = False
+        self._wavefront_active = False
         self.weight_reader = weight_reader
         if self.weight_reader is None and airllm_source:
             from src.upstream_bridge import AirLLMReader
@@ -176,8 +178,9 @@ class AirColibriModel:
         self.dtype = dtype
         self.vram_resident_layers = vram_resident_layers
         self.cache_policy = cache_policy
-        self.is_q4 = weight_format.startswith("q4")
-        self.weight_format = f"q4_g{q4_group_size}_asym" if self.is_q4 else "bf16"
+        self.quant_bits = (6 if weight_format == "q6" else 4 if weight_format.startswith("q4") else 0) if universal_quantization or weight_format == "q6" else 0
+        self.is_q4 = weight_format.startswith("q4") and not self.quant_bits
+        self.weight_format = f"packed_q{self.quant_bits}" if self.quant_bits else f"q4_g{q4_group_size}_asym" if self.is_q4 else "bf16"
         self.quantize_lm_head = bool(quantize_lm_head and self.is_q4)
         self.lazy_embed_lookup = True if lazy_embed_lookup is None else bool(lazy_embed_lookup)
         self.q4_group_size = q4_group_size
@@ -233,6 +236,18 @@ class AirColibriModel:
             and not all_layers_resident
         )
 
+        # Discover module-call projections before sizing the packed streaming slots.
+        with init_empty_weights():
+            self.model = AutoModelForCausalLM.from_config(self.config, dtype=self.dtype)
+        self.model.eval()
+        quantized_projections = None
+        if self.quant_bits:
+            from pathlib import Path
+            from aircolibri_cli.unified_runtime import _model_shape_inventory
+            from src.quantized_projection import projection_map
+            layer_shapes, _, _ = _model_shape_inventory(Path(model_dir), model_source, num_hidden_layers)
+            quantized_projections = projection_map(self.model, layer_shapes, self.quant_bits, self.q4_group_size, replace=True)
+
         # 2. Инициализация менеджера памяти
         self.weight_manager = StableWeightManager(
             model_dir=model_dir,
@@ -247,22 +262,17 @@ class AirColibriModel:
             max_ram_bytes=max_ram_bytes,
             weight_reader=self.weight_reader,
             model_source=model_source,
+            quantized_projections=quantized_projections,
         )
 
-        # 3. Создание модели на meta-устройстве (0 байт VRAM!)
-        with init_empty_weights():
-            self.model = AutoModelForCausalLM.from_config(self.config, dtype=self.dtype)
-        self.model.eval()
+        # Bind source-specific expert loading without hiding implementation errors.
         if model_source is not None and hasattr(model_source, "prepare_model"):
-            try:
-                model_source.prepare_model(
-                    self.model,
-                    device=self.device,
-                    dtype=self.dtype,
-                    expert_cache_bytes=int(expert_cache_bytes),
-                )
-            except TypeError:
-                model_source.prepare_model(self.model, device=self.device, dtype=self.dtype)
+            prepare_args = dict(device=self.device, dtype=self.dtype,
+                                expert_cache_bytes=int(expert_cache_bytes), quant_bits=self.quant_bits)
+            params = inspect.signature(model_source.prepare_model).parameters
+            if not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+                prepare_args = {key: value for key, value in prepare_args.items() if key in params}
+            model_source.prepare_model(self.model, **prepare_args)
         if self.device.type == "cuda":
             from src.colibri_deltanet_nvrtc import install_deltanet_nvrtc_kernels
 
@@ -428,9 +438,17 @@ class AirColibriModel:
     def _load_resident_layer(self, layer_idx: int) -> None:
         """Загружает VRAM-резидентный слой навсегда на GPU (в bf16 или packed Q4)."""
         layer_module = self._decoder_layers()[layer_idx]
-        if self.is_q4 or self.model_source is not None:
+        if self.is_q4 or self.quant_bits or self.model_source is not None:
             tensors = self.weight_manager.read_layer_tensors(layer_idx, target_device=self.device)
             q4_bindings, raw_params = self._collect_layer_bindings(layer_module)
+            required = set(raw_params)
+            for _, q, s, z in q4_bindings:
+                required.update((q, s, z))
+            required.update(k for k in self._collect_layer_buffers(layer_module)
+                            if k.rsplit(".", 1)[-1] in ("packed_lo", "packed_hi", "qscale", "qzero"))
+            missing = required - tensors.keys()
+            if missing:
+                raise ValueError(f"Layer {layer_idx} is missing required tensors: {sorted(missing)}")
             for submod, q_k, s_k, z_k in q4_bindings:
                 submod.bind_q4_tensors(tensors[q_k], tensors[s_k], tensors[z_k])
             for k in raw_params:
@@ -612,8 +630,17 @@ class AirColibriModel:
                 if self._step_cancel_check is not None:
                     self._step_cancel_check()
                 i = module._air_layer_idx
+                warm = getattr(self, 'probability_warmup', None)
+                dynamic = bool(warm and warm.dynamic_regions)
+                if dynamic:
+                    warm.before_layer(i)
                 # Слой резидентен в VRAM?
                 if i < self.vram_resident_layers:
+                    return
+
+                # A wave owns this layer's slot until its final prompt chunk.
+                # All readers of a layer execute on the same CUDA stream.
+                if self._wavefront_active and self.active_slot_per_layer[i] is not None:
                     return
 
                 if self.num_slots == 1 and self.pipeline_mode == "sequential":
@@ -622,6 +649,7 @@ class AirColibriModel:
                     self.pipeline.load_tensors_async(target, pinned, pinned_pool=self.weight_manager.pinned_pool)
                 slot = self.pipeline.acquire_slot_for_compute(i)
                 required = set(layer_param_names[i])
+                required.update(k for k in layer_buffer_dtypes[i] if k.rsplit(".", 1)[-1] in ("packed_lo", "packed_hi", "qscale", "qzero"))
                 for _, q, s, z in layer_q4_bindings[i]:
                     required.update((q, s, z))
                 missing = required - slot.loaded_keys
@@ -643,15 +671,24 @@ class AirColibriModel:
                         set_module_tensor_to_device(
                             module, buf_k, self.device, value=slot_map[buf_k], dtype=buf_dt, clear_cache=False
                         )
+                if dynamic:
+                    warm.prepare_next_dense(i)
 
             def _post_hook(module, args, output):
                 i = module._air_layer_idx
+                if self._wavefront_active:
+                    return output
                 if i < self.vram_resident_layers:
                     return output
 
                 slot = self.active_slot_per_layer[i]
                 self.pipeline.release_slot_after_compute(slot)
                 self.active_slot_per_layer[i] = None
+                warm = getattr(self, 'probability_warmup', None)
+                if warm and warm.dynamic_regions:
+                    if i==num_layers-1 and not self.tail_prefetched:
+                        warm.prepare_next_dense(i)
+                    return output
                 if self.num_slots > 1 or self.pipeline_mode != "sequential":
                     # Запускаем загрузку следующего слоя для этого слота
                     next_layer = i + self.num_slots
@@ -730,10 +767,14 @@ class AirColibriModel:
 
     @_fail_runtime_on_error
     def _forward_step(self, step_tokens: torch.Tensor, past_key_values: Any = None,
-                      prefetch_next: bool = True, cache_position: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Any]:
+                      prefetch_next: bool = True, cache_position: Optional[torch.Tensor] = None,
+                      *, prefill: Optional[bool] = None, prefill_end: bool = True) -> Tuple[torch.Tensor, Any]:
         if self._failed or self.model is None:
             raise RuntimeError("Model is closed or failed; create a new runtime")
         self._prefetch_next_step = prefetch_next
+        warmup = getattr(self, "probability_warmup", None)
+        if warmup is not None:
+            warmup.begin_step(step_tokens, past_key_values, prefill=prefill, prefill_end=prefill_end)
         num_layers = _cfg_num_layers(self.config)
         inputs_embeds = self._embed_step_tokens(step_tokens)
         ple_inputs = self._compute_per_layer_inputs(step_tokens)
@@ -741,7 +782,8 @@ class AirColibriModel:
         # Первоначальное заполнение кольца перед началом слоев
         if self.num_slots > 1 or self.pipeline_mode != "sequential":
             first_s = self.vram_resident_layers
-            for s in range(first_s, min(first_s + self.num_slots, num_layers)):
+            initial_depth = 1 if warmup and warmup.dynamic_regions else self.num_slots
+            for s in range(first_s, min(first_s + initial_depth, num_layers)):
                 if s == first_s and self.tail_prefetched:
                     self.tail_prefetched = False
                     continue
@@ -774,11 +816,47 @@ class AirColibriModel:
         next_cache = getattr(outputs, "past_key_values", None)
         if next_cache is None and cache_kw and cache_kw != "past_key_values":
             next_cache = getattr(outputs, cache_kw, None)
+        if warmup is not None:
+            warmup.end_step(outputs.logits, next_cache)
         return outputs.logits[:, -1, :], next_cache
+
+    def enable_unified_memory(self, **kwargs):
+        """Join ring/cache/preparation with elastic A/B and empty C by default.
+
+        By default preparation is carved out of the existing weight budget.
+        An explicit gpu_budget_bytes can add a separately budgeted allowance.
+        dynamic_regions=False retains the previous three-equal-area experiment.
+        """
+        kwargs.setdefault('gpu_budget_bytes', 0)
+        kwargs.setdefault('dynamic_regions', True)
+        kwargs['unified_memory'] = True
+        return self.enable_probability_warmup(**kwargs)
+
+    def enable_probability_warmup(self, **kwargs):
+        """Opt-in HF MoE preparation; unified_memory=True joins ring/cache/producer.
+
+        Enable before the first forward. The unified budget is the current ring
+        plus cache payload plus gpu_budget_bytes; conversion reserves are retained.
+        """
+        if getattr(self, "probability_warmup", None) is not None:
+            raise RuntimeError("Probability warmup is already enabled")
+        from src.probability_warmup import ProbabilityWarmup
+        self.probability_warmup = ProbabilityWarmup(self, **kwargs)
+        return self.probability_warmup
+
+    def prefill_wavefront(self, step_tokens: torch.Tensor, chunk_size: int,
+                          past_key_values: Any = None, *, concurrent: bool = True,
+                          collect_timing: bool = False):
+        """Experimental three-stage, causally ordered prompt-chunk pipeline."""
+        from src.prefill_wavefront import run_prefill_wavefront
+        return run_prefill_wavefront(self, step_tokens, chunk_size, past_key_values,
+                                     concurrent=concurrent, collect_timing=collect_timing)
 
     def reset_after_cancel(self) -> None:
         """Restores ring slots and prefetch flags after a cooperative cancellation."""
         self._step_cancel_check = None
+        if getattr(self, "probability_warmup", None) is not None:
+            self.probability_warmup.reset()
         self.tail_prefetched = False
         if getattr(self, "active_slot_per_layer", None):
             for i in range(len(self.active_slot_per_layer)):
@@ -850,6 +928,9 @@ class AirColibriModel:
 
     def close(self) -> None:
         """Удаляет хуки и освобождает ресурсы GPU и CPU."""
+        if getattr(self, "probability_warmup", None) is not None:
+            self.probability_warmup.close()
+            self.probability_warmup = None
         if getattr(self, "trace_adapter", None) is not None:
             self.trace_adapter.close()
             self.trace_adapter = None

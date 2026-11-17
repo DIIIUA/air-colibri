@@ -668,15 +668,18 @@ class StableWeightManager:
         max_mmap_handles: int = 2,
         weight_reader=None,
         model_source=None,
+        quantized_projections=None,
     ):
         self.model_dir = model_dir
         self.model_source = model_source
         self.dtype = dtype
         self.cache_policy = cache_policy
-        if weight_format not in ("bf16", "q4", "q4_g16_asym", "q4_g32_asym", "q4_g64_asym"):
+        if weight_format not in ("bf16", "q4", "q4_g16_asym", "q4_g32_asym", "q4_g64_asym", "packed_q4", "packed_q6"):
             raise ValueError("Unsupported weight format")
+        self.quantized_projections = quantized_projections or {}
+        self.quant_bits = int(weight_format[-1]) if weight_format.startswith("packed_q") else 0
         self.is_q4 = weight_format.startswith("q4")
-        self.weight_format = f"q4_g{q4_group_size}_asym" if self.is_q4 else "bf16"
+        self.weight_format = weight_format if self.quant_bits else f"q4_g{q4_group_size}_asym" if self.is_q4 else "bf16"
         self.q4_group_size = q4_group_size
         self.ram_cache = BoundedRAMCache(max_cached_layers=max_ram_layers, policy=cache_policy, max_bytes=max_ram_bytes)
         if max_mmap_handles < 1:
@@ -725,7 +728,7 @@ class StableWeightManager:
                     sk = k[len(prefix) :] if k.startswith(prefix) else k
                     short_keys.append(sk)
                     sh = tuple(model_source.tensor_shape(e)) if has_shape_fn else ()
-                    sig_items.append((sk, sh))
+                    sig_items.append((sk, sh, sk in self.quantized_projections.get(idx, {})))
                 if sum(1 for p in SlotArenaLayout.ATTENTION_PREFIXES if any(sk.startswith(p) for sk in short_keys)) > 1:
                     coexisting_overlays = True
                 sig = frozenset(sig_items)
@@ -733,7 +736,7 @@ class StableWeightManager:
                     seen_keysets.add(sig)
                     probe_layers.append(idx)
         else:
-            probe_layers = [0, 3]
+            probe_layers = sorted(self.quantized_projections) if self.quant_bits else [0, 3]
         for l_idx in probe_layers:
             l_file = os.path.join(model_dir, f"model-{l_idx:05d}.safetensors")
             if model_source is not None:
@@ -747,7 +750,12 @@ class StableWeightManager:
                 short_k = k.replace(f"model.layers.{l_idx}.", "")
                 layer_short_keys.append(short_k)
                 shape = tuple(f.get_slice(k).get_shape())
-                if self.is_q4 and is_q4_quantizable(short_k, shape, group_size=self.q4_group_size):
+                quant_spec = self.quantized_projections.get(l_idx, {}).get(short_k)
+                if quant_spec is not None:
+                    from src.quantized_projection import packed_specs
+                    for sub_k, (sub_sh, sub_dt) in packed_specs(short_k, quant_spec["shape"], self.quant_bits, self.q4_group_size).items():
+                        _record_spec(sub_k, sub_sh, sub_dt)
+                elif self.is_q4 and is_q4_quantizable(short_k, shape, group_size=self.q4_group_size):
                     for sub_k, (sub_sh, sub_dt) in q4_tensor_specs(
                         short_k,
                         shape,
@@ -828,29 +836,56 @@ class StableWeightManager:
         dst = target_device or torch.device("cpu")
         f = self._get_mmap_handle(layer_idx)
         names = list(f.keys())
+        prefix = f"model.layers.{layer_idx}."
+        specs = self.quantized_projections.get(layer_idx, {})
+        row_entries = (self.model_source.layer_entries(layer_idx)
+                       if callable(getattr(self.model_source, "read_weight_rows", None))
+                       and (self.weight_reader is None or hasattr(self.weight_reader, "read_matrix_slice")) else {})
+        row_keys = {k for k in names if k in row_entries and k.removeprefix(prefix) in specs}
         if self.weight_reader is None:
             loaded = None
         elif isinstance(f, ShardedLayerView):
-            loaded = (self.weight_reader.read_entries(f.entries())
+            loaded = (self.weight_reader.read_entries({k: v for k, v in f.entries().items() if k not in row_keys})
                       if hasattr(self.weight_reader, "read_entries") else None)
         elif hasattr(self.model_source, "open_layer"):
             loaded = None
         else:
             loaded = self.weight_reader(self.model_dir, f"model-{layer_idx:05d}", names)
         tensors: Dict[str, torch.Tensor] = {}
-        prefix = f"model.layers.{layer_idx}."
         gguf_layer = hasattr(self.model_source, "open_layer")
         for k in names:
             if not k.startswith(prefix):
                 raise ValueError(f"Foreign tensor in layer shard: {k}")
             short_k = k[len(prefix):]
+            quant_spec = specs.get(short_k)
+            if k in row_keys:
+                from src.quantized_projection import pack_weight_rows
+                self.quantization_calls += 1
+                entry = row_entries[k]
+                alignment = (self.model_source.weight_row_alignment(entry)
+                             if hasattr(self.model_source, "weight_row_alignment") else 1)
+                packed = pack_weight_rows(
+                    quant_spec["shape"],
+                    lambda a, b: self.model_source.read_weight_rows(entry, a, b,
+                                    transpose=quant_spec["transpose"], device=dst),
+                    self.quant_bits, self.q4_group_size, dst, row_alignment=alignment)
+                tensors.update({short_k.removesuffix("weight") + key: value for key, value in packed.items()})
+                del packed
+                continue
             if loaded is not None:
-                t = loaded[k]
+                t = loaded.pop(k)
             elif gguf_layer:
                 t = f.get_tensor(k, device=dst)
             else:
                 t = f.get_tensor(k)
-            if self.is_q4 and is_q4_quantizable(short_k, tuple(t.shape), group_size=self.q4_group_size):
+            if quant_spec is not None:
+                from src.quantized_projection import pack_weight
+                self.quantization_calls += 1
+                if quant_spec["transpose"]:
+                    t = t.T
+                packed = pack_weight(t, self.quant_bits, self.q4_group_size, dst)
+                tensors.update({short_k.removesuffix("weight") + key: value for key, value in packed.items()})
+            elif self.is_q4 and is_q4_quantizable(short_k, tuple(t.shape), group_size=self.q4_group_size):
                 self.quantization_calls += 1
                 q_k, s_k, z_k = q4_subkey_names(short_k)
                 qweight, scales, zeros = quantize_tensor_q4(
@@ -864,6 +899,7 @@ class StableWeightManager:
                 tensors[z_k] = zeros
             else:
                 tensors[short_k] = t.to(device=dst, dtype=self.dtype)
+            del t
         return tensors
 
     def load_layer_to_pinned_slot(self, layer_idx: int, target_slot_idx: int) -> Dict[str, torch.Tensor]:

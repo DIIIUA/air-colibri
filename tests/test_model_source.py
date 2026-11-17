@@ -769,18 +769,18 @@ def test_nvrtc_deltanet_kernels_and_zero_fallback_warnings(tmp_path):
     torch.manual_seed(42)
 
     # Compare against unwrapped PyTorch reference functions from transformers
-    ref_conv_fn = inspect.unwrap(getattr(q35m.causal_conv1d_fn, "__defaults__", (None,))[0] or q35m.causal_conv1d_fn)
-    ref_conv_upd = inspect.unwrap(
-        getattr(q35m.causal_conv1d_update, "__defaults__", (None, None, None))[2] or q35m.causal_conv1d_update
-    )
-    ref_rec = inspect.unwrap(
-        getattr(q35m.torch_recurrent_gated_delta_rule, "__defaults__", (None, False, False, None))[-1]
-        or q35m.torch_recurrent_gated_delta_rule
-    )
-    ref_chk = inspect.unwrap(
-        getattr(q35m.torch_chunk_gated_delta_rule, "__defaults__", (64, None, False, False, None))[-1]
-        or q35m.torch_chunk_gated_delta_rule
-    )
+    def original_reference(fn):
+        # Works both before and after NVRTC installation; never compare a kernel
+        # against its own wrapper or assume the position of a default argument.
+        fallback = inspect.signature(fn).parameters.get("_fb")
+        original = inspect.unwrap(fallback.default if fallback is not None else fn)
+        assert original.__module__.startswith("transformers."), original
+        return original
+
+    ref_conv_fn = original_reference(q35m.causal_conv1d_fn)
+    ref_conv_upd = original_reference(q35m.causal_conv1d_update)
+    ref_rec = original_reference(q35m.torch_recurrent_gated_delta_rule)
+    ref_chk = original_reference(q35m.torch_chunk_gated_delta_rule)
 
     # 1) Non-contiguous transposed CausalConv1d prefill & update (exact BF16 match)
     x_nc = torch.randn(2, 130, 64, device=dev, dtype=torch.bfloat16).transpose(1, 2)
@@ -1487,6 +1487,7 @@ def test_variable_shape_gemma4_and_coexisting_falcon_h1_ring_streaming(tmp_path)
 
 
 def test_hf_moe_all_layouts_and_routing_buffers_exact_parity(tmp_path):
+    from transformers import GraniteMoeConfig
     from transformers import AutoModelForCausalLM, DeepseekV3Config, GptOssConfig, Llama4TextConfig, MixtralConfig
     from src.aircolibri_integrated import AirColibriModel
 
@@ -1565,6 +1566,19 @@ def test_hf_moe_all_layouts_and_routing_buffers_exact_parity(tmp_path):
         ),
         transform_sd=_to_hub_mixtral,
     )
+
+    # Granite checkpoints use the old input/output_linear and router.layer names.
+    # All three must map before expert stripping or resident loading.
+    def _to_hub_granite(sd):
+        return {k.replace("block_sparse_moe.experts.gate_up_proj", "block_sparse_moe.input_linear.weight")
+                 .replace("block_sparse_moe.experts.down_proj", "block_sparse_moe.output_linear.weight")
+                 .replace("block_sparse_moe.router.weight", "block_sparse_moe.router.layer.weight"): v
+                for k, v in sd.items()}
+
+    _verify_moe("granite-hub", GraniteMoeConfig(vocab_size=64, hidden_size=32, intermediate_size=64,
+                                              num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2,
+                                              num_local_experts=4, num_experts_per_tok=2, pad_token_id=0),
+                transform_sd=_to_hub_granite)
 
     # b) Llama4 transposed 3D packed experts [E, H, 2*I] + input-weighted sigmoid routing
     _verify_moe(
@@ -1756,6 +1770,8 @@ def test_gguf_llama_rope_permute_split_shards_and_chat_fallback(tmp_path):
         # Verify template-less prompt fallback on AirColibriUnifiedEngine._prepare_prompt_and_cache
         assert getattr(eng.tokenizer, "chat_template", None) in (None, "")
         dummy = object.__new__(AirColibriUnifiedEngine)
+        from types import SimpleNamespace
+        dummy.plan = SimpleNamespace(max_context_tokens=4096)
         dummy.engine = eng
         dummy.session = ColibriKVPrefixSession()
         dummy._session_messages = []

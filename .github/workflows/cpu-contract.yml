@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      CUDA_VISIBLE_DEVICES: ""
+      CUDA_VISIBLE_DEVICES: "-1"
       HF_HUB_OFFLINE: "1"
     steps:
       - uses: actions/checkout@v4
@@ -31,4 +31,4 @@ jobs:
         run: python aircolibri.py --help
       - name: Run CPU tests
         # GPU and local-model tests skip on this runner; this is not a GPU or performance certification.
-        run: python -m pytest tests/test_cli_lan.py tests/test_model_source.py tests/test_vram_plan.py tests/test_lan_server_cancel.py tests/test_quantization_q4.py tests/test_engine_gpu.py -q
+        run: python -m pytest tests -q

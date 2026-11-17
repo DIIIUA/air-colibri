@@ -638,10 +638,11 @@ class AirColibriLANServer:
         self.beacon: UDPLANBeacon | None = None
 
     def passport(self) -> dict[str, Any]:
+        from . import __version__
         st = self.engine.status_snapshot()
         return {
             "service": "aircolibri",
-            "version": "1.0.0",
+            "version": __version__,
             "hostname": self.hostname,
             "lan_ip": self.lan_ip,
             "all_lan_ips": self.all_lan_ips,
@@ -667,7 +668,7 @@ class AirColibriLANServer:
 
     def _build_handler(self):
         srv = self
-        from .unified_runtime import GenerationCancelled
+        from .unified_runtime import ContextBudgetExceeded, GenerationCancelled
 
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
@@ -1024,6 +1025,13 @@ class AirColibriLANServer:
                                 pass
                     elif not probe():
                         self._send_error(499, "Generation cancelled: " + (ticket.cancel_reason or exc.reason), "cancelled", close=True)
+                except ContextBudgetExceeded as exc:
+                    outcome = f"error: {exc!r}"
+                    error_type = "context_length_exceeded"
+                    if headers_sent:
+                        _write_sse({"error": {"message": str(exc), "type": error_type}})
+                    else:
+                        self._send_error(HTTPStatus.BAD_REQUEST, str(exc), error_type, close=True)
                 except Exception as exc:  # engine failures (CUDA OOM, ...) must never leave the server wedged
                     outcome = f"error: {exc!r}"
                     srv.log.error("%s failed: %r\n%s", req_id, exc, traceback.format_exc())

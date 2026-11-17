@@ -29,6 +29,7 @@ _KERNEL_NAMES = (
     b"reduce_k_to_bf16",
     b"f32_to_bf16_vec",
     b"dense_gemv_q4_bf16",
+    b"dense_gemv_q6_bf16",
 )
 
 _LOCK = threading.Lock()
@@ -189,6 +190,23 @@ def _check_launch(rc: int, name: str) -> None:
         raise RuntimeError(f"cuLaunchKernel({name}) failed with CUresult={rc}")
 
 
+def reduce_routed_parts(parts: torch.Tensor) -> torch.Tensor:
+    """Reduce FP32 routed contributions in their original order, without casts."""
+    if parts.ndim != 2 or parts.dtype != torch.float32 or not parts.is_contiguous():
+        raise ValueError('Expected contiguous FP32 expert contributions')
+    nvcuda, fns = get_kernels(parts.device)
+    count, hidden = parts.shape
+    out = torch.empty((1, hidden), dtype=torch.bfloat16, device=parts.device)
+    p_part, p_out = ctypes.c_void_p(parts.data_ptr()), ctypes.c_void_p(out.data_ptr())
+    c_K, c_H = ctypes.c_int(count), ctypes.c_int(hidden)
+    args = (ctypes.c_void_p * 4)(ctypes.addressof(p_part), ctypes.addressof(p_out),
+                               ctypes.addressof(c_K), ctypes.addressof(c_H))
+    stream = ctypes.c_void_p(torch.cuda.current_stream(parts.device).cuda_stream)
+    _check_launch(nvcuda.cuLaunchKernel(fns[b'reduce_k_to_bf16'], (hidden+255)//256, 1, 1,
+                  256, 1, 1, 0, stream, args, None), 'reduce_k_to_bf16')
+    return out
+
+
 def fused_routed_moe_q4(
     x_bf16: torch.Tensor,          # (1, H) bf16 contiguous
     topk_idx: torch.Tensor,        # (K_SUB,) int64 contiguous on CUDA
@@ -232,11 +250,12 @@ def fused_routed_moe_q4(
     c_H = ctypes.c_int(H)
     c_I = ctypes.c_int(I)
     c_GS = ctypes.c_int(GS)
+    c_stride = ctypes.c_longlong(gu_q.stride(0) if not gu_q.is_contiguous() else 0)
 
-    args_gu = (ctypes.c_void_p * 9)(
+    args_gu = (ctypes.c_void_p * 10)(
         ctypes.addressof(p_x), ctypes.addressof(p_idx),
         ctypes.addressof(p_guq), ctypes.addressof(p_gus), ctypes.addressof(p_guz),
-        ctypes.addressof(p_inter), ctypes.addressof(c_H), ctypes.addressof(c_I), ctypes.addressof(c_GS),
+        ctypes.addressof(p_inter), ctypes.addressof(c_H), ctypes.addressof(c_I), ctypes.addressof(c_GS), ctypes.addressof(c_stride),
     )
     smem_gu = (H // GS) * 4 + H * 2
     grid_gu_x = (I + 7) // 8
@@ -245,10 +264,10 @@ def fused_routed_moe_q4(
         "routed_gate_up_swiglu_q4",
     )
 
-    args_dn = (ctypes.c_void_p * 10)(
+    args_dn = (ctypes.c_void_p * 11)(
         ctypes.addressof(p_inter), ctypes.addressof(p_idx), ctypes.addressof(p_w),
         ctypes.addressof(p_dnq), ctypes.addressof(p_dns), ctypes.addressof(p_dnz),
-        ctypes.addressof(p_part), ctypes.addressof(c_H), ctypes.addressof(c_I), ctypes.addressof(c_GS),
+        ctypes.addressof(p_part), ctypes.addressof(c_H), ctypes.addressof(c_I), ctypes.addressof(c_GS), ctypes.addressof(c_stride),
     )
     smem_dn = (I + I // GS) * 4
     grid_dn_x = (H + 7) // 8
@@ -257,6 +276,8 @@ def fused_routed_moe_q4(
         "routed_down_q4",
     )
 
+    if reduce is None:
+        return part_buf[:K_SUB]
     if reduce:
         out = torch.empty((1, H), dtype=torch.bfloat16, device=dev)
         p_out = ctypes.c_void_p(out.data_ptr())
@@ -329,11 +350,12 @@ def fused_routed_moe_q6(
     c_H = ctypes.c_int(H)
     c_I = ctypes.c_int(I)
     c_GS = ctypes.c_int(GS)
+    c_stride = ctypes.c_longlong(gu_qlo.stride(0) if not gu_qlo.is_contiguous() else 0)
 
-    args_gu = (ctypes.c_void_p * 10)(
+    args_gu = (ctypes.c_void_p * 11)(
         ctypes.addressof(p_x), ctypes.addressof(p_idx),
         ctypes.addressof(p_gulo), ctypes.addressof(p_guhi), ctypes.addressof(p_gus), ctypes.addressof(p_guz),
-        ctypes.addressof(p_inter), ctypes.addressof(c_H), ctypes.addressof(c_I), ctypes.addressof(c_GS),
+        ctypes.addressof(p_inter), ctypes.addressof(c_H), ctypes.addressof(c_I), ctypes.addressof(c_GS), ctypes.addressof(c_stride),
     )
     smem_gu = (H // GS) * 4 + H * 2
     grid_gu_x = (I + 7) // 8
@@ -342,10 +364,10 @@ def fused_routed_moe_q6(
         "routed_gate_up_swiglu_q6",
     )
 
-    args_dn = (ctypes.c_void_p * 11)(
+    args_dn = (ctypes.c_void_p * 12)(
         ctypes.addressof(p_inter), ctypes.addressof(p_idx), ctypes.addressof(p_w),
         ctypes.addressof(p_dnlo), ctypes.addressof(p_dnhi), ctypes.addressof(p_dns), ctypes.addressof(p_dnz),
-        ctypes.addressof(p_part), ctypes.addressof(c_H), ctypes.addressof(c_I), ctypes.addressof(c_GS),
+        ctypes.addressof(p_part), ctypes.addressof(c_H), ctypes.addressof(c_I), ctypes.addressof(c_GS), ctypes.addressof(c_stride),
     )
     smem_dn = (I + I // GS) * 4
     grid_dn_x = (H + 7) // 8
@@ -354,6 +376,8 @@ def fused_routed_moe_q6(
         "routed_down_q6",
     )
 
+    if reduce is None:
+        return part_buf[:K_SUB]
     if reduce:
         out = torch.empty((1, H), dtype=torch.bfloat16, device=dev)
         p_out = ctypes.c_void_p(out.data_ptr())
@@ -451,5 +475,65 @@ def fused_dense_linear_q4(
     _check_launch(
         nvcuda.cuLaunchKernel(fns[b"dense_gemv_q4_bf16"], grid_x, M, 1, 256, 1, 1, smem, stream, args, None),
         "dense_gemv_q4_bf16",
+    )
+    return y_2d.view(*orig_shape, N)
+
+
+def fused_dense_linear_q6(
+    x: torch.Tensor,
+    qweight: torch.Tensor,
+    qhi: torch.Tensor,
+    scales: torch.Tensor,
+    zeros: torch.Tensor,
+    bias: Optional[torch.Tensor] = None,
+    group_size: int = 64,
+) -> torch.Tensor:
+    """Zero-scratch W6A16 GEMV / small-M linear (`y = x @ dequant(W)^T + bias`)."""
+    dev = qweight.device
+    nvcuda, fns = get_kernels(dev)
+    N = int(qweight.shape[0])
+    K = int(qweight.shape[1] * 2)
+    orig_shape = x.shape[:-1]
+    M = int(x.numel() // K)
+
+    x_bf16 = x if x.dtype == torch.bfloat16 else x.to(torch.bfloat16)
+    x_2d = x_bf16.reshape(M, K)
+    if not x_2d.is_contiguous():
+        x_2d = x_2d.contiguous()
+    qw = qweight if qweight.is_contiguous() else qweight.contiguous()
+    sc = scales if scales.is_contiguous() else scales.contiguous()
+    zr = zeros if zeros.is_contiguous() else zeros.contiguous()
+    bi = None
+    if bias is not None:
+        bi_t = bias if bias.dtype == torch.bfloat16 else bias.to(torch.bfloat16)
+        bi = bi_t if bi_t.is_contiguous() else bi_t.contiguous()
+
+    y_2d = torch.empty((M, N), dtype=torch.bfloat16, device=dev)
+    stream = ctypes.c_void_p(torch.cuda.current_stream(dev).cuda_stream)
+
+    p_x = ctypes.c_void_p(x_2d.data_ptr())
+    p_q = ctypes.c_void_p(qw.data_ptr())
+    hi = qhi.contiguous()
+    p_hi = ctypes.c_void_p(hi.data_ptr())
+    p_s = ctypes.c_void_p(sc.data_ptr())
+    p_z = ctypes.c_void_p(zr.data_ptr())
+    p_b = ctypes.c_void_p(bi.data_ptr() if bi is not None else 0)
+    p_y = ctypes.c_void_p(y_2d.data_ptr())
+
+    c_M = ctypes.c_int(M)
+    c_N = ctypes.c_int(N)
+    c_K = ctypes.c_int(K)
+    c_GS = ctypes.c_int(int(group_size))
+
+    args = (ctypes.c_void_p * 11)(
+        ctypes.addressof(p_x), ctypes.addressof(p_q), ctypes.addressof(p_hi), ctypes.addressof(p_s), ctypes.addressof(p_z),
+        ctypes.addressof(p_b), ctypes.addressof(p_y),
+        ctypes.addressof(c_M), ctypes.addressof(c_N), ctypes.addressof(c_K), ctypes.addressof(c_GS),
+    )
+    smem = (K // group_size) * 4 + K * 2
+    grid_x = (N + 7) // 8
+    _check_launch(
+        nvcuda.cuLaunchKernel(fns[b"dense_gemv_q6_bf16"], grid_x, M, 1, 256, 1, 1, smem, stream, args, None),
+        "dense_gemv_q6_bf16",
     )
     return y_2d.view(*orig_shape, N)

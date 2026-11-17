@@ -346,7 +346,7 @@ def _normalize_decoder_shape_keys(cfg: dict[str, Any]) -> dict[str, Any]:
                 out["num_hidden_layers"] = int(out[alt])
                 break
     if "hidden_size" not in out:
-        for alt in ("n_embd", "d_model"):
+        for alt in ("n_embd", "n_embed", "d_model"):
             if out.get(alt) is not None:
                 out["hidden_size"] = int(out[alt])
                 break
@@ -692,6 +692,8 @@ _ST_DTYPES = {
     "F16": ("float16", 2),
     "F32": ("float32", 4),
     "F64": ("float64", 8),
+    "F8_E4M3": ("float8_e4m3fn", 1),
+    "F8_E5M2": ("float8_e5m2", 1),
     "I64": ("int64", 8),
     "I32": ("int32", 4),
     "I16": ("int16", 2),
@@ -740,11 +742,16 @@ def _pread_or_seek_into(f: Any, abs_offset: int, view: memoryview, path: str) ->
 class PreadSafetensorsReader:
     """Reads named tensors with positioned file reads; keeps a small LRU of open file handles."""
 
-    def __init__(self, max_handles: int = 8):
+    def __init__(self, max_handles: int = 8, max_read_bytes: int = 1024 * 1024):
         self.max_handles = max(1, int(max_handles))
+        self.max_read_bytes = int(max_read_bytes)
+        if self.max_read_bytes <= 0:
+            raise ValueError("max_read_bytes must be positive")
         self._handles: "OrderedDict[str, Any]" = OrderedDict()
         self._headers: dict[str, tuple[dict[str, Any], int]] = {}
         self._lock = threading.Lock()
+        self._slice_stats = dict(slices=0, requested_bytes=0, read_bytes=0, read_calls=0,
+                                 max_read_bytes=0, max_slice_bytes=0, max_scratch_bytes=0)
 
     def _header(self, path: str) -> tuple[dict[str, Any], int]:
         hdr = self._headers.get(path)
@@ -797,6 +804,79 @@ class PreadSafetensorsReader:
     def read_entries(self, entries: dict[str, tuple[str, str]]) -> dict[str, Any]:
         """Reads ``{name: (file, stored_key)}`` into ``{name: tensor}``."""
         return {name: self.read_tensor(path, key) for name, (path, key) in entries.items()}
+
+    def matrix_io_stats(self) -> dict[str, int]:
+        with self._lock:
+            return dict(self._slice_stats)
+
+    def _read_slice_range(self, f, offset, target, path):
+        """Called under the reader lock; each physical read has a fixed cap."""
+        for start in range(0, len(target), self.max_read_bytes):
+            end = min(len(target), start + self.max_read_bytes)
+            _pread_or_seek_into(f, offset + start, target[start:end], path)
+            count = end - start
+            self._slice_stats["read_calls"] += 1
+            self._slice_stats["read_bytes"] += count
+            self._slice_stats["max_read_bytes"] = max(self._slice_stats["max_read_bytes"], count)
+
+    def read_matrix_slice(self, path: str | Path, key: str, r0: int, r1: int,
+                          c0: int = 0, c1: int | None = None):
+        """Read a rectangle of a stored matrix without mapping/loading the matrix.
+
+        Dense column selections coalesce into bounded row stripes to avoid a
+        syscall per row. Sparse selections read only their requested columns.
+        The result is caller-sized; optional I/O scratch is <= max_read_bytes.
+        """
+        import torch
+
+        path = str(path)
+        with self._lock:
+            header, base = self._header(path)
+            meta = header[key]
+            shape = meta["shape"]
+            if len(shape) != 2:
+                raise ValueError(f"{key}: matrix slicing requires two dimensions")
+            n, k = shape
+            c1 = k if c1 is None else c1
+            if not (0 <= r0 <= r1 <= n and 0 <= c0 <= c1 <= k):
+                raise ValueError(f"{key}: matrix slice is outside its shape {shape}")
+            dtype_name, item_bytes = _ST_DTYPES[meta["dtype"]]
+            start, end = meta["data_offsets"]
+            if end - start != n * k * item_bytes:
+                raise ValueError(f"{key}: stored byte extent does not match matrix shape")
+            rows, cols = r1 - r0, c1 - c0
+            width, stride = cols * item_bytes, k * item_bytes
+            buf = bytearray(rows * width)
+            target = memoryview(buf)
+            self._slice_stats["slices"] += 1
+            self._slice_stats["requested_bytes"] += len(buf)
+            self._slice_stats["max_slice_bytes"] = max(self._slice_stats["max_slice_bytes"], len(buf))
+            if rows and cols:
+                f = self._file(path)
+                offset = base + start
+                if cols == k:
+                    self._read_slice_range(f, offset + r0 * stride, target, path)
+                elif cols * 8 >= k and stride <= self.max_read_bytes:
+                    stripe_rows = max(1, self.max_read_bytes // stride)
+                    for row in range(r0, r1, stripe_rows):
+                        count = min(stripe_rows, r1-row)
+                        scratch = bytearray(count * stride)
+                        view = memoryview(scratch)
+                        self._slice_stats["max_scratch_bytes"] = max(self._slice_stats["max_scratch_bytes"], len(scratch))
+                        self._read_slice_range(f, offset + row*stride, view, path)
+                        for j in range(count):
+                            dst = (row-r0+j)*width
+                            src = j*stride + c0*item_bytes
+                            target[dst:dst+width] = view[src:src+width]
+                        del view, scratch
+                else:
+                    for row in range(r0, r1):
+                        dst = (row-r0)*width
+                        self._read_slice_range(f, offset + row*stride + c0*item_bytes,
+                                               target[dst:dst+width], path)
+        dtype = getattr(torch, dtype_name)
+        return (torch.frombuffer(buf, dtype=dtype).reshape(rows, cols) if buf
+                else torch.empty((rows, cols), dtype=dtype))
 
     def __call__(self, model_dir: str, stem: str, names: Iterable[str]) -> dict[str, Any]:
         """``weight_reader`` protocol used by the engine: reads ``<model_dir>/<stem>.safetensors``."""
@@ -1320,11 +1400,17 @@ def _fast_moe_dispatch(
     *,
     bias_lookup_fn: Any = None,
     input_weighted: bool = False,
+    packed_loader=None,
+    layer_idx=None,
 ):
     """Sync-free MoE router dispatch: batched GEMV/BMM for decode (T=1) and grouped batches for prefill."""
     import torch
     import torch.nn.functional as F
 
+    if packed_loader is not None:
+        fused = packed_loader.try_fused(layer_idx, hidden_states, top_k_index, top_k_weights, num_exp)
+        if fused is not None:
+            return fused
     T, D = hidden_states.shape
     if T == 0:
         return torch.zeros_like(hidden_states)
@@ -1595,6 +1681,7 @@ class _HFExpertCacheAndLoader:
                     self._spans[(l_idx, eid)] = ("std2", ((up, uoff + eid * b_u, b_u), (dp, doff + eid * b_d, b_d)), raw_dt)
                 max_expert_raw_bytes = max(max_expert_raw_bytes, b_u + b_d)
 
+        self.uniform_shapes = uniform_shapes
         self.n_proj = 3 if self.has_gate else 2
         self.inter_dim = inter_dim
         self.hidden_dim = hidden_dim
@@ -1798,6 +1885,8 @@ class HFShardedSource:
                 continue
 
             norm_key = stored_key
+            if norm_key.startswith("model.text_model."):
+                norm_key = "model." + norm_key[len("model.text_model.") :]
             if model_type == "nemotron_h" and norm_key.startswith("backbone."):
                 norm_key = "model." + norm_key[len("backbone.") :]
 
@@ -1805,6 +1894,13 @@ class HFShardedSource:
             if m:
                 idx = int(m.group(1))
                 leaf = m.group(2)
+                if model_type.startswith("granitemoe"):
+                    # Hub checkpoints before the Transformers experts unification.
+                    leaf = {
+                        "block_sparse_moe.input_linear.weight": "block_sparse_moe.experts.gate_up_proj",
+                        "block_sparse_moe.output_linear.weight": "block_sparse_moe.experts.down_proj",
+                        "block_sparse_moe.router.layer.weight": "block_sparse_moe.router.weight",
+                    }.get(leaf, leaf)
                 if leaf.startswith("block_sparse_moe.") and not model_type.startswith("granitemoe"):
                     leaf = "mlp." + leaf[len("block_sparse_moe.") :]
                     if model_type == "phimoe" and leaf == "mlp.gate.weight":
@@ -1910,6 +2006,18 @@ class HFShardedSource:
     def tensor_shape(self, entry: tuple[str, str]) -> tuple[int, ...]:
         return tuple(self._tensor_meta(*entry)["shape"])
 
+    def read_weight_rows(self, entry, r0: int, r1: int, *, transpose=False, device=None):
+        """Rows in Linear's [out, in] layout, including stored Conv1D matrices."""
+        shape = self.tensor_shape(entry)
+        if transpose:
+            tile = self._pread_reader.read_matrix_slice(*entry, 0, shape[0], r0, r1).T.contiguous()
+        else:
+            tile = self._pread_reader.read_matrix_slice(*entry, r0, r1)
+        return tile.to(device) if device is not None else tile
+
+    def projection_io_stats(self):
+        return self._pread_reader.matrix_io_stats()
+
     def layer_identity(self, layer_idx: int) -> dict[str, Any]:
         """Cache identity of one decoder layer: tensor names, dtypes, shapes, byte ranges and file stamps."""
         tensors: dict[str, Any] = {}
@@ -1927,7 +2035,7 @@ class HFShardedSource:
     def expert_cache_stats(self) -> dict[str, Any] | None:
         return self._expert_loader.stats() if self._expert_loader is not None else None
 
-    def prepare_model(self, model: Any, device: Any = None, dtype: Any = None, expert_cache_bytes: int = 0) -> None:
+    def prepare_model(self, model: Any, device: Any = None, dtype: Any = None, expert_cache_bytes: int = 0, quant_bits: int = 0) -> None:
         """Strips meta routed-expert parameters on HF MoE models and binds positioned-read expert routing."""
         import torch
         import torch.nn.functional as F
@@ -1947,8 +2055,11 @@ class HFShardedSource:
             self._packed_experts,
             device=device,
             dtype=default_dtype,
-            budget_bytes=int(expert_cache_bytes),
+            budget_bytes=0 if quant_bits else int(expert_cache_bytes),
         )
+        if quant_bits:
+            from src.quantized_experts import QuantizedExpertCache
+            loader = QuantizedExpertCache(loader, quant_bits, int(expert_cache_bytes))
         self._expert_loader = loader
 
         moe_layers = sorted(set(self._routed_experts) | set(self._packed_experts))
@@ -1966,6 +2077,8 @@ class HFShardedSource:
             is_llama4 = type(moe_parent).__name__ == "Llama4TextMoe"
             has_bias = layer_idx in loader._biases
             num_exp_layer = loader.num_experts_by_layer[layer_idx]
+            if quant_bits:
+                loader.configure_layer(layer_idx, experts_mod, has_bias, is_llama4)
 
             def _hf_sliced_experts_forward(
                 self_exp,
@@ -1985,6 +2098,8 @@ class HFShardedSource:
                     top_k_weights,
                     n_e,
                     lambda ids, dev, dt, evict: loader.load_batch(_layer_idx, ids, dev, dt, evict),
+                    packed_loader=loader if quant_bits else None,
+                    layer_idx=_layer_idx,
                     bias_lookup_fn=(
                         (lambda ids, dev, dt: loader.lookup_biases(_layer_idx, ids, dev, dt)) if _has_bias else None
                     ),
@@ -2911,7 +3026,7 @@ class GGUFModelSource:
 
         return self._decode_bytes(buf, int(info["ggml_type"]), (k, d1, d2), dtype=dtype, device=device)
 
-    def prepare_model(self, model: Any, device: Any = None, dtype: Any = None, expert_cache_bytes: int = 0) -> None:
+    def prepare_model(self, model: Any, device: Any = None, dtype: Any = None, expert_cache_bytes: int = 0, quant_bits: int = 0) -> None:
         """Strips meta routed-expert parameters and binds sliced GGUF expert execution."""
         import torch
 
@@ -2934,8 +3049,11 @@ class GGUFModelSource:
             source=self,
             device=device,
             dtype=dtype,
-            budget_bytes=int(expert_cache_bytes),
+            budget_bytes=0 if quant_bits else int(expert_cache_bytes),
         )
+        if quant_bits:
+            from src.quantized_experts import QuantizedExpertCache
+            loader = QuantizedExpertCache(loader, quant_bits, int(expert_cache_bytes))
         self._expert_loader = loader
 
         moe_layers = sorted(set(self._routed_experts) | set(self._per_expert_gguf))
@@ -2957,6 +3075,8 @@ class GGUFModelSource:
 
             num_exp_layer = int(loader._layer_meta[layer_idx]["num_experts"])
             has_bias = layer_idx in loader._biases
+            if quant_bits:
+                loader.configure_layer(layer_idx, experts_mod, has_bias)
 
             def _sliced_experts_forward(
                 self_exp,
@@ -2975,6 +3095,8 @@ class GGUFModelSource:
                     top_k_weights,
                     n_e,
                     lambda ids, dev, dt, evict: loader.load_batch(_layer_idx, ids, dev, dt, evict),
+                    packed_loader=loader if quant_bits else None,
+                    layer_idx=_layer_idx,
                     bias_lookup_fn=(
                         (lambda ids, dev, dt: loader.lookup_biases(_layer_idx, ids, dev, dt)) if _has_bias else None
                     ),
@@ -2987,6 +3109,10 @@ def open_model_source(model_dir: str | Path):
     """Returns ``HFShardedSource`` or ``GGUFModelSource``; ``None`` for Colibri containers."""
     fmt = detect_format(model_dir)
     if fmt == "hf":
+        quant = raw_text_config_dict(model_dir).get("quantization_config") or {}
+        if quant.get("quant_method") in {"fp8", "awq", "gptq"}:
+            from aircolibri_cli.hf_quantized_source import HFQuantizedSource
+            return HFQuantizedSource(model_dir)
         return HFShardedSource(model_dir)
     if fmt == "gguf":
         return GGUFModelSource(model_dir)

@@ -1111,7 +1111,12 @@ def build_extended_gguf_tokenizer(arch: str, meta: dict[str, Any], cfg: Any):
     if tok_type in ("llama", "spm") and "scores" not in tok_dict:
         tok_dict["scores"] = [0.0] * len(tokens)
     pre_type = tok_dict.get("pre_tokenizer_type")
-    if pre_type and pre_type not in GGUF_PRE_TOKENIZER_SPLITS:
+    # GGUF's "default" also occurs on SentencePiece checkpoints. The regex
+    # registry installs a ByteLevel pre-tokenizer and is only valid for BPE
+    # byte vocabularies; applying it to metaspace tokens corrupts UTF-8.
+    if tok_type != "gpt2":
+        tok_dict.pop("pre_tokenizer_type", None)
+    elif pre_type and pre_type not in GGUF_PRE_TOKENIZER_SPLITS:
         tok_dict["pre_tokenizer_type"] = "default"
 
     fast_tok, add_kw = convert_gguf_tokenizer(arch, tok_dict)

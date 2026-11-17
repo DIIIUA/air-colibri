@@ -33,7 +33,7 @@ extern "C" __global__ void routed_gate_up_swiglu_q4(
     const unsigned short* __restrict__ gu_s,        // [E, 2*I, H/GS]
     const unsigned short* __restrict__ gu_z,        // [E, 2*I, H/GS]
     float* __restrict__ inter_out,                  // [K_SUB, I]
-    int H, int I, int GS
+    int H, int I, int GS, long long expert_stride_bytes
 ) {
     extern __shared__ char smem_raw[];
     float* s_xsum = reinterpret_cast<float*>(smem_raw);
@@ -68,8 +68,8 @@ extern "C" __global__ void routed_gate_up_swiglu_q4(
     int two_I = 2 * I;
     int packed_H = H >> 1;
 
-    long long exp_q_off = (long long)e * two_I * packed_H;
-    long long exp_s_off = (long long)e * two_I * num_groups;
+    long long exp_q_off = expert_stride_bytes ? (long long)e * expert_stride_bytes : (long long)e * two_I * packed_H;
+    long long exp_s_off = expert_stride_bytes ? (long long)e * (expert_stride_bytes / 2) : (long long)e * two_I * num_groups;
 
     const unsigned char* q_gate_ptr = gu_q + exp_q_off + (long long)row * packed_H;
     const unsigned char* q_up_ptr   = gu_q + exp_q_off + (long long)(row + I) * packed_H;
@@ -181,7 +181,7 @@ extern "C" __global__ void routed_down_q4(
     const unsigned short* __restrict__ dn_s,        // [E, H, I/GS]
     const unsigned short* __restrict__ dn_z,        // [E, H, I/GS]
     float* __restrict__ part_out,                   // [K_SUB, H]
-    int H, int I, int GS
+    int H, int I, int GS, long long expert_stride_bytes
 ) {
     extern __shared__ float smem_f[];
     float* s_x = smem_f;                            // [I]
@@ -214,8 +214,8 @@ extern "C" __global__ void routed_down_q4(
 
     int e = (int)topk_idx[k_slot];
     int packed_I = I >> 1;
-    long long exp_q_off = (long long)e * H * packed_I;
-    long long exp_s_off = (long long)e * H * num_groups;
+    long long exp_q_off = expert_stride_bytes ? (long long)e * expert_stride_bytes : (long long)e * H * packed_I;
+    long long exp_s_off = expert_stride_bytes ? (long long)e * (expert_stride_bytes / 2) : (long long)e * H * num_groups;
 
     const unsigned char* q_ptr = dn_q + exp_q_off + (long long)row * packed_I;
     const unsigned short* s_row = dn_s + exp_s_off + (long long)row * num_groups;
@@ -298,7 +298,7 @@ extern "C" __global__ void routed_gate_up_swiglu_q6(
     const unsigned short* __restrict__ gu_s,        // [E, 2*I, H/GS]
     const unsigned short* __restrict__ gu_z,        // [E, 2*I, H/GS]
     float* __restrict__ inter_out,                  // [K_SUB, I]
-    int H, int I, int GS
+    int H, int I, int GS, long long expert_stride_bytes
 ) {
     extern __shared__ char smem_raw[];
     float* s_xsum = reinterpret_cast<float*>(smem_raw);
@@ -332,9 +332,9 @@ extern "C" __global__ void routed_gate_up_swiglu_q6(
     int lo_H = H >> 1;
     int hi_H = H >> 2;
 
-    long long exp_lo_off = (long long)e * two_I * lo_H;
-    long long exp_hi_off = (long long)e * two_I * hi_H;
-    long long exp_s_off  = (long long)e * two_I * num_groups;
+    long long exp_lo_off = expert_stride_bytes ? (long long)e * expert_stride_bytes : (long long)e * two_I * lo_H;
+    long long exp_hi_off = expert_stride_bytes ? (long long)e * expert_stride_bytes : (long long)e * two_I * hi_H;
+    long long exp_s_off  = expert_stride_bytes ? (long long)e * (expert_stride_bytes / 2) : (long long)e * two_I * num_groups;
 
     const unsigned char* qlo_g_ptr = gu_qlo + exp_lo_off + (long long)row * lo_H;
     const unsigned char* qlo_u_ptr = gu_qlo + exp_lo_off + (long long)(row + I) * lo_H;
@@ -480,7 +480,7 @@ extern "C" __global__ void routed_down_q6(
     const unsigned short* __restrict__ dn_s,        // [E, H, I/GS]
     const unsigned short* __restrict__ dn_z,        // [E, H, I/GS]
     float* __restrict__ part_out,                   // [K_SUB, H]
-    int H, int I, int GS
+    int H, int I, int GS, long long expert_stride_bytes
 ) {
     extern __shared__ float smem_f[];
     float* s_x = smem_f;
@@ -512,9 +512,9 @@ extern "C" __global__ void routed_down_q6(
     int e = (int)topk_idx[k_slot];
     int lo_I = I >> 1;
     int hi_I = I >> 2;
-    long long exp_lo_off = (long long)e * H * lo_I;
-    long long exp_hi_off = (long long)e * H * hi_I;
-    long long exp_s_off  = (long long)e * H * num_groups;
+    long long exp_lo_off = expert_stride_bytes ? (long long)e * expert_stride_bytes : (long long)e * H * lo_I;
+    long long exp_hi_off = expert_stride_bytes ? (long long)e * expert_stride_bytes : (long long)e * H * hi_I;
+    long long exp_s_off  = expert_stride_bytes ? (long long)e * (expert_stride_bytes / 2) : (long long)e * H * num_groups;
 
     const unsigned char* qlo_ptr = dn_qlo + exp_lo_off + (long long)row * lo_I;
     const unsigned char* qhi_ptr = dn_qhi + exp_hi_off + (long long)row * hi_I;
@@ -630,6 +630,54 @@ extern "C" __global__ void f32_to_bf16_vec(
  * 6. Dense Linear W4A16 GEMV/Small-Batch GEMM (for Qwen3.5-9B ColibriQ4Linear)
  *    Computes y[M, N] = x[M, K] @ dequant(W[N, K])^T + bias[N] for small M.
  * ============================================================================ */
+extern "C" __global__ void dense_gemv_q6_bf16(
+    const unsigned short* __restrict__ x,
+    const unsigned char* __restrict__ qlo,
+    const unsigned char* __restrict__ qhi,
+    const unsigned short* __restrict__ scales,
+    const unsigned short* __restrict__ zeros,
+    const unsigned short* __restrict__ bias,
+    unsigned short* __restrict__ y,
+    int M, int N, int K, int GS
+) {
+    extern __shared__ char raw[];
+    int groups = K / GS;
+    float* sums = reinterpret_cast<float*>(raw);
+    unsigned short* sx = reinterpret_cast<unsigned short*>(sums + groups);
+    int tid = threadIdx.x, m = blockIdx.y;
+    for (int c = tid; c < K; c += blockDim.x) sx[c] = x[(long long)m*K+c];
+    __syncthreads();
+    for (int g = tid; g < groups; g += blockDim.x) {
+        float sum = 0.f;
+        for (int j = 0; j < GS; ++j) sum += bf16_to_f32(sx[g*GS+j]);
+        sums[g] = sum;
+    }
+    __syncthreads();
+    int lane = tid & 31, row = blockIdx.x * (blockDim.x >> 5) + (tid >> 5);
+    if (row >= N) return;
+    const unsigned int* lo = reinterpret_cast<const unsigned int*>(qlo + (long long)row*(K/2));
+    const unsigned short* hi = reinterpret_cast<const unsigned short*>(qhi + (long long)row*(K/4));
+    float acc = 0.f;
+    for (int v = lane; v < K/8; v += 32) {
+        unsigned int l = lo[v], h = hi[v];
+        float dot = 0.f;
+        #pragma unroll
+        for (int j = 0; j < 8; ++j) {
+            unsigned int q = ((l >> (j*4)) & 15u) | (((h >> (j*2)) & 3u) << 4);
+            dot += float(q) * bf16_to_f32(sx[v*8+j]);
+        }
+        acc += dot * bf16_to_f32(scales[(long long)row*groups + v*8/GS]);
+    }
+    for (int g = lane; g < groups; g += 32)
+        acc += bf16_to_f32(zeros[(long long)row*groups+g]) * sums[g];
+    #pragma unroll
+    for (int off = 16; off > 0; off >>= 1) acc += __shfl_down_sync(0xffffffffu, acc, off);
+    if (lane == 0) {
+        if (bias) acc += bf16_to_f32(bias[row]);
+        y[(long long)m*N+row] = f32_to_bf16_rne(acc);
+    }
+}
+
 extern "C" __global__ void dense_gemv_q4_bf16(
     const unsigned short* __restrict__ x_bf16,      // [M, K]
     const unsigned char* __restrict__ qweight,      // [N, K/2]

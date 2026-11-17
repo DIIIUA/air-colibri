@@ -18,6 +18,7 @@ import copy
 import ctypes
 from dataclasses import asdict, dataclass
 import gc
+import math
 import os
 from pathlib import Path
 import sys
@@ -1109,7 +1110,7 @@ class ColibriKVPrefixSession:
         self.unfed_tail: list[int] = []
         self.chatml_think_format: bool = False
         self.tainted: bool = False
-        self.parked_backbone: dict[int, dict[str, torch.Tensor]] | None = None
+        self.parked_backbone: dict[int, dict[str, Any]] | None = None
         self.parked_mtp: dict[str, torch.Tensor] | None = None
         self.parked_mtp_committed_len: int = 0
         self.config = None
@@ -1138,6 +1139,7 @@ class ColibriKVPrefixSession:
         mtp_head: ColibriNativeMTPHead | None,
         captured: dict[str, torch.Tensor],
         chatml_think_format: bool = False,
+        consumed_tokens: int | None = None,
     ) -> float:
         self.config = config
         self.chatml_think_format = bool(chatml_think_format)
@@ -1151,7 +1153,11 @@ class ColibriKVPrefixSession:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             return 0.0
-        past_len = _cache_seq_len(past_key_values)
+        # Pure recurrent caches have no KV sequence axis. Generation owns the
+        # number of committed inputs; a state tensor's shape cannot supply it.
+        past_len = _cache_seq_len(past_key_values) if consumed_tokens is None else int(consumed_tokens)
+        if not 0 <= past_len <= len(all_ids):
+            raise ValueError("consumed_tokens must index the committed input prefix")
         if past_len <= 0 and not need_bridge:
             del past_key_values
             self.reset()
@@ -1186,15 +1192,28 @@ class ColibriKVPrefixSession:
         self.parked_backbone = {}
         total_bytes = 0
         for l_idx, l_cache in enumerate(past_key_values.layers):
-            entry: dict[str, torch.Tensor] = {}
+            entry: dict[str, Any] = {}
             if getattr(l_cache, "keys", None) is not None and l_cache.keys.numel() > 0:
                 entry["keys"] = _detach_park_cpu(l_cache.keys, allow_pin)
                 entry["values"] = _detach_park_cpu(l_cache.values, allow_pin)
                 total_bytes += entry["keys"].nbytes + entry["values"].nbytes
-            if hasattr(l_cache, "conv_states") and l_cache.is_conv_states_initialized.get(0, False):
-                entry["conv"] = _detach_park_cpu(l_cache.conv_states[0], allow_pin)
-                entry["rec"] = _detach_park_cpu(l_cache.recurrent_states[0], allow_pin)
-                total_bytes += entry["conv"].nbytes + entry["rec"].nbytes
+            # Sliding KV tensors only retain a window, not the absolute position.
+            if hasattr(l_cache, "cumulative_length"):
+                entry["cumulative_length"] = int(l_cache.cumulative_length)
+            if hasattr(l_cache, "conv_states"):
+                states = {}
+                for state_idx in l_cache.has_previous_state:
+                    state = {"has_previous_state": bool(l_cache.has_previous_state[state_idx])}
+                    for name, flags in (("conv_states", "is_conv_states_initialized"),
+                                        ("recurrent_states", "is_recurrent_states_initialized")):
+                        tensor = getattr(l_cache, name).get(state_idx)
+                        if getattr(l_cache, flags).get(state_idx, False) and tensor is not None:
+                            state[name] = _detach_park_cpu(tensor, allow_pin)
+                            total_bytes += tensor.nbytes
+                    if "conv_states" in state:
+                        state["conv_kernel_size"] = l_cache.conv_kernel_size[state_idx]
+                    states[state_idx] = state
+                entry["linear_states"] = states
             self.parked_backbone[l_idx] = entry
 
         if mtp_head is not None and mtp_head.kv_cache.get_seq_length() > 0:
@@ -1244,13 +1263,21 @@ class ColibriKVPrefixSession:
                     k_gpu = entry["keys"].to(device, non_blocking=True)
                     v_gpu = entry["values"].to(device, non_blocking=True)
                     l_cache.update(k_gpu, v_gpu)
-                if "conv" in entry:
-                    c_gpu = entry["conv"].to(device, non_blocking=True)
-                    r_gpu = entry["rec"].to(device, non_blocking=True)
-                    l_cache.lazy_initialization(conv_states=c_gpu, state_idx=0, conv_kernel_size=c_gpu.shape[-1])
-                    l_cache.conv_states[0].copy_(c_gpu)
-                    l_cache.has_previous_state[0] = True
-                    l_cache.update_recurrent_state(r_gpu, state_idx=0)
+                if "cumulative_length" in entry:
+                    l_cache.cumulative_length = entry["cumulative_length"]
+                for state_idx, state in entry.get("linear_states", {}).items():
+                    c_gpu = state.get("conv_states")
+                    r_gpu = state.get("recurrent_states")
+                    c_gpu = c_gpu.to(device, non_blocking=True) if c_gpu is not None else None
+                    r_gpu = r_gpu.to(device, non_blocking=True) if r_gpu is not None else None
+                    l_cache.lazy_initialization(conv_states=c_gpu, recurrent_states=r_gpu,
+                                                state_idx=state_idx,
+                                                conv_kernel_size=state.get("conv_kernel_size"))
+                    if c_gpu is not None:
+                        l_cache.conv_states[state_idx].copy_(c_gpu)
+                    if r_gpu is not None:
+                        l_cache.recurrent_states[state_idx].copy_(r_gpu)
+                    l_cache.has_previous_state[state_idx] = state["has_previous_state"]
             elif "keys" in entry:
                 k_gpu = entry["keys"].to(device, non_blocking=True)
                 v_gpu = entry["values"].to(device, non_blocking=True)
@@ -1332,6 +1359,10 @@ class _IncrementalThinkSplitter:
 MiB = 1024 ** 2
 GiB = 1024 ** 3
 VRAM_MODES = ("normal", "turbo")
+
+
+class ContextBudgetExceeded(ValueError):
+    """Request exceeds the context capacity reserved by the current VRAM plan."""
 
 
 class GenerationCancelled(RuntimeError):
@@ -1492,6 +1523,7 @@ def plan_vram(
     max_context_tokens: int | None = None,
     prefill_chunk_tokens: int | None = None,
     ring_slots: int = 3,
+    prefill_wavefront: bool = False,
 ) -> VRAMPlan:
     """Splits the *available* VRAM between weights and a guaranteed working reserve.
 
@@ -1512,6 +1544,9 @@ def plan_vram(
     max_ctx = int(max_context_tokens or (4096 if low_vram else 8192))
     context_bytes = kv_bytes_per_token * max_ctx + 2 * recurrent_state_bytes
     prefill_bytes = _align(int(chunk * (4 * hidden_size + 3 * intermediate_size) * 2 * 1.5))
+    if prefill_wavefront:
+        # Three simultaneous layer workspaces plus four chunks of activations.
+        prefill_bytes = 3 * prefill_bytes + _align(4 * chunk * hidden_size * 2) + 96 * MiB
     logits_bytes = 4 * MiB
     if mode == "normal":
         guard = _align(max(160 * MiB, int(0.045 * total_bytes))) if low_vram else _align(max(384 * MiB, int(0.055 * total_bytes)))
@@ -1540,7 +1575,9 @@ def plan_vram(
     room = budget - base - (mtp_bytes if enable_mtp else 0)
     resident = 0
     used = 0
-    for b in sorted(layer_bytes):
+    # The scheduler may select non-adjacent priority anchors. Budget the largest
+    # layers so any selected resident set of this size remains within the limit.
+    for b in sorted(layer_bytes, reverse=True):
         if used + b > room:
             break
         used += b
@@ -1583,16 +1620,27 @@ def plan_for_checkpoint(
     enable_mtp: bool = True,
     max_context_tokens: int | None = None,
     prefill_chunk_tokens: int | None = None,
+    weight_format: str = "auto",
+    prefill_wavefront: bool = False,
 ) -> tuple[dict[str, Any], VRAMPlan, bool]:
-    """Reads headers only and decides the backend, the VRAM plan and whether MTP exists.
+    """Plan from headers and meta modules, including the actual packed projections.
 
-    Q4 sizes and the MTP head are used only when ``runtime_profile`` says the fused
-    kernels match. Other models are measured as BF16 and never enable MTP.
+    Native MTP remains guarded by the specialized Qwen geometry. Generic Q4/Q6
+    uses architecture modules and bounded dense/expert kernels.
     """
     from .model_source import open_model_source, raw_text_config_dict, runtime_profile
 
     folder = Path(model_dir)
     profile = runtime_profile(folder)
+    if prefill_wavefront and profile.get("model_type") != "llama":
+        raise ValueError("Experimental wavefront prefill currently supports Llama models only")
+    if weight_format not in ("auto", "bf16", "q4", "q6"):
+        raise ValueError("weight_format must be auto, bf16, q4 or q6")
+    profile = dict(profile)
+    fast = bool(profile["fast_qwen"]) and weight_format in ("auto", "q4")
+    selected_format = ("q4" if fast else "q6") if weight_format == "auto" else weight_format
+    profile.update(fast_qwen=fast, weight_format=selected_format,
+                   backend="qwen35-q4" if fast else f"universal-{selected_format}")
     cfg = raw_text_config_dict(folder)
     num_layers = int(
         cfg.get("num_hidden_layers")
@@ -1617,7 +1665,29 @@ def plan_for_checkpoint(
             mtp_bytes += q4_bytes_for_shape(tuple(mtp_sh["mtp.fc.weight"]))
         has_mtp = "mtp.fc.weight" in mtp_sh
     else:
-        layer_bytes = [sum(bf16_bytes_for_shape(tuple(s)) for s in sh.values()) for sh in layers]
+        quant_map = {}
+        if selected_format != "bf16":
+            from accelerate import init_empty_weights
+            from transformers import AutoModelForCausalLM
+            from .model_source import load_runtime_config
+            from src.quantized_projection import projection_map, packed_specs
+            with init_empty_weights():
+                probe_model = AutoModelForCausalLM.from_config(load_runtime_config(folder), dtype=torch.bfloat16)
+            quant_map = projection_map(probe_model, layers, int(selected_format[-1]))
+            del probe_model
+        layer_bytes = []
+        for idx, shapes in enumerate(layers):
+            size = 0
+            for name, shape in shapes.items():
+                key = name.removeprefix(f"model.layers.{idx}.")
+                spec = quant_map.get(idx, {}).get(key)
+                if spec is None:
+                    size += bf16_bytes_for_shape(tuple(shape))
+                else:
+                    size += sum(math.prod(sh) * torch.empty((), dtype=dt).element_size()
+                                for sh, dt in packed_specs(key, spec["shape"], int(selected_format[-1])).values())
+            layer_bytes.append(size)
+        profile["packed_projections"] = sum(len(v) for v in quant_map.values())
         shape = globals_sh.get("lm_head.weight", (int(cfg.get("vocab_size") or 1), cfg_hidden))
         lm_head_bytes = bf16_bytes_for_shape(tuple(shape))
         mtp_bytes = 0
@@ -1636,6 +1706,7 @@ def plan_for_checkpoint(
         intermediate_size=intermediate,
         max_context_tokens=max_context_tokens,
         prefill_chunk_tokens=prefill_chunk_tokens,
+        prefill_wavefront=prefill_wavefront,
     )
     profile = dict(profile)
     profile["mtp_weights"] = has_mtp
@@ -1712,6 +1783,8 @@ class AirColibriUnifiedEngine:
         max_context_tokens: int | None = None,
         prefill_chunk_tokens: int | None = None,
         allow_download: bool = False,
+        weight_format: str = "auto",
+        prefill_wavefront: bool = False,
     ):
         self.root = find_aircolibri_root(aircolibri_root)
         from src.aircolibri_engine import PriorityRanker
@@ -1753,10 +1826,14 @@ class AirColibriUnifiedEngine:
             enable_mtp=enable_mtp,
             max_context_tokens=max_context_tokens,
             prefill_chunk_tokens=prefill_chunk_tokens,
+            weight_format=weight_format,
+            prefill_wavefront=prefill_wavefront,
         )
         self.fast_qwen = bool(self.profile["fast_qwen"])
         self.vram_mode = vram_mode
         self.prefill_chunk_tokens = self.plan.prefill_chunk_tokens
+        self.prefill_wavefront = bool(prefill_wavefront)
+        self._wavefront_windows: list[dict[str, Any]] = []
         num_layers = int(self.plan.layers_total)
 
         dll_path = self.root / "data" / "native" / "colibri_tier.dll"
@@ -1874,7 +1951,8 @@ class AirColibriUnifiedEngine:
                 max_ram_bytes=None if self.plan.full_residency else _streaming_ram_budget_bytes(),
                 cache_policy="lru",
                 num_slots=None if self.plan.full_residency else self.plan.ring_slots,
-                weight_format="bf16",
+                weight_format=self.profile["weight_format"],
+                universal_quantization=True,
                 quantize_lm_head=False,
                 use_fused_q4_gemv=False,
                 model_source=self.model_source,
@@ -1959,9 +2037,18 @@ class AirColibriUnifiedEngine:
                 eng._anchor_ring_reset()
         self._release_transient_state()
 
+    def enable_unified_memory(self, **kwargs):
+        """Opt-in common weight arena, before generation on a three-slot HF MoE plan."""
+        if self.generations_started or self.fast_qwen:
+            raise ValueError('Enable unified memory before generation on the HF MoE backend')
+        return self.engine.enable_unified_memory(**kwargs)
+
     def reset_session(self) -> None:
         self.session.reset()
         self._session_messages.clear()
+        warmup = getattr(self.engine, "probability_warmup", None)
+        if warmup is not None:
+            warmup.reset()
         self._release_transient_state()
 
     def status_snapshot(self) -> dict[str, Any]:
@@ -1981,6 +2068,7 @@ class AirColibriUnifiedEngine:
             "mtp_enabled": self.mtp_enabled,
             "mtp_vram_mib": self.mtp_vram_mib,
             "vocab_pruner_enabled": self.enable_vocab_pruner,
+            "prefill_wavefront_enabled": self.prefill_wavefront,
             "parked_session_tokens": len(self.session.fed),
             "parked_session_ram_mib": round(self.session.parked_bytes / MiB, 2),
             "generations_started": self.generations_started,
@@ -1990,6 +2078,14 @@ class AirColibriUnifiedEngine:
         ec = self.expert_cache_stats()
         if ec is not None:
             snap["expert_cache"] = ec
+        from src.quantized_projection import projection_stats
+        snap["packed_projections"] = projection_stats(self.engine.model)
+        projection_io = getattr(self.model_source, "projection_io_stats", None)
+        if callable(projection_io):
+            snap["projection_io"] = projection_io()
+        warmup = getattr(self.engine, "probability_warmup", None)
+        if warmup is not None:
+            snap["probability_warmup"] = warmup.stats()
         return snap
 
     # ------------------------------------------------------------------ prompt preparation
@@ -1999,6 +2095,7 @@ class AirColibriUnifiedEngine:
         messages: list[dict[str, str]],
         enable_thinking: bool,
         use_session_cache: bool,
+        max_new_tokens: int = 0,
     ) -> tuple[list[int], int, Any, float]:
         eos_ids = _eos_token_set(self.tokenizer.eos_token_id)
         norm_msgs = [{"role": str(m["role"]), "content": str(m.get("content", ""))} for m in messages]
@@ -2021,6 +2118,7 @@ class AirColibriUnifiedEngine:
             )
             suffix_ids = self.tokenizer(suffix_str, add_special_tokens=False).input_ids
             full_ids = prev_full + suffix_ids
+            self._check_context_budget(len(full_ids), max_new_tokens)
             reused = self.session.kv_prefix_reuse(full_ids)
             if reused > 0:
                 self._last_prompt_opened_think = bool(enable_thinking)
@@ -2051,7 +2149,9 @@ class AirColibriUnifiedEngine:
                 if role == "system":
                     parts.append(f"System: {content}\n\n")
                 elif role == "assistant":
-                    parts.append(f"Assistant: {content}\n\n")
+                    # The generation prefix ends at ':'. Any following space
+                    # belongs to the generated tokens, not to the template.
+                    parts.append(f"Assistant:{content}\n\n")
                 else:
                     parts.append(f"User: {content}\n\n")
             parts.append("Assistant:")
@@ -2059,6 +2159,7 @@ class AirColibriUnifiedEngine:
         self._last_prompt_opened_think = prompt_str.rstrip().endswith("<think>")
         self._last_prompt_chatml_think = "<|im_start|>assistant\n<think>" in prompt_str
         prompt_ids = self.tokenizer(prompt_str, return_tensors="pt").input_ids[0].tolist()
+        self._check_context_budget(len(prompt_ids), max_new_tokens)
 
         if has_active_session:
             reused = self.session.kv_prefix_reuse(prompt_ids)
@@ -2073,6 +2174,20 @@ class AirColibriUnifiedEngine:
         return prompt_ids, 0, None, 0.0
 
     # ------------------------------------------------------------------ generation core
+
+    def _check_context_budget(self, prompt_tokens: int, max_new_tokens: int) -> None:
+        limit = self.plan.max_context_tokens
+        config = getattr(getattr(self, "engine", None), "config", None)
+        for name in ("max_position_embeddings", "n_positions"):
+            declared = getattr(config, name, None)
+            if isinstance(declared, int) and declared > 0:
+                limit = min(limit, declared)
+        if prompt_tokens + max_new_tokens > limit:
+            raise ContextBudgetExceeded(
+                f"Context budget exceeded: {prompt_tokens} prompt + {max_new_tokens} requested output "
+                f"tokens > {limit}. Shorten the conversation/output or plan a larger --max-context "
+                "within the model's position limit."
+            )
 
     @staticmethod
     def _make_cancel_checker(cancel_check: Callable[[], bool] | None) -> Callable[[str], None]:
@@ -2112,8 +2227,11 @@ class AirColibriUnifiedEngine:
                 prefetch_next=prefetch_next if is_last else True,
                 logits_to_keep=1,
             )
-            h_chunk = self.captured["post_norm"]
+            h_chunk = self.captured["post_norm"].clone()
             if is_last:
+                t_anchor = getattr(self, "_active_thought_anchor", None)
+                if t_anchor is not None:
+                    lg = t_anchor.on_prefill_end(self, past, lg)
                 picked = int(lg[0, -1].argmax(dim=-1).item())
                 last_h = h_chunk[:, -1:, :].clone()
             del lg
@@ -2150,6 +2268,8 @@ class AirColibriUnifiedEngine:
         past = past_kv if start > 0 else None
         picked = -1
         phase_ref = ["prefill"]
+        self._wavefront_windows = []
+        stride = chunk * (4 if self.prefill_wavefront else 1)
         if cancel_check is not None:
             self.engine._step_cancel_check = lambda: check(phase_ref[0])
         try:
@@ -2157,18 +2277,26 @@ class AirColibriUnifiedEngine:
                 torch.cuda.reset_peak_memory_stats(self.device)
                 torch.cuda.synchronize()
                 t_pre0 = time.perf_counter()
-                for a in range(start, n, chunk):
+                for a in range(start, n, stride):
                     check("prefill")
-                    b = min(n, a + chunk)
+                    b = min(n, a + stride)
                     step = torch.tensor([prompt_ids[a:b]], dtype=torch.long)
                     cache_pos = torch.arange(a, b, dtype=torch.long)
-                    logits, past = self.engine._forward_step(
-                        step,
-                        past_key_values=past,
-                        prefetch_next=(b < n or max_new_tokens > 1),
-                        cache_position=cache_pos,
-                    )
+                    if self.prefill_wavefront and b - a > chunk:
+                        logits, past = self.engine.prefill_wavefront(step, chunk, past)
+                        self._wavefront_windows.append(dict(self.engine.last_wavefront_stats))
+                    else:
+                        logits, past = self.engine._forward_step(
+                            step,
+                            past_key_values=past,
+                            prefetch_next=(b < n or max_new_tokens > 1),
+                            cache_position=cache_pos,
+                            prefill=True, prefill_end=(b == n),
+                        )
                     if b == n:
+                        t_anchor = getattr(self, "_active_thought_anchor", None)
+                        if t_anchor is not None:
+                            logits = t_anchor.on_prefill_end(self, past, logits)
                         picked = int(logits[0].argmax().item())
                     del logits
                 all_ids.append(picked)
@@ -2191,8 +2319,13 @@ class AirColibriUnifiedEngine:
                         past_key_values=past,
                         prefetch_next=(generated + 1 < max_new_tokens),
                         cache_position=torch.tensor([cursor], dtype=torch.long),
+                        prefill=False,
                     )
                     cursor += 1
+                    t_anchor = getattr(self, "_active_thought_anchor", None)
+                    if t_anchor is not None:
+                        logits = t_anchor.transform_logits(logits, past, generated)
+                        t_anchor.on_step_committed(past, 1)
                     picked = int(logits[0].argmax().item())
                     del logits
                     all_ids.append(picked)
@@ -2209,6 +2342,7 @@ class AirColibriUnifiedEngine:
             "all_ids": all_ids,
             "past": past,
             "last_fed_h": None,
+            "consumed_tokens": cursor,
             "prefill_ms": prefill_ms,
             "decode_s": dec_s,
             "decode_tokens": max(0, generated - 1),
@@ -2270,6 +2404,10 @@ class AirColibriUnifiedEngine:
                         prefetch_next=(generated_count + 1 < max_new_tokens),
                     )
                     last_fed_h = self.captured["post_norm"][:, -1:, :].clone()
+                    t_anchor = getattr(self, "_active_thought_anchor", None)
+                    if t_anchor is not None:
+                        lg = t_anchor.transform_logits(lg, past, generated_count)
+                        t_anchor.on_step_committed(past, 1)
                     picked = int(lg[0, -1].argmax(dim=-1).item())
                     del lg
                     all_ids.append(picked)
@@ -2284,6 +2422,7 @@ class AirColibriUnifiedEngine:
                 "all_ids": all_ids,
                 "past": past,
                 "last_fed_h": last_fed_h,
+                "consumed_tokens": len(all_ids) - 1,
                 "prefill_ms": prefill_ms,
                 "decode_s": dec_s,
                 "decode_tokens": max(0, generated_count - 1),
@@ -2356,6 +2495,9 @@ class AirColibriUnifiedEngine:
                 finally:
                     self.snap_mgr.active_capture = False
                 h_post_b = self.captured["post_norm"]
+                t_anchor = getattr(self, "_active_thought_anchor", None)
+                if t_anchor is not None:
+                    logits_b = t_anchor.transform_logits(logits_b, past, generated_count)
 
                 row_preds = logits_b[0].argmax(dim=-1).tolist()
                 del logits_b
@@ -2383,6 +2525,8 @@ class AirColibriUnifiedEngine:
                     gate.record_result(src, judged=judged, accepted=accepted, probs=probs_used)
 
                 self.snap_mgr.rollback_to_accepted(past, accepted_drafts=accepted, total_drafts=k_use)
+                if t_anchor is not None:
+                    t_anchor.on_step_committed(past, accepted + (0 if (hit_eos or generated_count >= max_new_tokens) else 1))
 
                 if hit_eos or generated_count >= max_new_tokens:
                     if accepted > 0:
@@ -2454,8 +2598,11 @@ class AirColibriUnifiedEngine:
         final_info: dict[str, Any] = {}
         try:
             check("queue")
+            if max_new_tokens < 1:
+                raise ValueError("max_new_tokens must be positive")
             prompt_ids, cached_len, past_kv, unpark_ms = self._prepare_prompt_and_cache(
-                messages, enable_thinking=enable_thinking, use_session_cache=use_session_cache
+                messages, enable_thinking=enable_thinking, use_session_cache=use_session_cache,
+                max_new_tokens=max_new_tokens,
             )
 
             started_in_think = bool(getattr(self, "_last_prompt_opened_think", enable_thinking))
@@ -2542,6 +2689,7 @@ class AirColibriUnifiedEngine:
                     mtp_head=self.mtp_head,
                     captured=self.captured,
                     chatml_think_format=bool(getattr(self, "_last_prompt_chatml_think", False)),
+                    consumed_tokens=final_info.get("consumed_tokens"),
                 )
                 self._session_messages = [
                     *[{"role": str(m["role"]), "content": str(m.get("content", ""))} for m in messages],
@@ -2576,6 +2724,10 @@ class AirColibriUnifiedEngine:
             ec = self.expert_cache_stats()
             if ec is not None:
                 metrics["expert_cache"] = ec
+            from src.quantized_projection import projection_stats
+            metrics["packed_projections"] = projection_stats(self.engine.model)
+            if self.prefill_wavefront:
+                metrics["prefill_wavefront"] = {"enabled": True, "windows": list(self._wavefront_windows)}
             self.last_metrics = metrics
             completed = True
             yield {
@@ -2600,6 +2752,8 @@ class AirColibriUnifiedEngine:
                 self._abort_cleanup()
 
     def close(self) -> None:
+        # Optional ThoughtBuffer baselines belong to this engine's device lifetime.
+        self._neutral_logprob_cache = None
         if getattr(self, "session", None) is not None:
             self.reset_session()
         if self.pread_reader is not None:

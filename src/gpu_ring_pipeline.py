@@ -118,6 +118,7 @@ class GPURingPipeline:
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = dtype
         self.tail_to_head_prefetch = tail_to_head_prefetch
+        self.working_memory = None
 
         if arena_layout is not None:
             if arena_layout.dtype != dtype:
@@ -185,6 +186,8 @@ class GPURingPipeline:
 
         if slot.state != SlotState.FREE:
             raise RuntimeError(f"Cannot reserve active GPU slot: {slot.state.value}")
+        if self.working_memory is not None:
+            self.working_memory.dense_event(slot_idx, 'load')
 
         # Если на слоте еще висит вычисление — ожидаем завершения на transfer_stream
         if self.device.type == "cuda" and slot.compute_done_event is not None:
@@ -217,6 +220,8 @@ class GPURingPipeline:
             )
         if not pinned_src_tensors:
             raise ValueError("Empty GPU payload")
+        if getattr(self.working_memory, 'dynamic_regions', False):
+            self.working_memory.bind_dense(slot, pinned_src_tensors, self.transfer_stream)
         target_views: Dict[str, torch.Tensor] = {}
         for name, src in pinned_src_tensors.items():
             target = slot.tensors.get(name)
@@ -268,6 +273,8 @@ class GPURingPipeline:
             slot.consumer_stream.wait_event(slot.transfer_done_event)
 
         slot.state = SlotState.COMPUTING
+        if self.working_memory is not None:
+            self.working_memory.dense_event(slot_idx, 'acquire')
         return slot
 
     def release_slot_after_compute(self, slot: RingSlot) -> None:
@@ -283,6 +290,8 @@ class GPURingPipeline:
             slot.compute_done_event.record(slot.consumer_stream)
 
         slot.state = SlotState.FREE
+        if self.working_memory is not None:
+            self.working_memory.dense_event(slot.slot_id, 'release')
         self.total_computes += 1
 
     def acquire_resident_for_compute(self, layer_idx: int, previous_layer_idx: int) -> RingSlot:
@@ -303,6 +312,8 @@ class GPURingPipeline:
             self.compute_stream = consumer
         slot.current_layer_idx = layer_idx
         slot.state = SlotState.COMPUTING
+        if self.working_memory is not None:
+            self.working_memory.dense_event(slot.slot_id, 'acquire')
         self.total_resident_acquires += 1
         return slot
 
@@ -332,6 +343,11 @@ class GPURingPipeline:
         """Synchronizes CUDA streams and returns all slots (LOADING/READY/COMPUTING) to FREE."""
         if self.device.type == "cuda" and torch.cuda.is_available():
             torch.cuda.synchronize(self.device)
+        if self.working_memory is not None:
+            with self.working_memory.cv:
+                self.working_memory.dense_active = [False]*3
+                if getattr(self.working_memory, 'dynamic_regions', False):
+                    self.working_memory.reset_dense()
         for slot in self.slots:
             if slot.state == SlotState.COMPUTING and slot.compute_done_event is not None and slot.consumer_stream is not None:
                 slot.compute_done_event.record(slot.consumer_stream)
@@ -360,6 +376,7 @@ class GPURingPipeline:
             slot.state = SlotState.FREE
         self.slots.clear()
         self.arena = None
+        self.working_memory = None
         self.compute_stream = None
         self.transfer_stream = None
         if self.device.type == "cuda" and torch.cuda.is_available():

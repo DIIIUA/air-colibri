@@ -129,6 +129,21 @@ def test_bad_requests_get_clear_errors(server):
     assert _post(srv.http_port, "/v1/chat/completions", body={"messages": [{"role": "user", "content": "x"}], "max_tokens": "abc"})[0] == 400
 
 
+def test_context_budget_error_is_a_client_error_and_server_recovers(server):
+    from aircolibri_cli.unified_runtime import ContextBudgetExceeded
+    srv, engine = server(engine=FakeEngine(decode_steps=2))
+    original = engine.stream_chat
+    def oversized(*args, **kwargs):
+        raise ContextBudgetExceeded("Context budget exceeded")
+        yield
+    engine.stream_chat = oversized
+    body = {"messages": [{"role": "user", "content": "x"}], "max_tokens": 2}
+    status, payload = _post(srv.http_port, "/v1/chat/completions", body=body)
+    assert status == 400 and json.loads(payload)["error"]["type"] == "context_length_exceeded"
+    engine.stream_chat = original
+    assert _post(srv.http_port, "/v1/chat/completions", body=body)[0] == 200
+
+
 def test_api_key_is_enforced_and_non_ascii_keys_do_not_crash(server):
     srv, eng = server(api_key="sekret", require_auth=True)
     body = {"messages": [{"role": "user", "content": "x"}], "max_tokens": 2}

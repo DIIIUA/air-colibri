@@ -5,27 +5,29 @@ logits, MTP speculation with rollback, multi-row GatedDeltaNet steps, KV + Delta
 between turns and VRAM cleanup after cancellation.
 """
 import copy
+import os
 from pathlib import Path
 
 import pytest
 import torch
 
 ROOT = Path(__file__).resolve().parents[1]
+TEST_MODEL = os.environ.get("AIRCOLIBRI_TEST_MODEL")
 
 
 def _model_available() -> bool:
     if not torch.cuda.is_available():
         return False
     try:
-        from aircolibri_cli.model_source import resolve_model_dir
+        from aircolibri_cli.model_source import resolve_model_dir, runtime_profile
 
-        resolve_model_dir(None, ROOT)
-        return True
+        model = resolve_model_dir(TEST_MODEL, ROOT)
+        return bool(runtime_profile(model)["fast_qwen"])
     except Exception:
         return False
 
 
-pytestmark = pytest.mark.skipif(not _model_available(), reason="needs CUDA and a supported model in models/")
+pytestmark = pytest.mark.skipif(not _model_available(), reason="needs CUDA and a compatible native Qwen3.5-9B fixture (AIRCOLIBRI_TEST_MODEL)")
 
 MiB = 1024 ** 2
 FACT_PROMPT = [{"role": "user", "content": "Перечисли пять планет Солнечной системы по порядку от Солнца, через запятую."}]
@@ -35,7 +37,7 @@ FACT_PROMPT = [{"role": "user", "content": "Перечисли пять план
 def eng():
     from aircolibri_cli.unified_runtime import AirColibriUnifiedEngine
 
-    e = AirColibriUnifiedEngine(vram_mode="normal", verbose=False)
+    e = AirColibriUnifiedEngine(model_dir=TEST_MODEL, vram_mode="normal", verbose=False)
     yield e
     e.close()
 

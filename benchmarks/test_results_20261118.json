@@ -1,0 +1,734 @@
+{
+  "scope": "Full local suite followed by targeted reruns after fixing test fixtures; latest outcome per test.",
+  "summary": {
+    "passed": 171,
+    "failed": 0,
+    "skipped": 10
+  },
+  "tests": {
+    "tests.test_bounded_projection_io::test_matrix_rectangles_bound_reads_and_scratch[dtype0]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_bounded_projection_io::test_matrix_rectangles_bound_reads_and_scratch[dtype1]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_bounded_projection_io::test_matrix_rectangles_bound_reads_and_scratch[dtype2]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_bounded_projection_io::test_matrix_rectangles_bound_reads_and_scratch[dtype3]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_bounded_projection_io::test_row_packer_releases_tiles_and_recovers_from_reader_failure[4]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_bounded_projection_io::test_row_packer_releases_tiles_and_recovers_from_reader_failure[6]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[4-plain]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[4-fp8]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[4-awq]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[4-gptq]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[6-plain]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[6-fp8]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[6-awq]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[6-gptq]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_bounded_projection_io::test_transposed_hf_rows_preserve_conv1d_orientation": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_bounded_projection_io::test_unaligned_rows_cross_source_blocks_and_reject_bad_metadata[fp8]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_bounded_projection_io::test_unaligned_rows_cross_source_blocks_and_reject_bad_metadata[awq]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_bounded_projection_io::test_unaligned_rows_cross_source_blocks_and_reject_bad_metadata[gptq]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_cli_lan::test_think_splitter_handles_tag_split_across_chunks": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_cli_lan::test_think_splitter_without_thinking_phase": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_cli_lan::test_spec_lookup_proposes_tokens_after_repeated_suffix": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_cli_lan::test_lan_helpers_and_passport": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_cli_lan::test_udp_beacon_answers_discovery_probe": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_cli_lan::test_cli_parser_commands": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_context_budget::test_context_rejects_requested_output_before_allocating_cache": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_context_budget::test_cached_chat_is_checked_before_unparking": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_dynamic_working_memory::test_dynamic_pages_reused_between_dense_and_experts_without_copy[4]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_dynamic_working_memory::test_dynamic_pages_reused_between_dense_and_experts_without_copy[6]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_dynamic_working_memory::test_standby_cannot_be_filled_and_reset_releases_cancelled_dense": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_dynamic_working_memory::test_retired_dense_bytes_wait_for_gpu_before_expert_overwrite": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_engine_gpu::test_chunked_prefill_matches_single_pass": {
+      "status": "skipped",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_engine_gpu::test_prefill_does_not_materialise_full_vocab_logits": {
+      "status": "skipped",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_engine_gpu::test_mtp_speculation_matches_plain_greedy": {
+      "status": "skipped",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_engine_gpu::test_multirow_deltanet_step_matches_sequential_steps": {
+      "status": "skipped",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_engine_gpu::test_session_prefix_reuse_matches_fresh_prompt": {
+      "status": "skipped",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_engine_gpu::test_cancellation_releases_all_generation_vram[prefill]": {
+      "status": "skipped",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_engine_gpu::test_cancellation_releases_all_generation_vram[decode]": {
+      "status": "skipped",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_gguf_tokenizer_types::test_sentencepiece_default_keeps_unicode_and_whitespace[gemma2-Gemma2Config]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_gguf_tokenizer_types::test_sentencepiece_default_keeps_unicode_and_whitespace[gemma3-Gemma3TextConfig]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_gguf_tokenizer_types::test_sentencepiece_default_keeps_unicode_and_whitespace[nemotron-NemotronConfig]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_hf_quantized_source::test_int4_matches_original_integer_matrix[cpu-awq]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_hf_quantized_source::test_int4_matches_original_integer_matrix[cpu-gptq]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_hf_quantized_source::test_int4_matches_original_integer_matrix[cuda-awq]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_hf_quantized_source::test_int4_matches_original_integer_matrix[cuda-gptq]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_hf_quantized_source::test_fp8_matches_transformers_reference_including_partial_blocks[cpu]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_hf_quantized_source::test_fp8_matches_transformers_reference_including_partial_blocks[cuda]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_hf_quantized_source::test_encoded_checkpoint_matches_native_model_through_ring[awq]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_hf_quantized_source::test_encoded_checkpoint_matches_native_model_through_ring[gptq]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_hf_quantized_source::test_encoded_checkpoint_matches_native_model_through_ring[fp8]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_lan_server_cancel::test_oversized_body_is_rejected_without_reading_it": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_lan_server_cancel::test_bad_requests_get_clear_errors": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_lan_server_cancel::test_api_key_is_enforced_and_non_ascii_keys_do_not_crash": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_lan_server_cancel::test_stop_endpoint_cancels_running_generation": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_lan_server_cancel::test_new_request_preempts_old_one_and_never_overlaps": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_lan_server_cancel::test_client_disconnect_is_detected_during_prefill": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_lan_server_cancel::test_server_log_is_written": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_lan_server_cancel::test_context_discovery_endpoints_and_sse_disconnect_log": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cpu-reserved]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cpu-dma]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cpu-compute]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cpu-released]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cuda-reserved]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cuda-dma]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cuda-compute]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cuda-released]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_lease_ack_reset::test_failed_backend_reset_does_not_clear_ownership": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_hf_shards_map_to_canonical_names[True-True]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_hf_shards_map_to_canonical_names[False-False]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_layer_identity_changes_when_a_shard_changes": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_pread_reader_matches_safetensors": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_autodetect_skips_unsupported_models": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_capability_follows_geometry_and_qwen_stays_default": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_gguf_folder_is_detected_and_does_not_become_the_default": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_tiny_gguf_qwen35moe_source_and_sliced_experts_forward": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_hf_moe_per_expert_shards_route_on_demand": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_extended_gguf_dequantizers_and_nvrtc_exactness": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_gguf_zero_mmap_and_mid_layer_stream_cancel": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_bf16_session_prefix_reuse_on_gguf_and_olmoe": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_staging_pool_coalesce_tasks": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_nvrtc_deltanet_kernels_and_zero_fallback_warnings": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_ternary_tq1_tq2_and_q8_1_dequantizers": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_gpt2_hf_custom_safetensors_and_gguf_exact_logit_parity": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_mamba_hf_and_gguf_recurrent_cache_parity": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_vlm_gemma3_unwrapping_embed_scale_and_gguf_parity": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_variable_shape_gemma4_and_coexisting_falcon_h1_ring_streaming": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_hf_moe_all_layouts_and_routing_buffers_exact_parity": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_model_source::test_gguf_llama_rope_permute_split_shards_and_chat_fallback": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_prefill_wavefront::test_wave_matches_chunked_reference_cache_and_decode[bf16-0]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_prefill_wavefront::test_wave_matches_chunked_reference_cache_and_decode[q4-2]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_prefill_wavefront::test_wave_matches_chunked_reference_cache_and_decode[q6-0]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_prefill_wavefront::test_wave_matches_chunked_reference_cache_and_decode[q6-7]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_prefill_wavefront::test_cancel_mid_wave_recovers_without_busy_slots": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_prefill_wavefront::test_unified_wave_session_cancel_and_thought_anchor": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_prefill_map_is_retained_until_persistent_route_change": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_initial_map_contributes_beyond_breaking_recent_ties": {
+      "status": "passed",
+      "evidence": "pytest_followup.xml"
+    },
+    "tests.test_probability_warmup::test_three_banks_exact_weights_wrong_forecasts_and_reset[4]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_three_banks_exact_weights_wrong_forecasts_and_reset[6]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_optional_source_failure_does_not_publish_partial_bank": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_bank_reuse_waits_for_actual_cuda_reader": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_predictive_region_ring_logits_kv_and_cancel[4-granitemoe]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_predictive_region_ring_logits_kv_and_cancel[4-olmoe]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_predictive_region_ring_logits_kv_and_cancel[6-granitemoe]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_predictive_region_ring_logits_kv_and_cancel[6-olmoe]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_unified_cancel_and_session_reset_clear_pending_predictions": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_refinement_preserves_published_common_and_abandons_obsolete_inflight[4]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_refinement_preserves_published_common_and_abandons_obsolete_inflight[6]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_busy_three_bank_ring_keeps_latest_refinement_until_real_reader_finishes": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_failed_later_expert_keeps_completed_prefix_usable": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_three_independent_maps_do_not_supersede_each_other[4]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_three_independent_maps_do_not_supersede_each_other[6]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_chunked_prefill_including_one_token_tail_builds_one_initial_map": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_probability_warmup::test_map_can_be_prepared_later_without_rebuilding_unchanged_area": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_quantization_q4.TestQuantizationQ4::test_bitwise_unpack_no_lut_and_exact_nibbles": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_quantization_q4.TestQuantizationQ4::test_lazy_embed_lookup_equivalence": {
+      "status": "skipped",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_quantization_q4.TestQuantizationQ4::test_lazy_globals_map_chunked_read_equivalence": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_quantization_q4.TestQuantizationQ4::test_q4_layout_composition_no_lut_and_exact_stride": {
+      "status": "skipped",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_quantization_q4.TestQuantizationQ4::test_q4_real_layer_weight_cosine_f64": {
+      "status": "skipped",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_quantization_q4.TestQuantizationQ4::test_q4_tiled_linear_exactness_and_bounded_scratch": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_session_state::test_parked_continuation_matches_uninterrupted[mamba]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_session_state::test_parked_continuation_matches_uninterrupted[mamba2]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_session_state::test_parked_continuation_matches_uninterrupted[lfm2]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_session_state::test_parked_continuation_matches_uninterrupted[gemma2]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_session_state::test_probe_rollback_preserves_real_family_continuation[mamba]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_session_state::test_probe_rollback_preserves_real_family_continuation[mamba2]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_session_state::test_probe_rollback_preserves_real_family_continuation[lfm2]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_session_state::test_probe_rollback_preserves_real_family_continuation[gemma2]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_buffer::test_snapshot_and_restore_hybrid_cache": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_buffer::test_unknown_state_rejected_before_probe": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_buffer::test_conv_only_snapshot_and_no_false_reanchor_counter": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_buffer::test_blend_recurrent_anchor_preserves_s0_channel": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_buffer::test_syntactic_support_mask_prevents_ungrammatical_intrusion": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_buffer::test_entropy_gate_zero_on_deterministic_steps": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_buffer::test_mtp_speculative_rows_and_committed_reanchor": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_buffer::test_layer_conclusion_never_erases_positive_phi0": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_buffer::test_ask_anchored_parses_stream_chat_events": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_buffer::test_original_channel_participates_even_when_working_field_is_empty": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_buffer::test_failed_mid_probe_restores_borrowed_cache_and_capture_metadata": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[False-4-granitemoe]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[False-4-olmoe]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[False-6-granitemoe]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[False-6-olmoe]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[True-4-granitemoe]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[True-4-olmoe]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[True-6-granitemoe]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[True-6-olmoe]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[dynamic-4-granitemoe]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[dynamic-4-olmoe]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[dynamic-6-granitemoe]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[dynamic-6-olmoe]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[False-4]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[False-6]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[True-4]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[True-6]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[dynamic-4]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[dynamic-6]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_unified_cancel_mid_forward_and_restart[4]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_thought_warmup::test_unified_cancel_mid_forward_and_restart[6]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_unified_working_memory::test_one_allocation_and_direct_routed_parity[4]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_unified_working_memory::test_one_allocation_and_direct_routed_parity[6]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_unified_working_memory::test_budget_rejection_preserves_original_storage": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_unified_working_memory::test_unified_producer_reset_inflight_error_and_exact_fallback": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_unified_working_memory::test_prefetch_cannot_reuse_a_live_reader_and_refinement_keeps_common": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_universal_quant::test_packing_is_independent_of_cpu_or_gpu_placement[4]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_universal_quant::test_packing_is_independent_of_cpu_or_gpu_placement[6]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[16-4]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[16-6]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[32-4]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[32-6]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[64-4]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[64-6]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_universal_quant::test_routed_kernel_cache_eviction_prefill_and_math_guard[4]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_universal_quant::test_routed_kernel_cache_eviction_prefill_and_math_guard[6]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_universal_quant::test_unified_ring_experts_session_cancel_and_recovery[4]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_universal_quant::test_unified_ring_experts_session_cancel_and_recovery[6]": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_vram_plan::test_lm_head_q4_size": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_vram_plan::test_8gb_card_keeps_everything_resident_with_a_reserve": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_vram_plan::test_turbo_uses_more_vram_than_normal": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_vram_plan::test_4gb_card_streams_through_equal_ring_slots": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_vram_plan::test_fixed_profiles_are_rejected": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_vram_plan::test_too_little_vram_is_a_clear_error": {
+      "status": "passed",
+      "evidence": "pytest_final.xml"
+    },
+    "tests.test_lan_server_cancel::test_context_budget_error_is_a_client_error_and_server_recovers": {
+      "status": "passed",
+      "evidence": "pytest_http.xml"
+    }
+  }
+}

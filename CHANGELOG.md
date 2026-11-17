@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — 2026-11-18
+
+- Universal Q4/Q6 packed projections and compatible SwiGLU expert kernels; Q6 is the generic default. Source GGUF and runtime affine formats remain distinct and lossy.
+- Bounded adapters for HF FP8 block, AWQ GEMM INT4 and GPTQ INT4; repaired SentencePiece/ByteLevel tokenizer selection and conv/recurrent/sliding session parking.
+- Request context admission now checks prompt plus requested output against the planned and declared model limits before prefill or session unpark. LAN clients receive a context-length error instead of entering an oversized generation.
+- Experimental shared dynamic weight arena: A owns active work/cache, B prepares a bounded next region, C reserves no payload; dense and expert pages share CUDA reader fences and transfer ownership without extra copies.
+- Retained prefill-map prediction now combines normalized initial and recent activity (25%/75%). Actual routing always determines required expert computation.
+- Experimental thought-buffer probes now restore complete sliding-window and conv/recurrent state. Unknown state containers fail explicitly; recurrent telemetry no longer counts nonexistent recurrent states. Original probability fields remain preserved. Lexical alignment is not a correctness verifier and reasoning improvements remain unproven.
+- Added reproducible small-model benchmarking, a dated 48-checkpoint support matrix, and regression coverage for the combined memory/probability mechanisms. Not all architectures or checkpoints are supported; see `MODEL_SUPPORT.md` and `benchmarks/RELEASE_1_1_0.md`.
+
+Changes accumulated since 1.0.0 (architecture adapters below are implementation coverage, not blanket checkpoint certification):
 
 - Broadened Hugging Face CausalLM and VLM checkpoint support (`aircolibri_cli/model_source.py`, `src/aircolibri_integrated.py`, `src/bounded_memory_manager.py`, `src/gpu_ring_pipeline.py`): unwraps `text_config` from multimodal VLM checkpoints while ignoring vision/audio towers, supports single custom-named `.safetensors` files and all decoder root/norm/head conventions (`model.layers`, `transformer.h`, `gpt_neox.layers`, `model.decoder.layers`, `backbone.layers`, `rwkv.blocks`, `transformer.blocks`), handles Hub leaf renamings (`Mixtral`, `PhiMoE`, `Nemotron-H`, `Ernie-4.5-MoE`), streams 2D per-expert and 3D packed standard/transposed/biased MoE experts (`Qwen3/3.5-MoE`, `Mixtral`, `DeepSeek-V2/V3`, `Llama-4`, `GPT-OSS`, `OLMoE`, `GLM-4-MoE`, `MiniMax-M2`) via positioned reads + VRAM LRU cache, supports variable-shape same-name layer views (`Gemma 4` sliding vs global attention), co-existing parallel mixers (`Falcon-H1`), scaled input embeddings (`Gemma 1–4`), SSM `cache_params` / `RWKV` `state`, and base-model chat-template fallback while keeping `Qwen3.5-9B` on its fast Q4 + MTP path as default.
 - Broadened zero-`mmap` GGUF support (`aircolibri_cli/gguf_arch_registry.py`, `aircolibri_cli/model_source.py`) from 3 architectures to 35+ model families (47+ GGUF architecture IDs), added multi-shard split GGUF (`*-00001-of-0000N.gguf`) discovery while ignoring `mmproj*.gguf`, added `Llama`/`DeepSeek` interleaved RoPE Q/K un-permutation, `GPT-2` `Conv1D` 2D transpose, `BLOOM` QKV un-interleaving, `Phi-2` fused QKV virtual row slicing, `Q8_1` and ternary `TQ1_0`/`TQ2_0` block dequantization, and extended pure-GGUF tokenizer building without `gguf` PyPI or sidecar files.

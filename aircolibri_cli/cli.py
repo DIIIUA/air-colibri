@@ -73,7 +73,11 @@ def _add_engine_args(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument("--max-context", type=int, default=None, help="Context tokens to reserve VRAM for (default 8192, 4096 on <=5 GB cards)")
     p.add_argument("--prefill-chunk", type=int, default=None, help="Prompt tokens per prefill chunk (default 512, 256 on <=5 GB cards)")
+    p.add_argument("--prefill-wavefront", action="store_true",
+                   help="Experimental Llama prefill: overlap prompt chunks across three CUDA stages")
     p.add_argument("--no-mtp", action="store_true", help="Disable the speculative MTP head")
+    p.add_argument("--weight-format", choices=("auto", "bf16", "q4", "q6"), default="auto",
+                   help="Runtime weights: auto keeps the native Qwen Q4 path, otherwise uses universal Q6")
     p.add_argument("--max-drafts", type=int, default=2, help="Max speculative draft depth (1..3, default: 2)")
     p.add_argument(
         "--fast-vocab",
@@ -94,6 +98,8 @@ def _engine_from_args(args: argparse.Namespace) -> AirColibriUnifiedEngine:
         max_context_tokens=args.max_context,
         prefill_chunk_tokens=args.prefill_chunk,
         allow_download=explicit_repo,
+        weight_format=args.weight_format,
+        prefill_wavefront=getattr(args, "prefill_wavefront", False),
     )
 
 
@@ -140,11 +146,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                     total_bytes=total_b,
                     free_bytes=free_b,
                     enable_mtp=not getattr(args, "no_mtp", False),
+                    weight_format=getattr(args, "weight_format", "auto"),
+                    prefill_wavefront=getattr(args, "prefill_wavefront", False),
                 )
                 report["runtime_profile"] = profile
                 report["mtp_weights_present"] = bool(profile.get("mtp_weights"))
                 report["vram_plan"] = plan.as_dict()
-            except RuntimeError as exc:
+            except (RuntimeError, ValueError) as exc:
                 report["vram_plan_error"] = str(exc)
 
     print("=" * 76)
@@ -366,16 +374,19 @@ def cmd_discover(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from . import __version__
     parser = argparse.ArgumentParser(
         prog="aircolibri",
-        description="AirColibri: local Qwen3.5 inference (W4A16 + NVRTC + MTP) with a LAN OpenAI-compatible server",
+        description="AirColibri: supported HF/GGUF language models, Q4/Q6 CUDA execution and a LAN OpenAI-compatible server",
     )
+    parser.add_argument("--version", action="version", version=f"AirColibri {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_doc = sub.add_parser("doctor", help="Check GPU, VRAM plan, model files, and LAN interfaces")
     p_doc.add_argument("--model", "--model-dir", dest="model", type=str, default=None)
     p_doc.add_argument("--aircolibri-root", type=str, default=None)
     p_doc.add_argument("--vram-mode", choices=list(VRAM_MODES), default="normal")
+    p_doc.add_argument("--weight-format", choices=("auto", "bf16", "q4", "q6"), default="auto")
     p_doc.add_argument("--json-out", type=str, default=None)
     p_doc.set_defaults(func=cmd_doctor)
 

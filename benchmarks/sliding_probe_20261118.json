@@ -1,0 +1,15 @@
+{
+  "model": "05_gguf_gemma-3-1b-it-Q4_K_M",
+  "sliding_window": 512,
+  "prompt_tokens": 712,
+  "probe_tokens": 3,
+  "probe_error": null,
+  "layers_total": 26,
+  "sliding_layers": 22,
+  "layers_changed_by_probe": 0,
+  "example_changed": [],
+  "next_logits_max_abs_diff": 0.0,
+  "next_argmax_a": 108,
+  "next_argmax_b": 108,
+  "expected": "layers_changed_by_probe == 0 and next_logits_max_abs_diff == 0"
+}

@@ -42,7 +42,7 @@ class ExistingRingAcknowledgementAdapter:
     """
     METHOD_NAMES = ("get_slot_for_loading", "load_tensors_async",
                     "acquire_slot_for_compute", "release_slot_after_compute",
-                    "acquire_resident_for_compute")
+                    "acquire_resident_for_compute", "reset_in_flight")
 
     def __init__(self, backend: GPURingPipeline,
                  on_event: Callable[[dict], None] | None = None):
@@ -141,6 +141,7 @@ class ExistingRingAcknowledgementAdapter:
             self.backend.acquire_slot_for_compute = self.acquire_slot_for_compute
             self.backend.release_slot_after_compute = self.release_slot_after_compute
             self.backend.acquire_resident_for_compute = self.acquire_resident_for_compute
+            self.backend.reset_in_flight = self.reset_in_flight
             self._attached = True
             return self
 
@@ -150,6 +151,22 @@ class ExistingRingAcknowledgementAdapter:
                 setattr(self.backend, name, original)
             self.originals.clear()
             self._attached = False
+
+    def reset_in_flight(self):
+        """Discard leases only after the backend has fenced all outstanding work.
+
+        Cancellation may abandon a prefetched DMA without a compute consumer.
+        Its lease cannot become FREE via a compute completion event; it needs
+        this explicit, synchronized cancellation boundary instead.
+        """
+        with self._lock:
+            self.originals["reset_in_flight"]()
+            if any(slot.state != SlotState.FREE or slot.current_layer_idx is not None
+                   or slot.loaded_keys for slot in self.backend.slots):
+                self._reject("Backend reset did not release every physical slot")
+            for sid, lease in enumerate(self.leases):
+                self._write_event("lease_discarded_after_backend_reset", lease)
+                self.leases[sid] = SlotLease(sid, generation=lease.generation + 1)
 
     def __enter__(self):
         return self.install()
