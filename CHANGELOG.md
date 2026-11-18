@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.2.0 — 2026-11-18
+
+- Add a numbered local model catalog, selection by number/name/path, Hugging Face
+  page/file links, managed downloads into a chosen directory and `prepare`.
+  Downloads verify a finite first forward and automatic runtime packing by default;
+  complete local snapshots can be reused offline. Split GGUF selection is explicit.
+- Keep help/catalog independent of Torch initialization. Register external model
+  directories, isolate revisions and retain partial downloads for retry.
+- Use the lower CUDA/NVML startup free-memory reading for the GPU matched by UUID;
+  expose counter/fallback diagnostics in status and doctor. Live two-process testing
+  caught and corrected a Windows accounting discrepancy. This is startup sampling,
+  not continuous global memory rebalancing.
+- Add a fresh local roster census and a controlled resident/half/full-streaming
+  comparison. Llama1B Q6 medians: 30.55 / 11.98 / 7.34 tok/s, warm RAM cache,
+  MTP off; all 24 output hashes matched across two pressure settings. See
+  `MODEL_SUPPORT.md` and `benchmarks/RELEASE_1_2_0.md` for results and limits.
+
+### Common CPU/GPU execution
+
+- Keep the streamed CPU graph running without CUDA or when GPU preparation fails;
+  retire partially adopted GPU layers at a forward boundary without losing live cache.
+- Add `--device cpu` / `device="cpu"` and CPU-aware doctor/session parking. Keep GPU
+  preparation diagnostics visible; do not retry failed preparation on every token.
+- Defer the unused CPU-start staging arena; retain its geometry until GPU transfers
+  need real buffers, rather than reserving three complete layer-sized RAM slots.
+- Release CPU and GPU preparation together; ready devices take work without a forced CPU-first dependency. GPU transfers use a bounded background queue.
+- Adopt ready dense layers and their live cache on the same graph, then hand off to
+  the existing GPU ring without replaying the prompt. Keep `--no-progressive-start` as a GPU-first reference.
+- Carry the original CPU prefill map and probability-anchor values through GPU adoption;
+  protect auxiliary probes against a device change and drain preparation on cancellation.
+- Add common streamed draft/verify/commit: prompt lookup and an optional bounded native
+  Qwen3.5 text MTP head sharing base embeddings/output projection. Verify token rows
+  with decode arithmetic under one layer lease; roll back rejected KV/recurrent rows.
+- Preserve retained-map preparation during verification; commit only accepted routes.
+  Add execution-scoped Granite/OLMoE zero-route exclusions before reads and current-work
+  preparation cuts. Probability forecasts cannot suppress nonzero required routes.
+- Add `--speculation`, `--mtp-head`, `--mtp-head-budget-mib` and `--[no-]region-pruning`.
+  General large-model, arbitrary dense pruning and universal native-MTP coverage remain unverified.
+
+### Memory and probability experiments
+
+- Bound thought-anchor log-odds influence, retain FP32 logits and the complete original probability distribution, and allow explicit input corrections. Lexical alignment remains diagnostic; it no longer verifies notes or triggers stronger-bias retries. Direct recurrent-state mixing is opt-in.
+- Reduce dynamic-memory pinned staging to two expert slots, reuse views/layouts, preserve recently used experts during dense-page reclamation, share observed router rows with dispatch, and wake the producer only for missing preparation work. Dynamic placement remains experimental; a general speedup is not established.
+- Use bounded positioned reads for HF globals and layer metadata, avoiding whole-shard mappings and the reproduced Windows error 1455. Global staging and physical read sizes obey the configured cap.
+- Add a resumable current-model census and paired thought-buffer acceptance probes. See [development evidence](benchmarks/DEVELOPMENT_20261118.md) for scope and results; probability retention is not a semantic-memory certification.
+
 ## 1.1.0 — 2026-11-18
 
 - Universal Q4/Q6 packed projections and compatible SwiGLU expert kernels; Q6 is the generic default. Source GGUF and runtime affine formats remain distinct and lossy.

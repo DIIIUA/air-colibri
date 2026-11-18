@@ -370,10 +370,12 @@ class BoundedPinnedBufferPool:
         dtype: torch.dtype = torch.bfloat16,
         arena_layout: Optional[SlotArenaLayout] = None,
         slot_layouts: Optional[List[SlotArenaLayout]] = None,
+        device: Optional[torch.device] = None,
+        allocate: bool = True,
     ):
         self.num_slots = num_slots
         self.dtype = dtype
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         if arena_layout is not None:
             if arena_layout.dtype != dtype:
@@ -387,19 +389,11 @@ class BoundedPinnedBufferPool:
         self.slot_layouts, self.slot_offsets, total_bytes = slot_arena_geometry(self.layout,num_slots,slot_layouts)
         self.slot_strides = tuple(item.slot_stride for item in self.slot_layouts)
         self.slot_stride = self.slot_strides[0] if len(set(self.slot_strides))==1 else None
-        use_pinned = self.device.type == "cuda"
-        self.arena: Optional[torch.Tensor] = (
-            torch.empty(total_bytes, dtype=torch.uint8, pin_memory=use_pinned)
-            if total_bytes > 0
-            else torch.empty(0, dtype=torch.uint8)
-        )
-        self.total_pinned_bytes = self.arena.nbytes
-
-        # Slots may have different templates, but still share one allocation.
-        self.slots: List[Dict[str, torch.Tensor]] = [
-            self.slot_layouts[s].bind_slot_views(self.arena, s, dtype=dtype,base_offset_bytes=self.slot_offsets[s])
-            for s in range(self.num_slots)
-        ]
+        self._allocation_bytes = total_bytes
+        self._closed = False
+        self.arena: Optional[torch.Tensor] = None
+        self.total_pinned_bytes = 0
+        self.slots: List[Dict[str, torch.Tensor]] = []
 
         # CUDA события для защиты от гонок между CPU-записью в буфер и GPU DMA-чтением
         if self.device.type == "cuda":
@@ -409,9 +403,23 @@ class BoundedPinnedBufferPool:
             self.dma_events = [None] * num_slots
             self._has_in_flight_dma = [False] * num_slots
 
+        if allocate:
+            self._allocate_arena()
+
+    def _allocate_arena(self):
+        if self._closed:
+            raise RuntimeError("BoundedPinnedBufferPool is closed; cannot allocate.")
+        if self.arena is not None:
+            return
+        self.arena = torch.empty(self._allocation_bytes, dtype=torch.uint8,
+                                 pin_memory=self.device.type == "cuda")
+        self.slots = [layout.bind_slot_views(self.arena, s, dtype=self.dtype,
+                                           base_offset_bytes=self.slot_offsets[s])
+                      for s, layout in enumerate(self.slot_layouts)]
+        self.total_pinned_bytes = self.arena.nbytes
         strides_mb = [round(size / (1024**2),2) for size in self.slot_strides]
         print(
-            f"[BoundedPinnedPool] Allocated {num_slots} pinned DMA slots "
+            f"[BoundedPinnedPool] Allocated {self.num_slots} pinned DMA slots "
             f"({self.total_pinned_bytes / (1024**2):.1f} MB total arena | "
             f"slot MiB {strides_mb}) with zero-race protection"
         )
@@ -422,8 +430,9 @@ class BoundedPinnedBufferPool:
         Возвращает только view, соответствующие ключам src_tensors (без неактивного overlay-алиаса),
         чтобы асинхронный DMA не затирал активную ветку attention.
         """
-        if self.arena is None or not self.slots:
+        if self._closed:
             raise RuntimeError("BoundedPinnedBufferPool is closed; cannot copy_into_slot.")
+        self._allocate_arena()
 
         idx = slot_idx % self.num_slots
         slot_layout = self.slot_layouts[idx]
@@ -478,6 +487,8 @@ class BoundedPinnedBufferPool:
                 pass
         self.slots.clear()
         self.arena = None
+        self.total_pinned_bytes = 0
+        self._closed = True
         self.dma_events.clear()
         self._has_in_flight_dma.clear()
 
@@ -488,14 +499,62 @@ class BoundedPinnedBufferPool:
         self.close()
 
 
+class _PreadGlobalSlice:
+    """The row-slice interface used by embeddings/LM heads, without a file map."""
+    def __init__(self, reader, path, key):
+        self.reader, self.path, self.key = reader, path, key
+        span = reader.tensor_span(path,key)
+        self.dtype, self.shape = getattr(torch,span[-2]), span[-1]
+
+    def get_shape(self):
+        return self.shape
+
+    def __getitem__(self, index):
+        if len(self.shape) != 2:
+            return self.reader.read_tensor(self.path,self.key)[index]
+        rows,cols = index if isinstance(index,tuple) else (index,slice(None))
+        squeeze = isinstance(rows,int)
+        if squeeze:
+            row = rows if rows>=0 else self.shape[0]+rows
+            if not 0<=row<self.shape[0]:raise IndexError(rows)
+            rows = slice(row,row+1)
+        if not isinstance(rows,slice) or not isinstance(cols,slice):
+            raise TypeError('Global weight reads require contiguous row/column slices')
+        r0,r1,rs = rows.indices(self.shape[0])
+        c0,c1,cs = cols.indices(self.shape[1])
+        if rs!=1 or cs!=1:raise ValueError('Global weight reads require unit slice steps')
+        r1,c1 = max(r0,r1),max(c0,c1)
+        rows,cols = r1-r0,c1-c0
+        elements = max(1,self.reader.max_read_bytes//torch.empty((),dtype=self.dtype).element_size())
+        if rows*cols <= elements:
+            result = self.reader.read_matrix_slice(self.path,self.key,r0,r1,c0,c1)
+        else:
+            # The caller owns the requested output. Bound every additional
+            # staging tile too, including LM-head and wide embedding slices.
+            result = torch.empty((rows,cols),dtype=self.dtype)
+            width = min(cols,elements)
+            height = max(1,elements//width)
+            for row in range(r0,r1,height):
+                for col in range(c0,c1,width):
+                    end_row,end_col = min(row+height,r1),min(col+width,c1)
+                    tile = self.reader.read_matrix_slice(self.path,self.key,row,end_row,col,end_col)
+                    result[row-r0:end_row-r0,col-c0:end_col-c0].copy_(tile)
+                    del tile
+        return result[0] if squeeze else result
+
+
 class LazyGlobalsMap(collections.abc.MutableMapping):
-    """Ленивый mmap-словарь глобальных весов без жадной загрузки 4 ГБ в RAM."""
+    """Lazy global weights; positioned reads when a reader is supplied."""
 
     def __init__(self, globals_path: Optional[str], dtype: torch.dtype,
-                 key_map: Optional[Dict[str, Tuple[str, str]]] = None):
+                 key_map: Optional[Dict[str, Tuple[str, str]]] = None, reader=None):
         """``key_map`` (canonical name -> (file, stored key)) serves sharded Hugging Face checkpoints."""
         self._globals_path = globals_path
         self._dtype = dtype
+        self._reader = reader
+        if reader is not None and key_map is None:
+            header,_ = reader._header(str(globals_path))
+            key_map = {key:(str(globals_path),key) for key in header if key!='__metadata__'}
         self._key_map = key_map
         self._handles: Dict[str, Any] = {}
         if key_map is None:
@@ -512,6 +571,9 @@ class LazyGlobalsMap(collections.abc.MutableMapping):
         return self._handle
 
     def _slice(self, key: str) -> Any:
+        if self._reader is not None:
+            path,stored = self._key_map[key]
+            return _PreadGlobalSlice(self._reader,path,stored)
         if self._key_map is None:
             return self._ensure_handle().get_slice(key)
         path, stored = self._key_map[key]
@@ -624,9 +686,10 @@ class ShardedLayerView:
     ``entries`` maps canonical names (``model.layers.{i}.<param>``) to ``(file, stored key)``.
     """
 
-    def __init__(self, entries: Dict[str, Tuple[str, str]]):
+    def __init__(self, entries: Dict[str, Tuple[str, str]], reader=None):
         self._entries = dict(entries)
         self._handles: Dict[str, Any] = {}
+        self._reader = reader
 
     def _handle(self, path: str) -> Any:
         h = self._handles.get(path)
@@ -643,10 +706,14 @@ class ShardedLayerView:
 
     def get_slice(self, key: str) -> Any:
         path, stored = self._entries[key]
+        if self._reader is not None:
+            return _PreadGlobalSlice(self._reader,path,stored)
         return self._handle(path).get_slice(stored)
 
     def get_tensor(self, key: str) -> torch.Tensor:
         path, stored = self._entries[key]
+        if self._reader is not None:
+            return self._reader.read_tensor(path,stored)
         return self._handle(path).get_tensor(stored)
 
 
@@ -669,6 +736,8 @@ class StableWeightManager:
         weight_reader=None,
         model_source=None,
         quantized_projections=None,
+        staging_device=None,
+        defer_staging=False,
     ):
         self.model_dir = model_dir
         self.model_source = model_source
@@ -784,6 +853,8 @@ class StableWeightManager:
             arena_layout=arena_layout,
             num_slots=num_pinned_slots,
             dtype=dtype,
+            device=staging_device,
+            allocate=not defer_staging,
         )
         del template
 
@@ -798,10 +869,18 @@ class StableWeightManager:
                 if hasattr(self.model_source, "open_layer"):
                     self.mmap_handles[layer_idx] = self.model_source.open_layer(layer_idx, dtype=self.dtype)
                 else:
-                    self.mmap_handles[layer_idx] = ShardedLayerView(self.model_source.layer_entries(layer_idx))
+                    reader = self.weight_reader
+                    if not hasattr(reader,'tensor_span'):
+                        reader = getattr(self.model_source,'_pread_reader',None)
+                    self.mmap_handles[layer_idx] = ShardedLayerView(self.model_source.layer_entries(layer_idx),reader=reader)
             else:
                 layer_file = os.path.join(self.model_dir, f"model-{layer_idx:05d}.safetensors")
-                self.mmap_handles[layer_idx] = safetensors.safe_open(layer_file, framework="pt", device="cpu")
+                if hasattr(self.weight_reader,'tensor_span'):
+                    header,_ = self.weight_reader._header(layer_file)
+                    entries = {key:(layer_file,key) for key in header if key!='__metadata__'}
+                    self.mmap_handles[layer_idx] = ShardedLayerView(entries,reader=self.weight_reader)
+                else:
+                    self.mmap_handles[layer_idx] = safetensors.safe_open(layer_file, framework="pt", device="cpu")
         self.mmap_handles.move_to_end(layer_idx)
         while len(self.mmap_handles) > self.max_mmap_handles:
             self.mmap_handles.popitem(last=False)
@@ -812,10 +891,15 @@ class StableWeightManager:
             if hasattr(self.model_source, "open_globals"):
                 self.globals = self.model_source.open_globals(dtype=self.dtype)
                 return
-            self.globals = LazyGlobalsMap(None, dtype=self.dtype, key_map=self.model_source.globals_entries())
+            reader = self.weight_reader
+            if not hasattr(reader,'tensor_span'):
+                reader = getattr(self.model_source,'_pread_reader',None)
+            self.globals = LazyGlobalsMap(None, dtype=self.dtype,
+                key_map=self.model_source.globals_entries(),reader=reader)
             return
         globals_path = os.path.join(self.model_dir, "model-globals.safetensors")
-        self.globals = LazyGlobalsMap(globals_path, dtype=self.dtype)
+        reader = self.weight_reader if hasattr(self.weight_reader,'tensor_span') else None
+        self.globals = LazyGlobalsMap(globals_path, dtype=self.dtype, reader=reader)
 
     def read_layer_tensors(
         self,

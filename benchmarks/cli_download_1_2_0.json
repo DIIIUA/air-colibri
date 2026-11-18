@@ -1,0 +1,27 @@
+{
+  "repo": "HuggingFaceTB/SmolLM2-135M-Instruct",
+  "revision": "12fd25f77366fa6b3b4b768ec3050bf629380bac",
+  "weights_bytes": 269060552,
+  "weights_sha256": "5af571cbf074e6d21a03528d2330792e532ca608f24ac70a143f6b369968ab8c",
+  "preparation": {
+    "status": "ready",
+    "source_format": "hf",
+    "weight_format": "q6",
+    "adaptation": "on_demand",
+    "finite_first_forward": true,
+    "packed_projections": {
+      "modules": 210,
+      "bits": [
+        6
+      ],
+      "fused_calls": 0,
+      "tiled_calls": 210
+    },
+    "execution_device": "cpu",
+    "startup_memory_probe": null
+  },
+  "offline_reuse_status": "ready",
+  "answer": "6 times 7 is 42.",
+  "generated_tokens": 10,
+  "peak_vram_mib": 0.0
+}

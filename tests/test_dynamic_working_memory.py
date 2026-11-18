@@ -4,9 +4,64 @@ import torch
 
 from src.dynamic_working_memory import DynamicWorkingMemory
 from src.quantized_experts import QuantizedExpertCache
+from src.quantized_projection import pack_weight
 from test_unified_working_memory import make_memory
 
 pytestmark=pytest.mark.skipif(not torch.cuda.is_available(),reason='CUDA required')
+
+
+@pytest.mark.parametrize('bits',[4,6])
+@torch.no_grad()
+def test_bounded_host_staging_waits_before_reuse(bits):
+    weights,cache,ring,_=make_memory(bits,unify=False)
+    memory=DynamicWorkingMemory(ring,cache,24*cache.expert_bytes)
+    stream=torch.cuda.Stream()
+    expected=[]
+    try:
+        assert memory.pinned_bytes == 2*memory.page_bytes
+        assert memory.pinned_bytes < memory.gpu_bytes
+        memory.set_desired({(0,i) for i in range(8)})
+        for i in range(8):
+            packed=(pack_weight(torch.cat((weights[i,0],weights[i,1])),bits),
+                    pack_weight(weights[i,2],bits))
+            expected.append(packed)
+        with torch.cuda.stream(stream):
+            torch.cuda._sleep(100_000_000)
+        for i,packed in enumerate(expected):
+            status,_=memory.prepare((0,i),packed,stream,memory.epoch)
+            assert status=='published'
+        stream.synchronize()
+        for i,packed in enumerate(expected):
+            record=memory.records[memory.directory[(0,i)]]
+            for actual,reference in zip(memory._views(record),packed):
+                assert all(torch.equal(actual[k].cpu(),v) for k,v in reference.items())
+        assert memory.stats()['staging_waits']>0
+    finally:
+        stream.synchronize()
+        ring.close()
+        cache.close()
+
+
+@torch.no_grad()
+def test_dense_reclaim_preserves_recent_experts_instead_of_first_addresses():
+    _,cache,ring,_=make_memory(4,unify=False)
+    memory=DynamicWorkingMemory(ring,cache,24*cache.expert_bytes)
+    try:
+        for i in range(memory.num_slots):
+            with memory.lease(i//96,[i%96],cache._load_packed):
+                pass
+        hot={(0,i) for i in range(8)}
+        with memory.lease(0,list(range(8)),cache._load_packed):
+            pass
+        slot=ring.get_slot_for_loading(0)
+        ring.load_tensors_async(slot,{'weight':torch.ones(128,128,dtype=torch.bfloat16).pin_memory()})
+        assert hot.issubset(memory.directory)
+        assert memory.stats()['dense_reclaims_expert'] > 0
+        ring.acquire_slot_for_compute(0)
+        ring.release_slot_after_compute(slot)
+    finally:
+        ring.close()
+        cache.close()
 
 
 @pytest.mark.parametrize('bits',[4,6])

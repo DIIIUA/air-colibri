@@ -37,7 +37,7 @@ FACT_PROMPT = [{"role": "user", "content": "Перечисли пять план
 def eng():
     from aircolibri_cli.unified_runtime import AirColibriUnifiedEngine
 
-    e = AirColibriUnifiedEngine(model_dir=TEST_MODEL, vram_mode="normal", verbose=False)
+    e = AirColibriUnifiedEngine(cpu_first=False, model_dir=TEST_MODEL, vram_mode="normal", verbose=False)
     yield e
     e.close()
 

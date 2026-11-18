@@ -1,0 +1,2634 @@
+{
+  "version": "1.2.0",
+  "date": "2026-11-18",
+  "scope": "Fresh 46-entry local roster, Q6, finite forward, 2-token chat and 1-token session continuation; not quality or speed certification.",
+  "counts": {
+    "passed": 31,
+    "failed": 15
+  },
+  "excluded": [
+    "deepseek-v4-9b-colibri",
+    "OLMoE-1B-7B-0125-Instruct"
+  ],
+  "models": [
+    {
+      "model": "01_gguf_Llama-3.2-1B-Instruct-Q4_K_M",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 20.919,
+      "model_bytes": 807694877,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "controller_recovery": {
+        "cause": "The old watchdog applied the batch-start timeout after worker phase=complete and overwrote the first finished record.",
+        "evidence": "Complete raw/chat/continuation/cleanup metrics and the worker pass log remained intact; the model itself did not time out.",
+        "fix": "Completed batches no longer enter the per-model watchdog; standalone long-batch regression passed."
+      },
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 112,
+          "bits": [
+            6
+          ],
+          "fused_calls": 672,
+          "tiled_calls": 112
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 16,
+          "gpu_layer_calls": 96,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 16,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 37,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 112,
+          "bits": [
+            6
+          ],
+          "fused_calls": 896,
+          "tiled_calls": 112
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 16,
+          "gpu_layer_calls": 128,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 16,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "02_gguf_SmolLM3-3B-IQ3_XXS",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 37.703,
+      "model_bytes": 1267667250,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 252,
+          "bits": [
+            6
+          ],
+          "fused_calls": 2520,
+          "tiled_calls": 252
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 36,
+          "gpu_layer_calls": 360,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 36,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 70,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 252,
+          "bits": [
+            6
+          ],
+          "fused_calls": 3276,
+          "tiled_calls": 252
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 36,
+          "gpu_layer_calls": 468,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 36,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "03_gguf_Phi-4-mini-instruct-IQ3_XXS",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 47.155,
+      "model_bytes": 1678867342,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 128,
+          "bits": [
+            6
+          ],
+          "fused_calls": 256,
+          "tiled_calls": 128
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 32,
+          "gpu_layer_calls": 64,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 32,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 5,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 128,
+          "bits": [
+            6
+          ],
+          "fused_calls": 384,
+          "tiled_calls": 128
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 32,
+          "gpu_layer_calls": 96,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 32,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "04_gguf_granite-3.3-2b-instruct-Q4_K_M",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 28.712,
+      "model_bytes": 1545304159,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 280,
+          "bits": [
+            6
+          ],
+          "fused_calls": 2520,
+          "tiled_calls": 280
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 40,
+          "gpu_layer_calls": 360,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 40,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 60,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 280,
+          "bits": [
+            6
+          ],
+          "fused_calls": 3080,
+          "tiled_calls": 280
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 40,
+          "gpu_layer_calls": 440,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 40,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "05_gguf_gemma-3-1b-it-Q4_K_M",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 15.618,
+      "model_bytes": 806058749,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 182,
+          "bits": [
+            6
+          ],
+          "fused_calls": 546,
+          "tiled_calls": 182
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 26,
+          "gpu_layer_calls": 78,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 26,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 11,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 182,
+          "bits": [
+            6
+          ],
+          "fused_calls": 910,
+          "tiled_calls": 182
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 26,
+          "gpu_layer_calls": 130,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 26,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "06_gguf_gemma-2-2b-it-Q4_K_M",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 33.948,
+      "model_bytes": 1708583231,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 182,
+          "bits": [
+            6
+          ],
+          "fused_calls": 546,
+          "tiled_calls": 182
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 26,
+          "gpu_layer_calls": 78,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 26,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 11,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 182,
+          "bits": [
+            6
+          ],
+          "fused_calls": 910,
+          "tiled_calls": 182
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 26,
+          "gpu_layer_calls": 130,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 26,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "07_gguf_OLMo-2-0425-1B-Q4_K_M",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 16.069,
+      "model_bytes": 935515795,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 112,
+          "bits": [
+            6
+          ],
+          "fused_calls": 336,
+          "tiled_calls": 112
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 16,
+          "gpu_layer_calls": 48,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 16,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 14,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 112,
+          "bits": [
+            6
+          ],
+          "fused_calls": 560,
+          "tiled_calls": 112
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 16,
+          "gpu_layer_calls": 80,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 16,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "08_gguf_command-r7b-12-2024-IQ3_XS",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 213.103,
+      "model_bytes": 3724794497,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 224,
+          "bits": [
+            6
+          ],
+          "fused_calls": 672,
+          "tiled_calls": 224
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 32,
+          "gpu_layer_calls": 96,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 20,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 11,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 224,
+          "bits": [
+            6
+          ],
+          "fused_calls": 1120,
+          "tiled_calls": 224
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 32,
+          "gpu_layer_calls": 160,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 20,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "09_gguf_gemma-3n-E2B-it-Q2_K_L",
+      "status": "failed",
+      "stage": "load",
+      "elapsed_s": 2.161,
+      "model_bytes": 2221330245,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "weight_format": "q6",
+      "error": "UnsupportedModelError: [project]\\models\\09_gguf_gemma-3n-E2B-it-Q2_K_L\\gemma-3n-E2B-it-Q2_K_L.gguf: GGUF architecture 'gemma3n' is not supported"
+    },
+    {
+      "model": "10_gguf_MiniCPM3-4B-MLA-Q4_K_M",
+      "status": "failed",
+      "stage": "load",
+      "elapsed_s": 0.632,
+      "model_bytes": 2469792061,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "weight_format": "q6",
+      "error": "UnsupportedModelError: [project]\\models\\10_gguf_MiniCPM3-4B-MLA-Q4_K_M\\minicpm3-4b-q4_k_m.gguf: GGUF architecture 'minicpm3' is not supported"
+    },
+    {
+      "model": "11_gguf_Nemotron-Mini-4B-IQ3_M",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 44.415,
+      "model_bytes": 2184093242,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 192,
+          "bits": [
+            6
+          ],
+          "fused_calls": 576,
+          "tiled_calls": 192
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 32,
+          "gpu_layer_calls": 96,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 32,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 192,
+          "bits": [
+            6
+          ],
+          "fused_calls": 1152,
+          "tiled_calls": 192
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 32,
+          "gpu_layer_calls": 192,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 32,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "12_gguf_Qwen3.5-0.8B-Q4_K_M",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 17.501,
+      "model_bytes": 532517593,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 186,
+          "bits": [
+            6
+          ],
+          "fused_calls": 558,
+          "tiled_calls": 186
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 72,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 14,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 186,
+          "bits": [
+            6
+          ],
+          "fused_calls": 1116,
+          "tiled_calls": 186
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 144,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "13_gguf_Falcon-H1-0.5B-Q4_K_M",
+      "status": "failed",
+      "stage": "raw_forward",
+      "elapsed_s": 3.116,
+      "model_bytes": 314807058,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "weight_format": "q6",
+      "error": "ValueError: Trying to set a tensor of shape torch.Size([128, 1024]) in \"weight\" (which has shape torch.Size([256, 1024])), this looks incorrect."
+    },
+    {
+      "model": "14_gguf_granite-4.0-tiny-hybrid-IQ3_XXS",
+      "status": "failed",
+      "stage": "raw_forward",
+      "elapsed_s": 3.164,
+      "model_bytes": 2738570148,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "weight_format": "q6",
+      "error": "ValueError: `get_seq_length` can only be called on Attention layers, and the current Cache seem to only contain LinearAttention layers."
+    },
+    {
+      "model": "15_gguf_LFM2-350M-Q4_K_M",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 5.206,
+      "model_bytes": 229309838,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 92,
+          "bits": [
+            6
+          ],
+          "fused_calls": 276,
+          "tiled_calls": 92
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 16,
+          "gpu_layer_calls": 48,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 16,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 11,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 92,
+          "bits": [
+            6
+          ],
+          "fused_calls": 460,
+          "tiled_calls": 92
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 16,
+          "gpu_layer_calls": 80,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 16,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "16_gguf_Quant_SmolLM2-135M-Q2_K",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 4.566,
+      "model_bytes": 88202579,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 210,
+          "bits": [
+            6
+          ],
+          "fused_calls": 1050,
+          "tiled_calls": 210
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 30,
+          "gpu_layer_calls": 150,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 30,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 32,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 210,
+          "bits": [
+            6
+          ],
+          "fused_calls": 1470,
+          "tiled_calls": 210
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 30,
+          "gpu_layer_calls": 210,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 30,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "17_gguf_Quant_Qwen2.5-0.5B-Q3_K_M",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 8.284,
+      "model_bytes": 432042324,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 168,
+          "bits": [
+            6
+          ],
+          "fused_calls": 840,
+          "tiled_calls": 168
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 120,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 31,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 168,
+          "bits": [
+            6
+          ],
+          "fused_calls": 1176,
+          "tiled_calls": 168
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 168,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "18_gguf_Quant_Qwen2.5-0.5B-Q4_0",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 7.98,
+      "model_bytes": 428730702,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 168,
+          "bits": [
+            6
+          ],
+          "fused_calls": 840,
+          "tiled_calls": 168
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 120,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 31,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 168,
+          "bits": [
+            6
+          ],
+          "fused_calls": 1176,
+          "tiled_calls": 168
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 168,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "19_gguf_Quant_Llama-3.2-1B-Q4_1",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 17.215,
+      "model_bytes": 831746577,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 112,
+          "bits": [
+            6
+          ],
+          "fused_calls": 672,
+          "tiled_calls": 112
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 16,
+          "gpu_layer_calls": 96,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 16,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 37,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 112,
+          "bits": [
+            6
+          ],
+          "fused_calls": 896,
+          "tiled_calls": 112
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 16,
+          "gpu_layer_calls": 128,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 16,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "20_gguf_Quant_SmolLM2-135M-IQ4_XS",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 4.36,
+      "model_bytes": 90898265,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 210,
+          "bits": [
+            6
+          ],
+          "fused_calls": 1050,
+          "tiled_calls": 210
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 30,
+          "gpu_layer_calls": 150,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 30,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 32,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 210,
+          "bits": [
+            6
+          ],
+          "fused_calls": 1470,
+          "tiled_calls": 210
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 30,
+          "gpu_layer_calls": 210,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 30,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "21_gguf_Quant_Llama-3.2-1B-IQ4_NL",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 17.575,
+      "model_bytes": 773026327,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 112,
+          "bits": [
+            6
+          ],
+          "fused_calls": 672,
+          "tiled_calls": 112
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 16,
+          "gpu_layer_calls": 96,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 16,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 37,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 112,
+          "bits": [
+            6
+          ],
+          "fused_calls": 896,
+          "tiled_calls": 112
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 16,
+          "gpu_layer_calls": 128,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 16,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "22_gguf_Quant_Llama-3.2-1B-IQ2_XXS",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 14.578,
+      "model_bytes": 464331293,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 112,
+          "bits": [
+            6
+          ],
+          "fused_calls": 672,
+          "tiled_calls": 112
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 16,
+          "gpu_layer_calls": 96,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 16,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 37,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 112,
+          "bits": [
+            6
+          ],
+          "fused_calls": 896,
+          "tiled_calls": 112
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 16,
+          "gpu_layer_calls": 128,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 16,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "23_gguf_Quant_Llama-3.2-1B-IQ1_S",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 13.648,
+      "model_bytes": 421618199,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 112,
+          "bits": [
+            6
+          ],
+          "fused_calls": 672,
+          "tiled_calls": 112
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 16,
+          "gpu_layer_calls": 96,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 16,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 37,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 112,
+          "bits": [
+            6
+          ],
+          "fused_calls": 896,
+          "tiled_calls": 112
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 16,
+          "gpu_layer_calls": 128,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 16,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "24_gguf_BitNet-b1.58-2B-TQ2_0",
+      "status": "failed",
+      "stage": "load",
+      "elapsed_s": 1.513,
+      "model_bytes": 1203564139,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "weight_format": "q6",
+      "error": "UnsupportedModelError: [project]\\models\\24_gguf_BitNet-b1.58-2B-TQ2_0\\bitnet-2b4t-tq2_0.gguf: GGUF architecture 'bitnet' is not supported"
+    },
+    {
+      "model": "25_gguf_BitNet-b1.58-2B-i2_s",
+      "status": "failed",
+      "stage": "load",
+      "elapsed_s": 1.825,
+      "model_bytes": 1187801759,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "weight_format": "q6",
+      "error": "UnsupportedModelError: [project]\\models\\25_gguf_BitNet-b1.58-2B-i2_s\\ggml-model-i2_s.gguf: [project]\\models\\25_gguf_BitNet-b1.58-2B-i2_s\\ggml-model-i2_s.gguf: tensor 'blk.0.ffn_down.weight': unsupported ggml type 36 (T36)"
+    },
+    {
+      "model": "26_hf_Qwen3-0.6B-FP8",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 11.427,
+      "model_bytes": 1078873071,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 196,
+          "bits": [
+            6
+          ],
+          "fused_calls": 588,
+          "tiled_calls": 196
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 28,
+          "gpu_layer_calls": 84,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 28,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 14,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 196,
+          "bits": [
+            6
+          ],
+          "fused_calls": 1176,
+          "tiled_calls": 196
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 28,
+          "gpu_layer_calls": 168,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 28,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "27_hf_ERNIE-4.5-0.3B-PT",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 7.263,
+      "model_bytes": 734571821,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 126,
+          "bits": [
+            6
+          ],
+          "fused_calls": 252,
+          "tiled_calls": 126
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 18,
+          "gpu_layer_calls": 36,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 18,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 9,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 126,
+          "bits": [
+            6
+          ],
+          "fused_calls": 504,
+          "tiled_calls": 126
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 18,
+          "gpu_layer_calls": 72,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 18,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "28_hf_granite-3.1-1b-a400m-MoE",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 44.376,
+      "model_bytes": 2674008537,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 96,
+          "bits": [
+            6
+          ],
+          "fused_calls": 864,
+          "tiled_calls": 96
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 216,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 61,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 96,
+          "bits": [
+            6
+          ],
+          "fused_calls": 1056,
+          "tiled_calls": 96
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 264,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "29_hf_mamba-130m",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 7.345,
+      "model_bytes": 518690024,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 24,
+          "bits": [
+            6
+          ],
+          "fused_calls": 48,
+          "tiled_calls": 24
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 48,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 9,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 24,
+          "bits": [
+            6
+          ],
+          "fused_calls": 96,
+          "tiled_calls": 24
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 96,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "30_hf_mamba2-370m",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 12.554,
+      "model_bytes": 740311494,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 48,
+          "bits": [
+            6
+          ],
+          "fused_calls": 96,
+          "tiled_calls": 48
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 48,
+          "gpu_layer_calls": 96,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 48,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 9,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 48,
+          "bits": [
+            6
+          ],
+          "fused_calls": 192,
+          "tiled_calls": 48
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 48,
+          "gpu_layer_calls": 192,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 48,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "31_hf_Zamba2-1.2B-instruct-v2",
+      "status": "failed",
+      "stage": "raw_forward",
+      "elapsed_s": 14.15,
+      "model_bytes": 2433691910,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "weight_format": "q6",
+      "error": "RuntimeError: Tensor on device cpu is not on the expected device meta!"
+    },
+    {
+      "model": "32_hf_rwkv7-0.1B-g1",
+      "status": "failed",
+      "stage": "load",
+      "elapsed_s": 0.232,
+      "model_bytes": 383221604,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "weight_format": "q6",
+      "error": "ValueError: The repository [project]\\models\\32_hf_rwkv7-0.1B-g1 contains custom code which must be executed to correctly load the model. You can inspect the repository content at [project]\\models\\32_hf_rwkv7-0.1B-g1 .\n You can inspect the repository content at https://hf.co/[project]\\models\\32_hf_rwkv7-0.1B-g1.\nPlease pass the argument `trust_remote_code=True` to allow custom code to be run."
+    },
+    {
+      "model": "33_hf_recurrentgemma-2b-it-8bit",
+      "status": "failed",
+      "stage": "load",
+      "elapsed_s": 0.182,
+      "model_bytes": 3387454826,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "weight_format": "q6",
+      "error": "UnsupportedModelError: [project]\\models\\33_hf_recurrentgemma-2b-it-8bit: checkpoint misses global tensors ['model.norm.weight']"
+    },
+    {
+      "model": "34_hf_xlstm-german-wikipedia",
+      "status": "failed",
+      "stage": "load",
+      "elapsed_s": 0.13,
+      "model_bytes": 446367028,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "weight_format": "q6",
+      "error": "UnsupportedModelError: [project]\\models\\34_hf_xlstm-german-wikipedia: config has no decoder shape (num_hidden_layers, hidden_size)"
+    },
+    {
+      "model": "35_hf_RWKV4-169m-bin",
+      "status": "failed",
+      "stage": "load",
+      "elapsed_s": 0.121,
+      "model_bytes": 679561267,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "weight_format": "q6",
+      "error": "UnsupportedModelError: [project]\\models\\35_hf_RWKV4-169m-bin: no Colibri container, Hugging Face safetensors checkpoint, or GGUF file found"
+    },
+    {
+      "model": "36_hf_OpenELM-270M-Instruct",
+      "status": "failed",
+      "stage": "load",
+      "elapsed_s": 0.155,
+      "model_bytes": 543144687,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "weight_format": "q6",
+      "error": "UnsupportedModelError: [project]\\models\\36_hf_OpenELM-270M-Instruct: config has no decoder shape (num_hidden_layers, hidden_size)"
+    },
+    {
+      "model": "37_hf_gpt2-124m",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 7.356,
+      "model_bytes": 550968391,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 48,
+          "bits": [
+            6
+          ],
+          "fused_calls": 96,
+          "tiled_calls": 48
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 12,
+          "gpu_layer_calls": 24,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 12,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 8,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 48,
+          "bits": [
+            6
+          ],
+          "fused_calls": 192,
+          "tiled_calls": 48
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 12,
+          "gpu_layer_calls": 48,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 12,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "38_hf_bloom-560m",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 14.832,
+      "model_bytes": 1132981595,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 48,
+          "bits": [
+            6
+          ],
+          "fused_calls": 96,
+          "tiled_calls": 48
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 48,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 8,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 48,
+          "bits": [
+            6
+          ],
+          "fused_calls": 144,
+          "tiled_calls": 48
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 72,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "39_hf_pythia-410m",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 8.959,
+      "model_bytes": 913502443,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 96,
+          "bits": [
+            6
+          ],
+          "fused_calls": 192,
+          "tiled_calls": 96
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 48,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 9,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 96,
+          "bits": [
+            6
+          ],
+          "fused_calls": 384,
+          "tiled_calls": 96
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 96,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "40_hf_SmolVLM2-256M",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 7.573,
+      "model_bytes": 1030864307,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 210,
+          "bits": [
+            6
+          ],
+          "fused_calls": 630,
+          "tiled_calls": 210
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 30,
+          "gpu_layer_calls": 90,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 30,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 210,
+          "bits": [
+            6
+          ],
+          "fused_calls": 1260,
+          "tiled_calls": 210
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 30,
+          "gpu_layer_calls": 180,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 30,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "41_hf_Qwen2-VL-2B-Instruct-AWQ",
+      "status": "failed",
+      "stage": "load",
+      "elapsed_s": 0.265,
+      "model_bytes": 2956643810,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "weight_format": "q6",
+      "error": "UnsupportedModelError: [project]\\models\\41_hf_Qwen2-VL-2B-Instruct-AWQ: model_type='qwen2_vl' (Qwen2VLConfig) has no CausalLM class"
+    },
+    {
+      "model": "42_hf_Qwen2.5-0.5B-AWQ",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 10.843,
+      "model_bytes": 742146688,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 168,
+          "bits": [
+            6
+          ],
+          "fused_calls": 840,
+          "tiled_calls": 168
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 120,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 31,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 168,
+          "bits": [
+            6
+          ],
+          "fused_calls": 1176,
+          "tiled_calls": 168
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 168,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "43_hf_Qwen2.5-0.5B-GPTQ-Int4",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 8.492,
+      "model_bytes": 470878481,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 168,
+          "bits": [
+            6
+          ],
+          "fused_calls": 840,
+          "tiled_calls": 168
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 120,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 31,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 168,
+          "bits": [
+            6
+          ],
+          "fused_calls": 1176,
+          "tiled_calls": 168
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 24,
+          "gpu_layer_calls": 168,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 24,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    },
+    {
+      "model": "44_hf_internlm2_5-1_8b-chat",
+      "status": "failed",
+      "stage": "load",
+      "elapsed_s": 0.17,
+      "model_bytes": 3779859184,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "weight_format": "q6",
+      "error": "UnsupportedModelError: [project]\\models\\44_hf_internlm2_5-1_8b-chat: checkpoint misses global tensors ['model.embed_tokens.weight', 'lm_head.weight']"
+    },
+    {
+      "model": "45_hf_gpt-oss-20b-MXFP4",
+      "status": "failed",
+      "stage": "load",
+      "elapsed_s": 0.161,
+      "model_bytes": 13789252013,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "weight_format": "q6",
+      "error": "UnsupportedModelError: [project]\\models\\45_hf_gpt-oss-20b-MXFP4: layer 0 packed experts miss projections (['down_proj_bias', 'gate_up_proj_bias'])"
+    },
+    {
+      "model": "Qwen3.6-35B-A3B-uncensored-heretic-APEX-Balanced",
+      "status": "passed",
+      "stage": "complete",
+      "elapsed_s": 198.965,
+      "model_bytes": 25624956800,
+      "engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+      "source_files_unchanged": true,
+      "raw_logits_finite": true,
+      "weight_format": "q6",
+      "metrics": {
+        "generated_tokens": 2,
+        "cached_prefix_tokens": 0,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 310,
+          "bits": [
+            6
+          ],
+          "fused_calls": 930,
+          "tiled_calls": 310
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 40,
+          "gpu_layer_calls": 120,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 40,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      },
+      "continuation_metrics": {
+        "generated_tokens": 1,
+        "cached_prefix_tokens": 14,
+        "stopped_by_eos": false,
+        "packed_projections": {
+          "modules": 310,
+          "bits": [
+            6
+          ],
+          "fused_calls": 1860,
+          "tiled_calls": 310
+        },
+        "progressive_execution": {
+          "enabled": true,
+          "complete": true,
+          "start_policy": "simultaneous_readiness",
+          "gpu_state": "adopted",
+          "cpu_layer_calls": 40,
+          "gpu_layer_calls": 240,
+          "cpu_steps": 1,
+          "gpu_resident_layers_ready": 40,
+          "adopted_layers": [],
+          "queue_capacity": 2,
+          "queued_payloads": 0,
+          "transitions": [
+            {
+              "event": "gpu_ring_adopted",
+              "cpu_steps_before": 1
+            }
+          ],
+          "kernels_ready": true,
+          "preparation_error": null
+        }
+      }
+    }
+  ]
+}

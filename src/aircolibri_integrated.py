@@ -150,6 +150,8 @@ class AirColibriModel:
         weight_reader=None,
         expert_cache_bytes: int = 0,
         universal_quantization: bool = False,
+        cpu_first_plan=None,
+        progressive_gpu: bool = True,
     ):
         if pipeline_mode not in ("sequential", "double_buffer", "triple_ring", "triple_ring_prefetch"):
             raise ValueError("Unsupported pipeline mode")
@@ -174,7 +176,8 @@ class AirColibriModel:
         self.model_source = model_source
         self.model_dir = model_dir
         self.pipeline_mode = pipeline_mode
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu") if cpu_first_plan is not None else device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.progressive = None
         self.dtype = dtype
         self.vram_resident_layers = vram_resident_layers
         self.cache_policy = cache_policy
@@ -263,6 +266,8 @@ class AirColibriModel:
             weight_reader=self.weight_reader,
             model_source=model_source,
             quantized_projections=quantized_projections,
+            staging_device=self.device if cpu_first_plan is not None else None,
+            defer_staging=cpu_first_plan is not None,
         )
 
         # Bind source-specific expert loading without hiding implementation errors.
@@ -273,7 +278,7 @@ class AirColibriModel:
             if not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
                 prepare_args = {key: value for key, value in prepare_args.items() if key in params}
             model_source.prepare_model(self.model, **prepare_args)
-        if self.device.type == "cuda":
+        if self.device.type == "cuda" or cpu_first_plan is not None:
             from src.colibri_deltanet_nvrtc import install_deltanet_nvrtc_kernels
 
             install_deltanet_nvrtc_kernels(
@@ -315,14 +320,25 @@ class AirColibriModel:
             if self.use_fused_q4_gemv:
                 self._install_fused_q4_gemv_wrappers()
 
+        # One release event starts CPU global-weight preparation and GPU setup.
+        # The metadata graph is already complete; no process-wide meta patch is
+        # active while the GPU thread initializes its runtime.
+        if cpu_first_plan is not None:
+            from src.progressive_execution import ProgressiveExecution
+            self.progressive = ProgressiveExecution(self, cpu_first_plan, expert_cache_bytes,
+                                                    allow_gpu=progressive_gpu)
+            self.progressive.start()
+
         # 4. Постоянные веса и VRAM-резидентные слои
         self._setup_permanent_weights()
         self.weight_manager.globals.release_handle()
+        if self.progressive is not None:
+            self.progressive.capture_globals()
 
         # 5. Инициализация GPU Ring Pipeline на едином layout без union-раздувания.
         # When every layer is resident nothing is streamed, so no ring arena is allocated
         # (it used to waste 120-475 MiB of VRAM on 8 GB cards).
-        if all_layers_resident:
+        if all_layers_resident or cpu_first_plan is not None:
             self.pipeline = _NoStreamingPipeline()
         else:
             self.pipeline = GPURingPipeline(
@@ -336,11 +352,12 @@ class AirColibriModel:
         self.tail_prefetched = False
 
         # 6. Загружаем VRAM-резидентные слои
-        for r_idx in range(self.vram_resident_layers):
+        for r_idx in range(0 if cpu_first_plan is not None else self.vram_resident_layers):
             self._load_resident_layer(r_idx)
 
         # 7. Установка стриминговых хуков на декодер-слои
-        self._install_pipeline_hooks()
+        if cpu_first_plan is None:
+            self._install_pipeline_hooks()
         if native_policy is not None:
             self.weight_manager.ram_cache.admission = native_policy.admit
             self.weight_manager.ram_cache.on_access = native_policy.record_access
@@ -676,6 +693,8 @@ class AirColibriModel:
 
             def _post_hook(module, args, output):
                 i = module._air_layer_idx
+                if self.progressive is not None and self.progressive.complete:
+                    self.progressive.gpu_layers += 1
                 if self._wavefront_active:
                     return output
                 if i < self.vram_resident_layers:
@@ -768,9 +787,13 @@ class AirColibriModel:
     @_fail_runtime_on_error
     def _forward_step(self, step_tokens: torch.Tensor, past_key_values: Any = None,
                       prefetch_next: bool = True, cache_position: Optional[torch.Tensor] = None,
-                      *, prefill: Optional[bool] = None, prefill_end: bool = True) -> Tuple[torch.Tensor, Any]:
+                      *, prefill: Optional[bool] = None, prefill_end: bool = True,
+                      return_all_logits: bool = False) -> Tuple[torch.Tensor, Any]:
         if self._failed or self.model is None:
             raise RuntimeError("Model is closed or failed; create a new runtime")
+        if self.progressive is not None and not self.progressive.complete:
+            return self.progressive.forward(step_tokens, past_key_values, prefetch_next,
+                                            cache_position, prefill, prefill_end, return_all_logits)
         self._prefetch_next_step = prefetch_next
         warmup = getattr(self, "probability_warmup", None)
         if warmup is not None:
@@ -803,7 +826,7 @@ class AirColibriModel:
             if cache_position is not None and getattr(self, "_supports_cache_position", True):
                 extra["cache_position"] = cache_position.to(device=self.device)
             if getattr(self, "_supports_logits_to_keep", False):
-                extra["logits_to_keep"] = 1
+                extra["logits_to_keep"] = 0 if return_all_logits else 1
             outputs = self.model(
                 inputs_embeds=inputs_embeds,
                 input_ids=None,
@@ -818,7 +841,7 @@ class AirColibriModel:
             next_cache = getattr(outputs, cache_kw, None)
         if warmup is not None:
             warmup.end_step(outputs.logits, next_cache)
-        return outputs.logits[:, -1, :], next_cache
+        return (outputs.logits if return_all_logits else outputs.logits[:, -1, :]), next_cache
 
     def enable_unified_memory(self, **kwargs):
         """Join ring/cache/preparation with elastic A/B and empty C by default.
@@ -840,6 +863,11 @@ class AirColibriModel:
         """
         if getattr(self, "probability_warmup", None) is not None:
             raise RuntimeError("Probability warmup is already enabled")
+        if self.progressive is not None and not self.progressive.complete:
+            from src.progressive_execution import DeferredWarmup
+            self.probability_warmup = DeferredWarmup(self, kwargs)
+            self.progressive.deferred_warmup = self.probability_warmup
+            return self.probability_warmup
         from src.probability_warmup import ProbabilityWarmup
         self.probability_warmup = ProbabilityWarmup(self, **kwargs)
         return self.probability_warmup
@@ -854,6 +882,8 @@ class AirColibriModel:
 
     def reset_after_cancel(self) -> None:
         """Restores ring slots and prefetch flags after a cooperative cancellation."""
+        if self.progressive is not None and not self.progressive.complete:
+            self.progressive.pause()
         self._step_cancel_check = None
         if getattr(self, "probability_warmup", None) is not None:
             self.probability_warmup.reset()
@@ -928,6 +958,8 @@ class AirColibriModel:
 
     def close(self) -> None:
         """Удаляет хуки и освобождает ресурсы GPU и CPU."""
+        if getattr(self, "progressive", None) is not None:
+            self.progressive.close()
         if getattr(self, "probability_warmup", None) is not None:
             self.probability_warmup.close()
             self.probability_warmup = None

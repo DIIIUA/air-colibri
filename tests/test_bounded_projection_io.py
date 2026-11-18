@@ -7,6 +7,53 @@ from aircolibri_cli.model_source import PreadSafetensorsReader, open_model_sourc
 from src.quantized_projection import pack_weight, pack_weight_rows
 
 
+def test_global_rows_and_norm_never_map_the_full_hf_shard(tmp_path,monkeypatch):
+    import safetensors
+    from src.bounded_memory_manager import LazyGlobalsMap
+    weight=torch.arange(256*64,dtype=torch.float32).reshape(256,64)
+    norm=torch.arange(64,dtype=torch.float32)
+    path=tmp_path/'globals.safetensors'
+    save_file({'embedding':weight,'head':weight+1,'norm':norm},str(path))
+    def no_mmap(*args,**kwargs):raise AssertionError('A global read mapped the whole shard')
+    monkeypatch.setattr(safetensors,'safe_open',no_mmap)
+    reader=PreadSafetensorsReader(max_read_bytes=128)
+    try:
+        globals=LazyGlobalsMap(None,torch.bfloat16,
+            key_map={name:(str(path),name) for name in ('embedding','head','norm')},reader=reader)
+        ids=torch.tensor([[9,3,9,255]])
+        assert torch.equal(globals.lookup_rows('embedding',ids),weight[ids].bfloat16())
+        head=globals.get_tensor_slice('head')
+        assert head.get_shape()==tuple(weight.shape)
+        assert torch.equal(head[7:19],weight[7:19]+1)
+        assert torch.equal(globals.pop('norm'),norm.bfloat16())
+        globals.release_handle()
+        assert torch.equal(head[-1],weight[-1]+1)
+        assert torch.equal(head[:],weight+1)
+        assert reader.matrix_io_stats()['max_read_bytes']<=128
+        assert reader.matrix_io_stats()['max_slice_bytes']<=128
+    finally:
+        reader.close()
+
+
+@torch.no_grad()
+def test_hf_runtime_globals_use_positioned_reader(tmp_path,monkeypatch):
+    if not torch.cuda.is_available():pytest.skip('CUDA required')
+    import safetensors
+    from src.aircolibri_integrated import AirColibriModel
+    write_checkpoint(tmp_path,'plain')
+    source=open_model_source(tmp_path)
+    reader=PreadSafetensorsReader(max_read_bytes=256)
+    def no_mmap(*args,**kwargs):raise AssertionError('Runtime attempted a whole-file map')
+    monkeypatch.setattr(safetensors,'safe_open',no_mmap)
+    try:
+        with AirColibriModel(str(tmp_path),model_source=source,weight_reader=reader,
+                weight_format='q4',universal_quantization=True,vram_resident_layers=4) as engine:
+            logits,_=engine._forward_step(torch.tensor([[3,7,11]]),None,prefetch_next=False)
+            assert torch.isfinite(logits).all()
+    finally:
+        reader.close()
+
+
 @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16, torch.int32, torch.float8_e4m3fn])
 def test_matrix_rectangles_bound_reads_and_scratch(tmp_path, dtype):
     matrix = (torch.arange(23*64).reshape(23, 64) % 17).to(dtype)

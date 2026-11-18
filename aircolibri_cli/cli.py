@@ -1,6 +1,9 @@
 """AirColibri command-line interface.
 
 Commands:
+  models    List local models; select by number, name or path
+  download  Download a Hugging Face URL/repository and verify preparation
+  prepare   Verify automatic runtime packing with a first forward
   doctor    Check GPU, VRAM plan, model files, Q4 cache and LAN addresses
   ask       Stream a single prompt (`<think>...</think>` -> answer -> `<|im_end|>`)
   chat      Interactive multi-turn chat (KV-prefix reuse + pinned host-RAM parking)
@@ -42,9 +45,8 @@ from aircolibri_cli.model_source import (
     detect_format,
     resolve_model_dir,
 )
-from aircolibri_cli.unified_runtime import (
+from aircolibri_cli.runtime_config import (
     VRAM_MODES,
-    AirColibriUnifiedEngine,
     GenerationCancelled,
     checkpoint_manifest_path,
     find_aircolibri_root,
@@ -60,11 +62,13 @@ def _add_engine_args(p: argparse.ArgumentParser) -> None:
         dest="model",
         type=str,
         default=None,
-        help=f"Model folder (Colibri container, Hugging Face shards, or a Qwen3.5/3.6 MoE GGUF) "
-        f"or a Hugging Face repo id such as {DEFAULT_MODEL_ID} (downloaded once). "
-        f"Default: a supported folder in <root>/models",
+        help=f"Catalog number/name, local HF/GGUF/Colibri folder, or Hugging Face URL/repository "
+        f"such as {DEFAULT_MODEL_ID} (downloaded once). Default: a locally recognized folder",
     )
     p.add_argument("--aircolibri-root", type=str, default=None, help="Path to the AirColibri program folder")
+    p.add_argument("--download-dir", type=str, default=None, help="Save a Hugging Face model directly into this directory")
+    p.add_argument("--device", choices=("auto", "cpu"), default="auto",
+                   help="auto: CPU execution with optional GPU adoption; cpu: disk/CPU execution only")
     p.add_argument(
         "--vram-mode",
         choices=list(VRAM_MODES),
@@ -76,6 +80,14 @@ def _add_engine_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--prefill-wavefront", action="store_true",
                    help="Experimental Llama prefill: overlap prompt chunks across three CUDA stages")
     p.add_argument("--no-mtp", action="store_true", help="Disable the speculative MTP head")
+    p.add_argument("--speculation", choices=("auto", "off", "lookup", "native"), default="auto",
+                   help="Shared streamed verification: native trained head when available, otherwise prompt lookup")
+    p.add_argument("--mtp-head", type=str, default=None, help="Separate trained MTP safetensors for the selected model")
+    p.add_argument("--mtp-head-budget-mib", type=int, default=128)
+    p.add_argument("--region-pruning", action=argparse.BooleanOptionalAction, default=True,
+                   help="Exclude proven zero-weight routed experts and cancel obsolete current-scope preparation")
+    p.add_argument("--progressive-start", "--cpu-first", action=argparse.BooleanOptionalAction, default=True,
+                   help="Start CPU and GPU preparation together; devices take work when ready (default); --no-progressive-start selects the GPU-first reference")
     p.add_argument("--weight-format", choices=("auto", "bf16", "q4", "q6"), default="auto",
                    help="Runtime weights: auto keeps the native Qwen Q4 path, otherwise uses universal Q6")
     p.add_argument("--max-drafts", type=int, default=2, help="Max speculative draft depth (1..3, default: 2)")
@@ -87,9 +99,16 @@ def _add_engine_args(p: argparse.ArgumentParser) -> None:
 
 
 def _engine_from_args(args: argparse.Namespace) -> AirColibriUnifiedEngine:
-    explicit_repo = bool(args.model) and not Path(args.model).exists()
+    from aircolibri_cli.unified_runtime import AirColibriUnifiedEngine
+    model = args.model
+    if getattr(args, "download_dir", None):
+        if not model:
+            raise ModelNotFoundError("--download-dir requires a Hugging Face model reference")
+        from .model_hub import download_model
+        model, _, _ = download_model(model, find_aircolibri_root(args.aircolibri_root), directory=args.download_dir)
+    explicit_repo = bool(model) and not Path(model).exists()
     return AirColibriUnifiedEngine(
-        model_dir=args.model,
+        model_dir=model,
         aircolibri_root=args.aircolibri_root,
         vram_mode=args.vram_mode,
         enable_mtp=not args.no_mtp,
@@ -100,6 +119,12 @@ def _engine_from_args(args: argparse.Namespace) -> AirColibriUnifiedEngine:
         allow_download=explicit_repo,
         weight_format=args.weight_format,
         prefill_wavefront=getattr(args, "prefill_wavefront", False),
+        progressive_start=getattr(args, "progressive_start", getattr(args, "cpu_first", True)),
+        device=getattr(args, "device", "auto"),
+        speculation=getattr(args, "speculation", "auto"),
+        mtp_head_path=getattr(args, "mtp_head", None),
+        mtp_head_budget_mib=getattr(args, "mtp_head_budget_mib", 128),
+        prune_regions=getattr(args, "region_pruning", True),
     )
 
 
@@ -112,10 +137,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     root = find_aircolibri_root(args.aircolibri_root)
     lan_ip, all_ips = detect_lan_ips()
     cuda_ok = torch.cuda.is_available()
-    gpu_name = torch.cuda.get_device_name(0) if cuda_ok else "NONE"
+    cpu_execution = getattr(args, "device", "auto") == "cpu" or not cuda_ok
+    gpu_name = torch.cuda.get_device_name(0) if cuda_ok and not cpu_execution else "NONE"
     report: dict = {
         "cuda_available": cuda_ok,
         "gpu_name": gpu_name,
+        "execution_device": "cpu" if cpu_execution else "auto",
         "aircolibri_root": str(root),
         "primary_lan_ip": lan_ip,
         "all_lan_ips": all_ips,
@@ -123,8 +150,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     model_dir = None
     model_error = None
     try:
-        model_dir = resolve_model_dir(args.model, root, allow_download=False)
-    except (ModelNotFoundError, UnsupportedModelError, OSError) as exc:
+        explicit_repo = bool(args.model) and not Path(args.model).exists()
+        if getattr(args, "download_dir", None):
+            from .model_hub import download_model
+            model_dir, _, _ = download_model(args.model, root, directory=args.download_dir)
+        else:
+            model_dir = resolve_model_dir(args.model, root, allow_download=explicit_repo)
+    except (ModelNotFoundError, UnsupportedModelError, OSError, ValueError) as exc:
         model_error = str(exc)
     report["model_dir"] = str(model_dir) if model_dir else None
     report["model_error"] = model_error
@@ -137,8 +169,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         report["runtime_profile"] = profile
         if fmt == "colibri" and profile.get("fast_qwen"):
             report["q4_cache_ready"] = (root / "data" / "q4-g64-cache").exists() and checkpoint_manifest_path(root).exists()
-        if cuda_ok:
-            free_b, total_b = torch.cuda.mem_get_info(0)
+        if cuda_ok and not cpu_execution:
+            from .gpu_memory import measure_gpu_memory
+            report["startup_memory_probe"] = measure_gpu_memory(0)
+            free_b, total_b = (report["startup_memory_probe"][k] for k in ("free_bytes", "total_bytes"))
             try:
                 profile, plan, _has_mtp = plan_for_checkpoint(
                     model_dir,
@@ -154,11 +188,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 report["vram_plan"] = plan.as_dict()
             except (RuntimeError, ValueError) as exc:
                 report["vram_plan_error"] = str(exc)
+                cpu_execution = True
+                report["execution_device"] = "cpu"
 
     print("=" * 76)
     print("  AIRCOLIBRI DOCTOR — ENVIRONMENT & LAN READINESS")
     print("=" * 76)
     print(f"  CUDA / GPU         : {'OK' if cuda_ok else 'MISSING'} — {gpu_name}")
+    print(f"  Execution          : {report['execution_device']}")
     print(f"  Program folder     : {root}")
     print(f"  Model              : {model_dir or 'NOT FOUND'} ({report.get('model_format', '-')})")
     if model_error:
@@ -194,7 +231,93 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         Path(args.json_out).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     if model_dir is None:
         return EXIT_MODEL
-    return EXIT_OK if cuda_ok and "vram_plan_error" not in report else EXIT_RUNTIME
+    return EXIT_OK if cpu_execution or "vram_plan_error" not in report else EXIT_RUNTIME
+
+
+def cmd_models(args):
+    from .model_source import local_model_candidates, runtime_model_dir, is_supported
+    root = find_aircolibri_root(args.aircolibri_root)
+    rows = []
+    for i, folder in enumerate(local_model_candidates(root), 1):
+        row = dict(index=i, name=folder.name, path=str(folder.resolve()))
+        try:
+            target = runtime_model_dir(folder)
+            row["runtime_path"] = str(target.resolve())
+            row["format"] = detect_format(target) or "unadapted"
+            row["weight_bytes"] = sum(f.stat().st_size for f in target.iterdir()
+                                      if f.suffix in (".gguf", ".safetensors", ".bin") and f.is_file())
+            row["status"] = "available" if row["weight_bytes"] else "incomplete"
+            if args.check:
+                row["metadata_supported"] = is_supported(target)
+        except (OSError, ValueError) as exc:
+            row.update(status="invalid", error=str(exc))
+        rows.append(row)
+    if args.json:
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+    else:
+        print(f"Models: {root/'models'}")
+        for row in rows:
+            checked = f" | metadata {'OK' if row['metadata_supported'] else 'needs adapter'}" if "metadata_supported" in row else ""
+            print(f"{row['index']:>3}  {row['name']}  [{row.get('format','?')}, {row.get('weight_bytes',0)/2**30:.2f} GiB]{checked}")
+        print('Select by number, folder name or full path: aircolibri ask --model 1 "Hi"')
+        print('Available files and metadata checks do not certify runtime support; see MODEL_SUPPORT.md.')
+    return EXIT_OK
+
+
+def _verify_preparation(folder, *, root, device="auto", weight_format="auto", vram_mode="normal"):
+    import torch
+    from .unified_runtime import AirColibriUnifiedEngine
+    with AirColibriUnifiedEngine(folder, aircolibri_root=root, device=device, weight_format=weight_format,
+        vram_mode=vram_mode, enable_mtp=False, speculation="off", verbose=False,
+        max_context_tokens=512, prefill_chunk_tokens=8) as engine:
+        ids = engine.tokenizer("Hi", return_tensors="pt").input_ids
+        with torch.inference_mode():
+            logits, cache = engine.engine._forward_step(ids, prefill=True, prefill_end=True, prefetch_next=False)
+            finite = bool(torch.isfinite(logits).all())
+        if not finite:
+            raise RuntimeError("Preparation produced nonfinite logits")
+        del logits, cache
+        snapshot = engine.status_snapshot()
+        return dict(status="ready", model_dir=str(folder), source_format=engine.model_format,
+                    weight_format=engine.profile["weight_format"], adaptation="on_demand",
+                    finite_first_forward=True, packed_projections=snapshot["packed_projections"],
+                    execution_device=snapshot["execution_device"], startup_memory_probe=snapshot.get("startup_memory_probe"))
+
+
+def cmd_prepare(args):
+    root = find_aircolibri_root(args.aircolibri_root)
+    folder = resolve_model_dir(args.model, root, allow_download=bool(args.model) and not Path(args.model).exists())
+    report = _verify_preparation(folder, root=root, device=args.device, weight_format=args.weight_format, vram_mode=args.vram_mode)
+    from .model_hub import register_model, save_json
+    register_model(root, folder)
+    if args.json_out:
+        save_json(args.json_out, report)
+    print(f"Ready: {folder} | {report['weight_format']} | first forward OK")
+    return EXIT_OK
+
+
+def cmd_download(args):
+    from .model_hub import download_model, save_json
+    root = find_aircolibri_root(args.aircolibri_root)
+    folder, marker, receipt = download_model(args.reference, root, directory=args.directory,
+                                             filename=args.file, revision=args.revision)
+    try:
+        if not args.no_verify:
+            receipt["preparation"] = _verify_preparation(folder, root=root, device=args.device,
+                weight_format=args.weight_format, vram_mode=args.vram_mode)
+            receipt["status"] = "ready"
+        save_json(marker, receipt)
+        if args.json_out:
+            save_json(args.json_out, receipt)
+    except Exception as exc:
+        receipt.update(status="downloaded_unverified", preparation_error=str(exc))
+        save_json(marker, receipt)
+        if args.json_out:
+            save_json(args.json_out, receipt)
+        raise
+    print(f"{'Ready' if receipt['status']=='ready' else 'Downloaded (verification skipped)'}: {folder}")
+    print(f'Next: aircolibri ask --model "{folder}" "Hi"')
+    return EXIT_OK
 
 
 def _stream_to_console(engine: AirColibriUnifiedEngine, messages: list[dict[str, str]], max_tokens: int, thinking: bool, use_session: bool) -> dict:
@@ -382,9 +505,35 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"AirColibri {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    p_models = sub.add_parser("models", help="List local model files; select by number, folder name or path")
+    p_models.add_argument("--aircolibri-root", default=None)
+    p_models.add_argument("--json", action="store_true")
+    p_models.add_argument("--check", action="store_true", help="Check adaptation metadata; does not run generation")
+    p_models.set_defaults(func=cmd_models)
+
+    for command, callback in (("download",cmd_download),("prepare",cmd_prepare)):
+        p_model = sub.add_parser(command, help=("Download a Hugging Face model into a directory and verify automatic adaptation"
+                                               if command == "download" else "Verify a model's first forward and automatic runtime packing"))
+        p_model.add_argument("--aircolibri-root", default=None)
+        p_model.add_argument("--device", choices=("auto","cpu"), default="auto")
+        p_model.add_argument("--weight-format", choices=("auto","bf16","q4","q6"), default="auto")
+        p_model.add_argument("--vram-mode", choices=list(VRAM_MODES), default="normal")
+        p_model.add_argument("--json-out", default=None)
+        if command == "download":
+            p_model.add_argument("reference", help="owner/repo, Hugging Face model page or GGUF file URL")
+            p_model.add_argument("--directory", "--output-dir", dest="directory", default=None)
+            p_model.add_argument("--file", default=None, help="One GGUF variant; split parts are fetched together")
+            p_model.add_argument("--revision", default=None)
+            p_model.add_argument("--no-verify", action="store_true", help="Download without the first-forward preparation check")
+        else:
+            p_model.add_argument("--model", default=None)
+        p_model.set_defaults(func=callback)
+
     p_doc = sub.add_parser("doctor", help="Check GPU, VRAM plan, model files, and LAN interfaces")
     p_doc.add_argument("--model", "--model-dir", dest="model", type=str, default=None)
     p_doc.add_argument("--aircolibri-root", type=str, default=None)
+    p_doc.add_argument("--download-dir", default=None)
+    p_doc.add_argument("--device", choices=("auto", "cpu"), default="auto")
     p_doc.add_argument("--vram-mode", choices=list(VRAM_MODES), default="normal")
     p_doc.add_argument("--weight-format", choices=("auto", "bf16", "q4", "q6"), default="auto")
     p_doc.add_argument("--json-out", type=str, default=None)

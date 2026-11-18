@@ -119,6 +119,36 @@ def test_unified_producer_reset_inflight_error_and_exact_fallback():
 
 
 @torch.no_grad()
+def test_retained_regions_need_no_io_and_producer_resumes_for_missing_weight():
+    from src.unified_prefetch import UnifiedExpertPrefetch
+    w,cache,ring,memory=make_memory(4)
+    loads=[]
+    def load(layer,eid):
+        loads.append((layer,eid))
+        return tuple(w[eid])
+    worker=UnifiedExpertPrefetch(memory,cache,3,load,lambda:None,2**20)
+    try:
+        for layer in range(3):
+            with memory.lease(layer,[1,2],cache._load_packed):pass
+        for step in range(9):
+            worker.submit(step%3,[1,2],lane=step%3,step=step)
+        worker.drain()
+        assert not loads
+        worker.submit(0,[1,3],lane=0,step=10)
+        worker.drain()
+        assert loads==[(0,3)]
+        def no_load(*args):raise AssertionError('Prepared weight was read again')
+        with memory.lease(0,[1,3],no_load) as entries:
+            expected=pack_weight(torch.cat((w[3,0],w[3,1])),4)
+            assert all(torch.equal(entries[1]['gu'][k].cpu(),v) for k,v in expected.items())
+    finally:
+        worker.close()
+        ring.close()
+        cache.close()
+    assert not worker.thread.is_alive()
+
+
+@torch.no_grad()
 def test_prefetch_cannot_reuse_a_live_reader_and_refinement_keeps_common():
     w,cache,ring,memory=make_memory(4)
     slow=torch.cuda.Stream()

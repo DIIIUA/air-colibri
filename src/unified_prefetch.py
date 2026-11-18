@@ -24,6 +24,9 @@ area, and a demand miss uses the same directory as a prepared expert.
         self.host_cache_bytes = int(host_cache_bytes)
         self.cpu_cache, self.cpu_cache_size = OrderedDict(), 0
         self.cv = memory.cv
+        # Memory releases notify cv frequently. Wake the producer only for
+        # actual missing work; cache hits must not schedule a competing thread.
+        self.work_ready = threading.Event()
         self.epoch = memory.epoch
         self.serial = 0
         self.requests, self.settled = OrderedDict(), {}
@@ -62,6 +65,10 @@ area, and a demand miss uses the same directory as a prepared expert.
             self.counters['retained_on_refinement'] += len(wanted & self.memory.directory.keys())
             self.memory.set_desired(wanted)
             self.counters['submitted'] += 1
+            if wanted.issubset(self.memory.directory):
+                self.settled[lane] = self.serial
+            else:
+                self.work_ready.set()
             self.cv.notify_all()
             return self.serial
 
@@ -72,11 +79,15 @@ area, and a demand miss uses the same directory as a prepared expert.
     def _run(self):
         with torch.cuda.device(self.device), torch.inference_mode():
             while True:
+                self.work_ready.wait()
                 with self.cv:
-                    self.cv.wait_for(lambda: self.closed or bool(self._pending()))
                     if self.closed:
                         return
-                    lane = self._pending()[0]
+                    pending = self._pending()
+                    if not pending:
+                        self.work_ready.clear()
+                        continue
+                    lane = pending[0]
                     request = self.requests[lane]
                     self.requests.move_to_end(lane)
                     missing = [(request['layer'], eid) for eid in request['ids']
@@ -141,7 +152,8 @@ area, and a demand miss uses the same directory as a prepared expert.
                              transfer_began_before_step_end=a<c, ready_before_step_end=b<c))
             common = self.memory.stats()
             return dict(**self.counters, policy='direct_shared_arena', banks=3,
-                bank_consumptions=[common.get(f'warm_area_{i}',0) for i in range(3)],
+                bank_consumptions=[common.get(f'warm_area_{i}',0)+common.get(f'verification_warm_area_{i}',0) for i in range(3)],
+                verification_bank_consumptions=[common.get(f'verification_warm_area_{i}',0) for i in range(3)],
                 bank_rotations=list(self.memory.area_writes), gpu_bytes=0, pinned_bytes=0,
                 copied_experts=0, shared_gpu_bytes=self.memory.gpu_bytes,
                 direct_hits=common.get('warm_direct_hits',0),
@@ -154,6 +166,7 @@ area, and a demand miss uses the same directory as a prepared expert.
             if self.closed:
                 return
             self.closed = True
+            self.work_ready.set()
             self.requests.clear()
             self.memory.reset_task()
             self.cv.notify_all()

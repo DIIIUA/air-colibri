@@ -92,7 +92,7 @@ def test_unified_wave_session_cancel_and_thought_anchor(llama_folder, monkeypatc
         profile, plan, mtp = original_plan(*args, **kwargs)
         return profile, replace(plan, full_residency=False, resident_layers=1, ring_slots=3), mtp
     monkeypatch.setattr(runtime, "plan_for_checkpoint", force_ring)
-    with runtime.AirColibriUnifiedEngine(llama_folder, weight_format="q6", verbose=False,
+    with runtime.AirColibriUnifiedEngine(llama_folder, cpu_first=False, weight_format="q6", verbose=False,
                                         prefill_chunk_tokens=8, prefill_wavefront=True,
                                         enable_mtp=False, max_context_tokens=512) as engine:
         messages = [{"role": "user", "content": "The next operation uses the result of the previous operation. " * 4}]

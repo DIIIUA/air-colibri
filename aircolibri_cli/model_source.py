@@ -27,7 +27,7 @@ import ctypes
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import queue
 import re
 import struct
@@ -611,6 +611,34 @@ def load_runtime_tokenizer(model_dir: str | Path, config: Any = None):
 _PREFERRED_NAMES = ("Qwen3.5-9B", "qwen3.5-9b", "deepseek-v4-9b-colibri", "deepseek-v4-9b")
 
 
+def local_model_candidates(root):
+    directory = Path(root)/"models"
+    folders = list(directory.iterdir()) if directory.is_dir() else []
+    registry = Path(root)/"data"/"model-paths.json"
+    if registry.is_file():
+        paths = _read_json(registry)
+        if isinstance(paths, list):
+            folders.extend(Path(p) for p in paths if isinstance(p, str))
+    result = {}
+    for p in folders:
+        if p.is_dir() and not p.name.startswith("_") and (detect_format(p) or
+                (p/"aircolibri-source.json").is_file() or any(p.glob("*.bin"))):
+            result[str(p.resolve()).casefold()] = p.resolve()
+    return sorted(result.values(), key=lambda p: (p.name.casefold(), str(p).casefold()))
+
+
+def runtime_model_dir(folder):
+    folder = Path(folder)
+    marker = folder/"aircolibri-source.json"
+    if marker.is_file():
+        relative = _read_json(marker).get("runtime_subdir", ".")
+        target = (folder/relative).resolve()
+        if not target.is_relative_to(folder.resolve()):
+            raise ModelNotFoundError("Downloaded model metadata points outside its directory")
+        return target
+    return folder
+
+
 def find_local_models(root: str | Path) -> list[Path]:
     """Lists runnable model folders under ``<root>/models``.
 
@@ -618,9 +646,14 @@ def find_local_models(root: str | Path) -> list[Path]:
     the default while a Qwen3.5-9B checkpoint is present. Broken folders are skipped.
     """
     models_dir = Path(root) / "models"
-    if not models_dir.is_dir():
-        return []
-    found = [p for p in sorted(models_dir.iterdir()) if p.is_dir() and is_supported(p)]
+    found = []
+    for folder in local_model_candidates(root):
+        try:
+            target = runtime_model_dir(folder)
+            if is_supported(target):
+                found.append(target)
+        except (OSError, ValueError):
+            continue
 
     def _rank(p: Path) -> tuple[int, str]:
         name = p.name.lower()
@@ -633,21 +666,111 @@ def find_local_models(root: str | Path) -> list[Path]:
 
 
 def _looks_like_repo_id(value: str) -> bool:
-    return bool(re.fullmatch(r"[A-Za-z0-9][\w.\-]*/[\w.\-]+", value)) and not Path(value).exists()
-
-
-def hf_snapshot(repo_id: str, allow_download: bool) -> Path:
-    """Returns a local snapshot of ``repo_id`` (downloads it only when ``allow_download``)."""
-    from huggingface_hub import snapshot_download
-
-    patterns = ["*.json", "*.safetensors", "*.jinja", "*.txt", "*.model", "tokenizer*"]
+    from .model_reference import parse_hf_reference
     try:
-        return Path(snapshot_download(repo_id, allow_patterns=patterns, local_files_only=True))
-    except Exception:
+        parse_hf_reference(value)
+        return not Path(value).exists()
+    except ValueError:
+        return False
+
+
+def _hub_member(name: str) -> str:
+    path = PurePosixPath(name)
+    if not name or path.is_absolute() or ".." in path.parts or any(c in name for c in "\\:*?[]"):
+        raise ModelNotFoundError(f"Invalid Hugging Face filename: {name!r}")
+    return name
+
+
+def _gguf_download_files(filename: str) -> list[str]:
+    _hub_member(filename)
+    if not filename.lower().endswith(".gguf"):
+        raise ModelNotFoundError("The ::filename selector requires a GGUF file")
+    match = re.fullmatch(r"(.*)-(\d{5})-of-(\d{5})\.gguf", filename)
+    if match:
+        prefix, part, count = match.groups()
+        total = int(count)
+        if not 1 <= int(part) <= total or total > 10000:
+            raise ModelNotFoundError("Invalid GGUF split numbering")
+        return [f"{prefix}-{i:05d}-of-{total:05d}.gguf" for i in range(1, total+1)]
+    return [filename]
+
+
+def _complete_hf_snapshot(folder: Path) -> bool:
+    """The Hub can return an existing snapshot containing only cached metadata."""
+    if not (folder/"config.json").is_file():
+        return False
+    index = folder/"model.safetensors.index.json"
+    if index.is_file():
+        names = set(_read_json(index).get("weight_map", {}).values())
+        weights = bool(names) and all((folder/_hub_member(name)).is_file() for name in names)
+    else:
+        weights = _single_hf_safetensors(folder) is not None
+    tokenizer = any((folder/name).is_file() for name in ("tokenizer.json", "tokenizer.model", "vocab.json",
+                                                       "spiece.model", "sentencepiece.bpe.model"))
+    return weights and tokenizer
+
+
+def hf_snapshot(repo_id: str, allow_download: bool, *, local_dir=None, filename=None, revision=None) -> Path:
+    """Returns a local snapshot of ``repo_id`` (downloads it only when ``allow_download``)."""
+    from huggingface_hub import HfApi, snapshot_download
+    from huggingface_hub.errors import HfHubHTTPError, OfflineModeIsEnabled
+    from .model_reference import parse_hf_reference
+    try:
+        reference = parse_hf_reference(repo_id, filename=filename, revision=revision)
+    except ValueError as exc:
+        raise ModelNotFoundError(str(exc)) from exc
+    repo_id = reference.repo_id
+    selected = _gguf_download_files(reference.filename) if reference.filename else []
+    options = {}
+    if reference.revision:
+        options["revision"] = reference.revision
+    if local_dir is not None:
+        options.update(local_dir=str(local_dir), ignore_patterns=["aircolibri-source.json", "*/aircolibri-source.json"])
+    metadata = ["*.json", "*.jinja", "*.txt", "*.model", "tokenizer*"]
+    patterns = metadata + (selected or ["*.safetensors"])
+    try:
+        cached = (Path(local_dir) if local_dir is not None else
+                  Path(snapshot_download(repo_id, allow_patterns=patterns, local_files_only=True, **options)))
+        if selected:
+            if all((cached/name).is_file() for name in selected):
+                return cached/PurePosixPath(selected[0]).parent
+        elif _complete_hf_snapshot(cached):
+            return cached
+    except (OSError, ValueError):
         if not allow_download:
             raise
-    print(f"[AirColibri] Downloading {repo_id} from Hugging Face (one-time, ~19 GB for a 9B model)...", flush=True)
-    return Path(snapshot_download(repo_id, allow_patterns=patterns))
+    if not allow_download:
+        raise ModelNotFoundError(f"Cached snapshot for {repo_id} is incomplete; allow downloading or provide a complete local folder")
+    try:
+        files = HfApi().list_repo_files(repo_id=repo_id, repo_type="model", revision=reference.revision)
+    except (HfHubHTTPError, OfflineModeIsEnabled, OSError) as exc:
+        raise ModelNotFoundError(f"Cannot access Hugging Face model {repo_id}; check the repository, revision, access and network ({type(exc).__name__})") from exc
+    if selected:
+        if missing := set(selected)-set(files):
+            raise ModelNotFoundError(f"Missing GGUF parts in {repo_id}: {sorted(missing)}")
+    elif not any(name.endswith(".safetensors") for name in files):
+        ggufs = [name for name in files if name.lower().endswith(".gguf")]
+        if not ggufs:
+            raise UnsupportedModelError(f"{repo_id}: no supported safetensors or GGUF weights")
+        groups = {tuple(_gguf_download_files(name)) for name in ggufs}
+        if len(groups) != 1:
+            raise ModelNotFoundError(f"Select one GGUF variant with --model {repo_id}::filename.gguf; available: {ggufs[:12]}")
+        selected = list(next(iter(groups)))
+        if set(selected)-set(files):
+            raise ModelNotFoundError(f"Incomplete GGUF split in {repo_id}")
+    patterns = metadata + (selected or ["*.safetensors"])
+    print(f"[AirColibri] Downloading {repo_id}; runtime adaptation and packing follow automatically on load...", flush=True)
+    try:
+        downloaded = Path(snapshot_download(repo_id, allow_patterns=patterns, **options))
+    except (HfHubHTTPError, OfflineModeIsEnabled, OSError) as exc:
+        raise ModelNotFoundError(f"Download of {repo_id} failed ({type(exc).__name__}); completed files were retained for retry") from exc
+    if selected:
+        if not all((downloaded/name).is_file() for name in selected):
+            raise ModelNotFoundError(f"Download of {repo_id} did not provide every selected GGUF part")
+        return downloaded/PurePosixPath(selected[0]).parent
+    if not _complete_hf_snapshot(downloaded):
+        raise ModelNotFoundError(f"Download of {repo_id} has no complete HF weights/tokenizer snapshot")
+    return downloaded
 
 
 def resolve_model_dir(model: str | Path | None, root: str | Path, allow_download: bool = False) -> Path:
@@ -660,8 +783,29 @@ def resolve_model_dir(model: str | Path | None, root: str | Path, allow_download
     if value:
         p = Path(value).expanduser()
         if p.exists():
+            p = runtime_model_dir(p)
             check_supported(p)
             return p.resolve()
+        candidate = Path(root)/"models"/value
+        if candidate.is_dir():
+            candidate = runtime_model_dir(candidate)
+            check_supported(candidate)
+            return candidate.resolve()
+        if value.isdecimal():
+            choices = local_model_candidates(root)
+            index = int(value)-1
+            if not 0 <= index < len(choices):
+                raise ModelNotFoundError("Model number is outside the current `aircolibri models` list")
+            selected = runtime_model_dir(choices[index])
+            check_supported(selected)
+            return selected.resolve()
+        named = [p for p in local_model_candidates(root) if p.name == value]
+        if len(named) == 1:
+            selected = runtime_model_dir(named[0])
+            check_supported(selected)
+            return selected.resolve()
+        if len(named) > 1:
+            raise ModelNotFoundError("Several model directories have that name; use a full path or current catalog number")
         if _looks_like_repo_id(value):
             snap = hf_snapshot(value, allow_download=allow_download)
             check_supported(snap)
@@ -797,7 +941,7 @@ class PreadSafetensorsReader:
             start, end = meta["data_offsets"]
             buf = bytearray(end - start)
             f = self._file(path)
-            _pread_or_seek_into(f, base + start, memoryview(buf), path)
+            self._read_slice_range(f, base + start, memoryview(buf), path)
         t = torch.frombuffer(buf, dtype=getattr(torch, dtype_name)) if buf else torch.empty(0, dtype=getattr(torch, dtype_name))
         return t.reshape(meta["shape"])
 
@@ -1417,7 +1561,9 @@ def _fast_moe_dispatch(
 
     if T == 1:
         # Single-token decode: one D2H read of K integers, zero one_hot/torch.where syncs, batched cuBLAS calls.
-        raw_k = top_k_index[0].tolist()
+        observe = getattr(packed_loader, "observed_route_rows", None)
+        observed = observe(layer_idx, top_k_index) if observe is not None else None
+        raw_k = observed[0] if observed is not None else top_k_index[0].tolist()
         valid_pos: list[int] = []
         exp_ids: list[int] = []
         for pos, eid in enumerate(raw_k):
@@ -1469,7 +1615,10 @@ def _fast_moe_dispatch(
         return acc.to(dtype=hidden_states.dtype)
 
     # Multi-token prefill: group token/slot indices on CPU in one transfer (zero per-expert GPU syncs).
-    idx_rows = top_k_index.detach().to(device="cpu").tolist()
+    observed = getattr(packed_loader, 'observed_route_rows', None)
+    idx_rows = observed(layer_idx, top_k_index) if observed is not None else None
+    if idx_rows is None:
+        idx_rows = top_k_index.detach().to(device="cpu").tolist()
     by_expert: dict[int, tuple[list[int], list[int]]] = {}
     for tok_i, row in enumerate(idx_rows):
         for k_pos, eid in enumerate(row):

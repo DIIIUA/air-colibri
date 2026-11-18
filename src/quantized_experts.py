@@ -5,6 +5,7 @@ Prefill uses the same packed representation as decode and preserves the existing
 anti-thrashing rule. Unsupported expert mathematics stays on the source path.
 """
 from collections import OrderedDict
+import threading
 import torch
 from src.quantized_projection import pack_weight, unpack_weight, packed_specs
 
@@ -14,12 +15,20 @@ class QuantizedExpertCache:
         self.base, self.bits, self.group_size = base, bits, group_size
         self.device = base.device
         self.enabled_layers = set()
+        self.cpu_quant_layers = set()
+        self._cpu_packed = OrderedDict()
+        self._cpu_lock = threading.Lock()
+        self.cpu_packed_bytes = 0
+        self.cpu_packed_budget = max(0, int(budget_bytes)) if base.device.type == "cpu" else 0
+        self.cpu_startup_reuses = 0
         self._lru = OrderedDict()
         self.hits = self.misses = self.conversions = self.fused_calls = self.prefill_batches = 0
         self.fallback_calls = 0
         self.warmup = None
         self.shared_memory = None
+        self._observed_routes = None
         self.auxiliary_depth = 0
+        self.verification_depth = 0
         self.warm_hits = 0
         self.gu = self.dn = None
         self.num_slots = 0
@@ -65,8 +74,11 @@ class QuantizedExpertCache:
         silu = type(act) in (torch.nn.SiLU, SiLUActivation) or act is torch.nn.functional.silu
         custom = getattr(type(module), "_apply_gate", None)
         custom_ok = custom is None or getattr(custom, "__name__", "") == "_default_apply_gate"
-        if self.num_slots and silu and custom_ok and not has_bias and not input_weighted and not hasattr(module, "alpha") and not getattr(module, "has_post_expert_norm", False):
-            self.enabled_layers.add(layer)
+        if silu and custom_ok and not has_bias and not input_weighted and not hasattr(module, "alpha") and not getattr(module, "has_post_expert_norm", False):
+            if self.num_slots:
+                self.enabled_layers.add(layer)
+            if hasattr(self, "H") and self.H % self.group_size == 0 and self.I % self.group_size == 0:
+                self.cpu_quant_layers.add(layer)
 
     def _get(self, layer, eid, allow_evict, protected=frozenset()):
         key = (layer, eid)
@@ -93,10 +105,7 @@ class QuantizedExpertCache:
                     self._lru[key] = target
                     self.warm_hits += 1
                     return gu_dst,dn_dst,target
-        g, u, d = self.base.load_batch(layer, [eid], self.device, torch.bfloat16, False)
-        gu = pack_weight(torch.cat((g[0], u[0])), self.bits, self.group_size)
-        dn = pack_weight(d[0], self.bits, self.group_size)
-        self.conversions += 1
+        gu, dn = self._load_packed(layer, eid)
         slot = None
         if len(self._lru) < self.num_slots:
             slot = len(self._lru)
@@ -113,6 +122,19 @@ class QuantizedExpertCache:
         return gu, dn, slot
 
     def load_batch(self, layer, ids, device, dtype, allow_evict):
+        if torch.device(device).type == "cpu" and layer in self.cpu_quant_layers:
+            g, u, d = self.base.load_batch(layer, ids, device, torch.bfloat16, allow_evict)
+            # Same packed representation as the GPU cache, bounded to the
+            # dispatch batch; CPU startup must not silently use different weights.
+            for i in range(len(ids)):
+                packed = (pack_weight(torch.cat((g[i], u[i])), self.bits, self.group_size),
+                          pack_weight(d[i], self.bits, self.group_size))
+                if not self.auxiliary_depth:
+                    self._remember_cpu((layer, ids[i]), packed)
+                gu = unpack_weight(packed[0], self.group_size)
+                dn = unpack_weight(packed[1], self.group_size)
+                g[i].copy_(gu[:self.I]); u[i].copy_(gu[self.I:]); d[i].copy_(dn)
+            return g.to(dtype), u.to(dtype), d.to(dtype)
         if layer not in self.enabled_layers or torch.device(device) != self.device:
             self.fallback_calls += 1
             return self.base.load_batch(layer, ids, device, dtype, allow_evict)
@@ -141,16 +163,72 @@ class QuantizedExpertCache:
         return g, u, d
 
     def _load_packed(self, layer, eid):
+        with self._cpu_lock:
+            seed = self._cpu_packed.pop((layer, eid), None)
+            if seed is not None:
+                self.cpu_packed_bytes -= self._packed_bytes(seed)
+                self.cpu_startup_reuses += 1
+        if seed is not None:
+            return tuple({k: v.to(self.device) for k, v in part.items()} for part in seed)
         g, u, d = self.base.load_batch(layer, [eid], self.device, torch.bfloat16, False)
         self.conversions += 1
         return (pack_weight(torch.cat((g[0], u[0])), self.bits, self.group_size),
                 pack_weight(d[0], self.bits, self.group_size))
+
+    @staticmethod
+    def _packed_bytes(entry):
+        return sum(t.numel()*t.element_size() for part in entry for t in part.values())
+
+    def _remember_cpu(self, key, entry):
+        size = self._packed_bytes(entry)
+        if size > self.cpu_packed_budget:
+            return
+        with self._cpu_lock:
+            old = self._cpu_packed.pop(key, None)
+            if old is not None:
+                self.cpu_packed_bytes -= self._packed_bytes(old)
+            while self._cpu_packed and self.cpu_packed_bytes+size > self.cpu_packed_budget:
+                self.cpu_packed_bytes -= self._packed_bytes(self._cpu_packed.popitem(last=False)[1])
+            self._cpu_packed[key] = entry
+            self.cpu_packed_bytes += size
+
+    def detach_cpu_packed(self):
+        with self._cpu_lock:
+            entries, self._cpu_packed = self._cpu_packed, OrderedDict()
+            self.cpu_packed_bytes = 0
+        return (self.bits, self.group_size, self.cpu_packed_budget, entries)
+
+    def adopt_cpu_packed(self, packet):
+        bits, group, budget, entries = packet
+        if bits != self.bits or group != self.group_size:
+            raise ValueError("CPU expert seed quantization differs from GPU storage")
+        with self._cpu_lock:
+            self._cpu_packed = entries
+            self.cpu_packed_budget = budget
+            self.cpu_packed_bytes = sum(self._packed_bytes(v) for v in entries.values())
+
+    def observed_route_rows(self, layer, indices):
+        """Consume the warmup observer's CPU route copy exactly once."""
+        observed = self._observed_routes
+        self._observed_routes = None
+        if observed is not None and observed[0] == layer and observed[1] is indices:
+            return observed[2]
+        return None
 
     def _fused_shared(self, layer, hidden, valid, weights):
         from src.colibri_nvrtc import fused_routed_moe_q4, fused_routed_moe_q6, reduce_routed_parts
         memory = self.shared_memory
         with memory.lease(layer, [eid for _, eid in valid], self._load_packed,
                           auxiliary=bool(self.auxiliary_depth)) as entries:
+            if self.verification_depth:
+                # Verification really consumes prepared weights, even though
+                # its tentative routes must not age or evict the task cache.
+                with memory.cv:
+                    for entry in entries:
+                        record = entry['record']
+                        if record is not None and record['warm_epoch'] == memory.epoch:
+                            memory.counts['verification_warm_direct_hits'] += 1
+                            memory.counts[f'verification_warm_area_{memory.area_for(record)}'] += 1
             # Keep the original routing order and FP32 contributions. Only the
             # addresses change; reduce once, with the original native kernel.
             start = 0
@@ -189,7 +267,8 @@ class QuantizedExpertCache:
             return None
         if (self.H//self.group_size)*4 + self.H*2 > 49152 or (self.I+self.I//self.group_size)*4 > 49152:
             return None
-        ids = indices[0].tolist()
+        observed = self.observed_route_rows(layer, indices)
+        ids = observed[0] if observed is not None else indices[0].tolist()
         valid = [(pos, int(eid)) for pos, eid in enumerate(ids) if 0 <= int(eid) < num_experts]
         if not valid:
             return torch.zeros_like(hidden)
@@ -216,10 +295,16 @@ class QuantizedExpertCache:
                 "hit_rate": self.hits/max(1, self.hits+self.misses), "conversions": self.conversions,
                 "fused_calls": self.fused_calls, "prefill_batches": self.prefill_batches,
                 "fallback_calls": self.fallback_calls, "warm_hits": self.warm_hits,
+                "cpu_startup_reuses": self.cpu_startup_reuses, "cpu_packed_bytes": self.cpu_packed_bytes,
+                "cpu_packed_budget": self.cpu_packed_budget,
                 "shared_memory": self.shared_memory.stats() if self.shared_memory is not None else None,
                 "source": self.base.stats()}
 
     def close(self):
+        with self._cpu_lock:
+            self._cpu_packed.clear()
+            self.cpu_packed_bytes = 0
+        self._observed_routes = None
         if self.warmup is not None:
             self.warmup.close()
             self.warmup = None

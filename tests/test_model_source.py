@@ -666,7 +666,7 @@ def test_bf16_session_prefix_reuse_on_gguf_and_olmoe(tmp_path):
     gguf_dir = tmp_path / "gguf-chat"
     gguf_dir.mkdir(parents=True)
     _write_tiny_qwen35moe_gguf(gguf_dir / "tiny.gguf")
-    with AirColibriUnifiedEngine(model_dir=gguf_dir, vram_mode="normal", verbose=False) as ueng:
+    with AirColibriUnifiedEngine(cpu_first=False, model_dir=gguf_dir, vram_mode="normal", verbose=False) as ueng:
         m1 = [{"role": "user", "content": "hi"}]
         r1 = [
             e

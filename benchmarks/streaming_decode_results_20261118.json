@@ -1,0 +1,2192 @@
+{
+  "protocol": "Paired decode measurements: resident / half streamed / all streamed.\n\nOne inference process, equal Q6 arithmetic and bounded host cache. Placement order\nis A B C C B A, with an unscored warmup before every block. A separate idle process\ncan hold VRAM before planning. No token/hidden observers inside timed requests.\n",
+  "tokens": 64,
+  "trials_per_block": 2,
+  "order": [
+    "resident",
+    "half",
+    "stream",
+    "stream",
+    "half",
+    "resident"
+  ],
+  "ram_cache_cap_bytes": 939524096,
+  "cpu_threads": 6,
+  "format": "q6",
+  "mtp": false,
+  "anchor": false,
+  "max_context": 2048,
+  "prefill_chunk": 64,
+  "source_lf_sha256": "adf24260d9010f1b035cd1881d3106c90c62b4af840f57fece4ca76f67b48c8c",
+  "harness_sha256": "627467f18f2258768f6e6bd92f0c65808fbd43f1b663c945c5cb6cd8e1cd7337",
+  "torch": "2.6.0+cu124",
+  "cuda": "12.4",
+  "note": "OS caches not flushed. Host-layer count raised to all layers within the fixed byte cap, to distinguish RAM-to-GPU streaming from disk cache misses. Controlled placements are not default startup speeds. VRAM pressure exists before planning; no claim of live replanning after arbitrary later allocations.",
+  "models": [
+    {
+      "model": "01_gguf_Llama-3.2-1B-Instruct-Q4_K_M",
+      "cases": [
+        {
+          "placement": "resident",
+          "pressure_mib": 0,
+          "pressure_process": null,
+          "block": 0,
+          "trials": [
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 622.46,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 2.233,
+                "decode_tok_per_s": 28.21,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 1284.57,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 7840,
+                  "tiled_calls": 224
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 0,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            },
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 615.81,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 1.915,
+                "decode_tok_per_s": 32.89,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 1284.57,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 14896,
+                  "tiled_calls": 336
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 0,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            }
+          ],
+          "status": "passed",
+          "hardware_before": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 1252, 6773, 200.00, 617.42"
+          },
+          "available_ram_before_bytes": 4263796736,
+          "automatic_plan_before_override": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 7101939712,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 6281953280,
+            "layers_total": 16,
+            "resident_layers": 16,
+            "ring_slots": 0,
+            "slot_bytes": 0,
+            "full_residency": true,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "constructor_s": 4.940769299981184,
+          "startup_memory_probe": {
+            "cuda_free_bytes": 7486832640,
+            "cuda_total_bytes": 8589279232,
+            "free_bytes": 7101939712,
+            "total_bytes": 8589279232,
+            "source": "cuda_nvml_min",
+            "physical_free_bytes": 7101939712,
+            "physical_total_bytes": 8589934592
+          },
+          "controlled_plan": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 7101939712,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 6281953280,
+            "layers_total": 16,
+            "resident_layers": 16,
+            "ring_slots": 0,
+            "slot_bytes": 0,
+            "full_residency": true,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "warmup": {
+            "metrics": {
+              "prompt_tokens": 51,
+              "cached_prefix_tokens": 0,
+              "generated_tokens": 8,
+              "stopped_by_eos": false,
+              "finish_reason": "length",
+              "unpark_ms": 0.0,
+              "prefill_ms": 962.26,
+              "prefill_chunk_tokens": 64,
+              "decode_s": 0.276,
+              "decode_tok_per_s": 25.37,
+              "avg_tokens_per_backbone_pass": 1.0,
+              "peak_vram_mib": 1284.57,
+              "park_to_ram_ms": 0.0,
+              "parked_session_ram_mib": 0.0,
+              "spec_gate": {
+                "overall_accept_rate_pct": 0.0,
+                "mtp_accept_rate_pct": 0.0
+              },
+              "packed_projections": {
+                "modules": 112,
+                "bits": [
+                  6
+                ],
+                "fused_calls": 784,
+                "tiled_calls": 112
+              }
+            },
+            "text": "The sky appears blue during the day due",
+            "text_sha256": "c5f6335f2ff8ad48d7022b0ee30278edef1d9955ef24bc86b48477b09d6b1cbe",
+            "read_bytes": 667983,
+            "ram_hits": 0,
+            "ram_misses": 0,
+            "ram_evictions": 0
+          },
+          "ram_cache": {
+            "peak_bytes": 0,
+            "cap_bytes": null,
+            "layers": 0
+          },
+          "hardware_after": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 2564, 5461, 200.00, 617.42"
+          }
+        },
+        {
+          "placement": "half",
+          "pressure_mib": 0,
+          "pressure_process": null,
+          "block": 1,
+          "trials": [
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 653.36,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 5.169,
+                "decode_tok_per_s": 12.19,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 1051.25,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 7840,
+                  "tiled_calls": 224
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 512,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            },
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 724.75,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 5.08,
+                "decode_tok_per_s": 12.4,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 1051.25,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 14896,
+                  "tiled_calls": 336
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 512,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            }
+          ],
+          "status": "passed",
+          "hardware_before": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 1310, 6715, 200.00, 617.42"
+          },
+          "available_ram_before_bytes": 3306897408,
+          "automatic_plan_before_override": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 7041122304,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 6221135872,
+            "layers_total": 16,
+            "resident_layers": 16,
+            "ring_slots": 0,
+            "slot_bytes": 0,
+            "full_residency": true,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "constructor_s": 2.5925310999155045,
+          "startup_memory_probe": {
+            "cuda_free_bytes": 7426015232,
+            "cuda_total_bytes": 8589279232,
+            "free_bytes": 7041122304,
+            "total_bytes": 8589279232,
+            "source": "cuda_nvml_min",
+            "physical_free_bytes": 7041122304,
+            "physical_total_bytes": 8589934592
+          },
+          "controlled_plan": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 7041122304,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 6221135872,
+            "layers_total": 16,
+            "resident_layers": 8,
+            "ring_slots": 3,
+            "slot_bytes": 50331648,
+            "full_residency": false,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "warmup": {
+            "metrics": {
+              "prompt_tokens": 51,
+              "cached_prefix_tokens": 0,
+              "generated_tokens": 8,
+              "stopped_by_eos": false,
+              "finish_reason": "length",
+              "unpark_ms": 0.0,
+              "prefill_ms": 3128.01,
+              "prefill_chunk_tokens": 64,
+              "decode_s": 0.568,
+              "decode_tok_per_s": 12.33,
+              "avg_tokens_per_backbone_pass": 1.0,
+              "peak_vram_mib": 1051.25,
+              "park_to_ram_ms": 0.0,
+              "parked_session_ram_mib": 0.0,
+              "spec_gate": {
+                "overall_accept_rate_pct": 0.0,
+                "mtp_accept_rate_pct": 0.0
+              },
+              "packed_projections": {
+                "modules": 112,
+                "bits": [
+                  6
+                ],
+                "fused_calls": 784,
+                "tiled_calls": 112
+              }
+            },
+            "text": "The sky appears blue during the day due",
+            "text_sha256": "c5f6335f2ff8ad48d7022b0ee30278edef1d9955ef24bc86b48477b09d6b1cbe",
+            "read_bytes": 292264496,
+            "ram_hits": 56,
+            "ram_misses": 8,
+            "ram_evictions": 0
+          },
+          "ram_cache": {
+            "peak_bytes": 395378688,
+            "cap_bytes": 939524096,
+            "layers": 8
+          },
+          "hardware_after": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 2342, 5683, 200.00, 617.42"
+          }
+        },
+        {
+          "placement": "stream",
+          "pressure_mib": 0,
+          "pressure_process": null,
+          "block": 2,
+          "trials": [
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 719.81,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 8.688,
+                "decode_tok_per_s": 7.25,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 674.19,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 7840,
+                  "tiled_calls": 224
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 1024,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            },
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 768.58,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 8.27,
+                "decode_tok_per_s": 7.62,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 674.19,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 14896,
+                  "tiled_calls": 336
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 1024,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            }
+          ],
+          "status": "passed",
+          "hardware_before": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 1322, 6703, 200.00, 617.42"
+          },
+          "available_ram_before_bytes": 2299023360,
+          "automatic_plan_before_override": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 7028539392,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 6208552960,
+            "layers_total": 16,
+            "resident_layers": 16,
+            "ring_slots": 0,
+            "slot_bytes": 0,
+            "full_residency": true,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "constructor_s": 2.099917999934405,
+          "startup_memory_probe": {
+            "cuda_free_bytes": 7413432320,
+            "cuda_total_bytes": 8589279232,
+            "free_bytes": 7028539392,
+            "total_bytes": 8589279232,
+            "source": "cuda_nvml_min",
+            "physical_free_bytes": 7028539392,
+            "physical_total_bytes": 8589934592
+          },
+          "controlled_plan": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 7028539392,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 6208552960,
+            "layers_total": 16,
+            "resident_layers": 0,
+            "ring_slots": 3,
+            "slot_bytes": 50331648,
+            "full_residency": false,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "warmup": {
+            "metrics": {
+              "prompt_tokens": 51,
+              "cached_prefix_tokens": 0,
+              "generated_tokens": 8,
+              "stopped_by_eos": false,
+              "finish_reason": "length",
+              "unpark_ms": 0.0,
+              "prefill_ms": 5794.94,
+              "prefill_chunk_tokens": 64,
+              "decode_s": 0.893,
+              "decode_tok_per_s": 7.84,
+              "avg_tokens_per_backbone_pass": 1.0,
+              "peak_vram_mib": 674.19,
+              "park_to_ram_ms": 0.0,
+              "parked_session_ram_mib": 0.0,
+              "spec_gate": {
+                "overall_accept_rate_pct": 0.0,
+                "mtp_accept_rate_pct": 0.0
+              },
+              "packed_projections": {
+                "modules": 112,
+                "bits": [
+                  6
+                ],
+                "fused_calls": 784,
+                "tiled_calls": 112
+              }
+            },
+            "text": "The sky appears blue during the day due",
+            "text_sha256": "c5f6335f2ff8ad48d7022b0ee30278edef1d9955ef24bc86b48477b09d6b1cbe",
+            "read_bytes": 584456752,
+            "ram_hits": 112,
+            "ram_misses": 16,
+            "ram_evictions": 0
+          },
+          "ram_cache": {
+            "peak_bytes": 790757376,
+            "cap_bytes": 939524096,
+            "layers": 16
+          },
+          "hardware_after": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 1982, 6042, 200.00, 617.42"
+          }
+        },
+        {
+          "placement": "stream",
+          "pressure_mib": 0,
+          "pressure_process": null,
+          "block": 3,
+          "trials": [
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 839.36,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 8.584,
+                "decode_tok_per_s": 7.34,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 674.19,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 7840,
+                  "tiled_calls": 224
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 1024,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            },
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 790.26,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 8.587,
+                "decode_tok_per_s": 7.34,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 674.19,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 14896,
+                  "tiled_calls": 336
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 1024,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            }
+          ],
+          "status": "passed",
+          "hardware_before": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 1334, 6690, 200.00, 617.42"
+          },
+          "available_ram_before_bytes": 1641652224,
+          "automatic_plan_before_override": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 7014973440,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 6194987008,
+            "layers_total": 16,
+            "resident_layers": 16,
+            "ring_slots": 0,
+            "slot_bytes": 0,
+            "full_residency": true,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "constructor_s": 2.1993993999203667,
+          "startup_memory_probe": {
+            "cuda_free_bytes": 7413432320,
+            "cuda_total_bytes": 8589279232,
+            "free_bytes": 7014973440,
+            "total_bytes": 8589279232,
+            "source": "cuda_nvml_min",
+            "physical_free_bytes": 7014973440,
+            "physical_total_bytes": 8589934592
+          },
+          "controlled_plan": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 7014973440,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 6194987008,
+            "layers_total": 16,
+            "resident_layers": 0,
+            "ring_slots": 3,
+            "slot_bytes": 50331648,
+            "full_residency": false,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "warmup": {
+            "metrics": {
+              "prompt_tokens": 51,
+              "cached_prefix_tokens": 0,
+              "generated_tokens": 8,
+              "stopped_by_eos": false,
+              "finish_reason": "length",
+              "unpark_ms": 0.0,
+              "prefill_ms": 7219.03,
+              "prefill_chunk_tokens": 64,
+              "decode_s": 0.988,
+              "decode_tok_per_s": 7.09,
+              "avg_tokens_per_backbone_pass": 1.0,
+              "peak_vram_mib": 674.19,
+              "park_to_ram_ms": 0.0,
+              "parked_session_ram_mib": 0.0,
+              "spec_gate": {
+                "overall_accept_rate_pct": 0.0,
+                "mtp_accept_rate_pct": 0.0
+              },
+              "packed_projections": {
+                "modules": 112,
+                "bits": [
+                  6
+                ],
+                "fused_calls": 784,
+                "tiled_calls": 112
+              }
+            },
+            "text": "The sky appears blue during the day due",
+            "text_sha256": "c5f6335f2ff8ad48d7022b0ee30278edef1d9955ef24bc86b48477b09d6b1cbe",
+            "read_bytes": 584456752,
+            "ram_hits": 112,
+            "ram_misses": 16,
+            "ram_evictions": 0
+          },
+          "ram_cache": {
+            "peak_bytes": 790757376,
+            "cap_bytes": 939524096,
+            "layers": 16
+          },
+          "hardware_after": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 2011, 6014, 200.00, 617.42"
+          }
+        },
+        {
+          "placement": "half",
+          "pressure_mib": 0,
+          "pressure_process": null,
+          "block": 4,
+          "trials": [
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 780.91,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 5.41,
+                "decode_tok_per_s": 11.65,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 1051.25,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 7840,
+                  "tiled_calls": 224
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 512,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            },
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 735.0,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 5.357,
+                "decode_tok_per_s": 11.76,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 1051.25,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 14896,
+                  "tiled_calls": 336
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 512,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            }
+          ],
+          "status": "passed",
+          "hardware_before": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 1372, 6653, 200.00, 617.42"
+          },
+          "available_ram_before_bytes": 1584410624,
+          "automatic_plan_before_override": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 6975823872,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 6155837440,
+            "layers_total": 16,
+            "resident_layers": 16,
+            "ring_slots": 0,
+            "slot_bytes": 0,
+            "full_residency": true,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "constructor_s": 2.7726261999923736,
+          "startup_memory_probe": {
+            "cuda_free_bytes": 7413432320,
+            "cuda_total_bytes": 8589279232,
+            "free_bytes": 6975823872,
+            "total_bytes": 8589279232,
+            "source": "cuda_nvml_min",
+            "physical_free_bytes": 6975823872,
+            "physical_total_bytes": 8589934592
+          },
+          "controlled_plan": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 6975823872,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 6155837440,
+            "layers_total": 16,
+            "resident_layers": 8,
+            "ring_slots": 3,
+            "slot_bytes": 50331648,
+            "full_residency": false,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "warmup": {
+            "metrics": {
+              "prompt_tokens": 51,
+              "cached_prefix_tokens": 0,
+              "generated_tokens": 8,
+              "stopped_by_eos": false,
+              "finish_reason": "length",
+              "unpark_ms": 0.0,
+              "prefill_ms": 3411.65,
+              "prefill_chunk_tokens": 64,
+              "decode_s": 0.625,
+              "decode_tok_per_s": 11.2,
+              "avg_tokens_per_backbone_pass": 1.0,
+              "peak_vram_mib": 1051.25,
+              "park_to_ram_ms": 0.0,
+              "parked_session_ram_mib": 0.0,
+              "spec_gate": {
+                "overall_accept_rate_pct": 0.0,
+                "mtp_accept_rate_pct": 0.0
+              },
+              "packed_projections": {
+                "modules": 112,
+                "bits": [
+                  6
+                ],
+                "fused_calls": 784,
+                "tiled_calls": 112
+              }
+            },
+            "text": "The sky appears blue during the day due",
+            "text_sha256": "c5f6335f2ff8ad48d7022b0ee30278edef1d9955ef24bc86b48477b09d6b1cbe",
+            "read_bytes": 292264496,
+            "ram_hits": 56,
+            "ram_misses": 8,
+            "ram_evictions": 0
+          },
+          "ram_cache": {
+            "peak_bytes": 395378688,
+            "cap_bytes": 939524096,
+            "layers": 8
+          },
+          "hardware_after": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 2350, 5675, 200.00, 617.42"
+          }
+        },
+        {
+          "placement": "resident",
+          "pressure_mib": 0,
+          "pressure_process": null,
+          "block": 5,
+          "trials": [
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 628.92,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 2.393,
+                "decode_tok_per_s": 26.33,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 1284.32,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 7840,
+                  "tiled_calls": 224
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 0,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            },
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 541.26,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 1.873,
+                "decode_tok_per_s": 33.64,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 1284.32,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 14896,
+                  "tiled_calls": 336
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 0,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            }
+          ],
+          "status": "passed",
+          "hardware_before": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 1330, 6695, 200.00, 617.42"
+          },
+          "available_ram_before_bytes": 1986449408,
+          "automatic_plan_before_override": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 7019429888,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 6199443456,
+            "layers_total": 16,
+            "resident_layers": 16,
+            "ring_slots": 0,
+            "slot_bytes": 0,
+            "full_residency": true,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "constructor_s": 3.604099399992265,
+          "startup_memory_probe": {
+            "cuda_free_bytes": 7413432320,
+            "cuda_total_bytes": 8589279232,
+            "free_bytes": 7019429888,
+            "total_bytes": 8589279232,
+            "source": "cuda_nvml_min",
+            "physical_free_bytes": 7019429888,
+            "physical_total_bytes": 8589934592
+          },
+          "controlled_plan": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 7019429888,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 6199443456,
+            "layers_total": 16,
+            "resident_layers": 16,
+            "ring_slots": 0,
+            "slot_bytes": 0,
+            "full_residency": true,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "warmup": {
+            "metrics": {
+              "prompt_tokens": 51,
+              "cached_prefix_tokens": 0,
+              "generated_tokens": 8,
+              "stopped_by_eos": false,
+              "finish_reason": "length",
+              "unpark_ms": 0.0,
+              "prefill_ms": 625.19,
+              "prefill_chunk_tokens": 64,
+              "decode_s": 0.208,
+              "decode_tok_per_s": 33.6,
+              "avg_tokens_per_backbone_pass": 1.0,
+              "peak_vram_mib": 1284.32,
+              "park_to_ram_ms": 0.0,
+              "parked_session_ram_mib": 0.0,
+              "spec_gate": {
+                "overall_accept_rate_pct": 0.0,
+                "mtp_accept_rate_pct": 0.0
+              },
+              "packed_projections": {
+                "modules": 112,
+                "bits": [
+                  6
+                ],
+                "fused_calls": 784,
+                "tiled_calls": 112
+              }
+            },
+            "text": "The sky appears blue during the day due",
+            "text_sha256": "c5f6335f2ff8ad48d7022b0ee30278edef1d9955ef24bc86b48477b09d6b1cbe",
+            "read_bytes": 72240,
+            "ram_hits": 0,
+            "ram_misses": 0,
+            "ram_evictions": 0
+          },
+          "ram_cache": {
+            "peak_bytes": 0,
+            "cap_bytes": null,
+            "layers": 0
+          },
+          "hardware_after": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 2824, 5201, 200.00, 617.42"
+          }
+        },
+        {
+          "placement": "resident",
+          "pressure_mib": 2048,
+          "pressure_process": {
+            "allocated_bytes": 2147483648,
+            "reserved_bytes": 2147483648,
+            "requested_mib": 2048
+          },
+          "block": 0,
+          "trials": [
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 543.43,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 1.817,
+                "decode_tok_per_s": 34.68,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 1284.32,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 7840,
+                  "tiled_calls": 224
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 0,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            },
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 539.08,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 1.81,
+                "decode_tok_per_s": 34.81,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 1284.32,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 14896,
+                  "tiled_calls": 336
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 0,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            }
+          ],
+          "status": "passed",
+          "hardware_before": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 3622, 4403, 200.00, 617.42"
+          },
+          "available_ram_before_bytes": 1466441728,
+          "automatic_plan_before_override": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 4616212480,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 3796226048,
+            "layers_total": 16,
+            "resident_layers": 16,
+            "ring_slots": 0,
+            "slot_bytes": 0,
+            "full_residency": true,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "constructor_s": 2.956368100014515,
+          "startup_memory_probe": {
+            "cuda_free_bytes": 7413432320,
+            "cuda_total_bytes": 8589279232,
+            "free_bytes": 4616212480,
+            "total_bytes": 8589279232,
+            "source": "cuda_nvml_min",
+            "physical_free_bytes": 4616212480,
+            "physical_total_bytes": 8589934592
+          },
+          "controlled_plan": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 4616212480,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 3796226048,
+            "layers_total": 16,
+            "resident_layers": 16,
+            "ring_slots": 0,
+            "slot_bytes": 0,
+            "full_residency": true,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "warmup": {
+            "metrics": {
+              "prompt_tokens": 51,
+              "cached_prefix_tokens": 0,
+              "generated_tokens": 8,
+              "stopped_by_eos": false,
+              "finish_reason": "length",
+              "unpark_ms": 0.0,
+              "prefill_ms": 523.2,
+              "prefill_chunk_tokens": 64,
+              "decode_s": 0.206,
+              "decode_tok_per_s": 33.97,
+              "avg_tokens_per_backbone_pass": 1.0,
+              "peak_vram_mib": 1284.32,
+              "park_to_ram_ms": 0.0,
+              "parked_session_ram_mib": 0.0,
+              "spec_gate": {
+                "overall_accept_rate_pct": 0.0,
+                "mtp_accept_rate_pct": 0.0
+              },
+              "packed_projections": {
+                "modules": 112,
+                "bits": [
+                  6
+                ],
+                "fused_calls": 784,
+                "tiled_calls": 112
+              }
+            },
+            "text": "The sky appears blue during the day due",
+            "text_sha256": "c5f6335f2ff8ad48d7022b0ee30278edef1d9955ef24bc86b48477b09d6b1cbe",
+            "read_bytes": 72240,
+            "ram_hits": 0,
+            "ram_misses": 0,
+            "ram_evictions": 0
+          },
+          "ram_cache": {
+            "peak_bytes": 0,
+            "cap_bytes": null,
+            "layers": 0
+          },
+          "hardware_after": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 4875, 3150, 200.00, 617.42"
+          }
+        },
+        {
+          "placement": "half",
+          "pressure_mib": 2048,
+          "pressure_process": {
+            "allocated_bytes": 2147483648,
+            "reserved_bytes": 2147483648,
+            "requested_mib": 2048
+          },
+          "block": 1,
+          "trials": [
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 688.38,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 5.296,
+                "decode_tok_per_s": 11.9,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 1051.25,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 7840,
+                  "tiled_calls": 224
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 512,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            },
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 715.91,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 5.371,
+                "decode_tok_per_s": 11.73,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 1051.25,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 14896,
+                  "tiled_calls": 336
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 512,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            }
+          ],
+          "status": "passed",
+          "hardware_before": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 3621, 4404, 200.00, 617.42"
+          },
+          "available_ram_before_bytes": 1511395328,
+          "automatic_plan_before_override": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 4617195520,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 3797209088,
+            "layers_total": 16,
+            "resident_layers": 16,
+            "ring_slots": 0,
+            "slot_bytes": 0,
+            "full_residency": true,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "constructor_s": 2.4661400000331923,
+          "startup_memory_probe": {
+            "cuda_free_bytes": 7413432320,
+            "cuda_total_bytes": 8589279232,
+            "free_bytes": 4617195520,
+            "total_bytes": 8589279232,
+            "source": "cuda_nvml_min",
+            "physical_free_bytes": 4617195520,
+            "physical_total_bytes": 8589934592
+          },
+          "controlled_plan": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 4617195520,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 3797209088,
+            "layers_total": 16,
+            "resident_layers": 8,
+            "ring_slots": 3,
+            "slot_bytes": 50331648,
+            "full_residency": false,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "warmup": {
+            "metrics": {
+              "prompt_tokens": 51,
+              "cached_prefix_tokens": 0,
+              "generated_tokens": 8,
+              "stopped_by_eos": false,
+              "finish_reason": "length",
+              "unpark_ms": 0.0,
+              "prefill_ms": 3313.5,
+              "prefill_chunk_tokens": 64,
+              "decode_s": 0.579,
+              "decode_tok_per_s": 12.09,
+              "avg_tokens_per_backbone_pass": 1.0,
+              "peak_vram_mib": 1051.25,
+              "park_to_ram_ms": 0.0,
+              "parked_session_ram_mib": 0.0,
+              "spec_gate": {
+                "overall_accept_rate_pct": 0.0,
+                "mtp_accept_rate_pct": 0.0
+              },
+              "packed_projections": {
+                "modules": 112,
+                "bits": [
+                  6
+                ],
+                "fused_calls": 784,
+                "tiled_calls": 112
+              }
+            },
+            "text": "The sky appears blue during the day due",
+            "text_sha256": "c5f6335f2ff8ad48d7022b0ee30278edef1d9955ef24bc86b48477b09d6b1cbe",
+            "read_bytes": 292264496,
+            "ram_hits": 56,
+            "ram_misses": 8,
+            "ram_evictions": 0
+          },
+          "ram_cache": {
+            "peak_bytes": 395378688,
+            "cap_bytes": 939524096,
+            "layers": 8
+          },
+          "hardware_after": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 4869, 3156, 200.00, 617.42"
+          }
+        },
+        {
+          "placement": "stream",
+          "pressure_mib": 2048,
+          "pressure_process": {
+            "allocated_bytes": 2147483648,
+            "reserved_bytes": 2147483648,
+            "requested_mib": 2048
+          },
+          "block": 2,
+          "trials": [
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 861.37,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 9.378,
+                "decode_tok_per_s": 6.72,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 674.19,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 7840,
+                  "tiled_calls": 224
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 1024,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            },
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 782.17,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 8.66,
+                "decode_tok_per_s": 7.27,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 674.19,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 14896,
+                  "tiled_calls": 336
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 1024,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            }
+          ],
+          "status": "passed",
+          "hardware_before": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 3804, 4221, 200.00, 617.42"
+          },
+          "available_ram_before_bytes": 1368588288,
+          "automatic_plan_before_override": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 4425306112,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 3605319680,
+            "layers_total": 16,
+            "resident_layers": 16,
+            "ring_slots": 0,
+            "slot_bytes": 0,
+            "full_residency": true,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "constructor_s": 2.2072236000094563,
+          "startup_memory_probe": {
+            "cuda_free_bytes": 7413432320,
+            "cuda_total_bytes": 8589279232,
+            "free_bytes": 4425306112,
+            "total_bytes": 8589279232,
+            "source": "cuda_nvml_min",
+            "physical_free_bytes": 4425306112,
+            "physical_total_bytes": 8589934592
+          },
+          "controlled_plan": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 4425306112,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 3605319680,
+            "layers_total": 16,
+            "resident_layers": 0,
+            "ring_slots": 3,
+            "slot_bytes": 50331648,
+            "full_residency": false,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "warmup": {
+            "metrics": {
+              "prompt_tokens": 51,
+              "cached_prefix_tokens": 0,
+              "generated_tokens": 8,
+              "stopped_by_eos": false,
+              "finish_reason": "length",
+              "unpark_ms": 0.0,
+              "prefill_ms": 8532.39,
+              "prefill_chunk_tokens": 64,
+              "decode_s": 1.1,
+              "decode_tok_per_s": 6.36,
+              "avg_tokens_per_backbone_pass": 1.0,
+              "peak_vram_mib": 674.19,
+              "park_to_ram_ms": 0.0,
+              "parked_session_ram_mib": 0.0,
+              "spec_gate": {
+                "overall_accept_rate_pct": 0.0,
+                "mtp_accept_rate_pct": 0.0
+              },
+              "packed_projections": {
+                "modules": 112,
+                "bits": [
+                  6
+                ],
+                "fused_calls": 784,
+                "tiled_calls": 112
+              }
+            },
+            "text": "The sky appears blue during the day due",
+            "text_sha256": "c5f6335f2ff8ad48d7022b0ee30278edef1d9955ef24bc86b48477b09d6b1cbe",
+            "read_bytes": 584456752,
+            "ram_hits": 112,
+            "ram_misses": 16,
+            "ram_evictions": 0
+          },
+          "ram_cache": {
+            "peak_bytes": 790757376,
+            "cap_bytes": 939524096,
+            "layers": 16
+          },
+          "hardware_after": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 4496, 3529, 200.00, 617.42"
+          }
+        },
+        {
+          "placement": "stream",
+          "pressure_mib": 2048,
+          "pressure_process": {
+            "allocated_bytes": 2147483648,
+            "reserved_bytes": 2147483648,
+            "requested_mib": 2048
+          },
+          "block": 3,
+          "trials": [
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 757.18,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 8.461,
+                "decode_tok_per_s": 7.45,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 674.19,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 7840,
+                  "tiled_calls": 224
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 1024,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            },
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 769.32,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 8.506,
+                "decode_tok_per_s": 7.41,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 674.19,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 14896,
+                  "tiled_calls": 336
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 1024,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            }
+          ],
+          "status": "passed",
+          "hardware_before": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 3806, 4219, 200.00, 617.42"
+          },
+          "available_ram_before_bytes": 897019904,
+          "automatic_plan_before_override": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 4422979584,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 3602993152,
+            "layers_total": 16,
+            "resident_layers": 16,
+            "ring_slots": 0,
+            "slot_bytes": 0,
+            "full_residency": true,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "constructor_s": 3.339737999951467,
+          "startup_memory_probe": {
+            "cuda_free_bytes": 7413432320,
+            "cuda_total_bytes": 8589279232,
+            "free_bytes": 4422979584,
+            "total_bytes": 8589279232,
+            "source": "cuda_nvml_min",
+            "physical_free_bytes": 4422979584,
+            "physical_total_bytes": 8589934592
+          },
+          "controlled_plan": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 4422979584,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 3602993152,
+            "layers_total": 16,
+            "resident_layers": 0,
+            "ring_slots": 3,
+            "slot_bytes": 50331648,
+            "full_residency": false,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "warmup": {
+            "metrics": {
+              "prompt_tokens": 51,
+              "cached_prefix_tokens": 0,
+              "generated_tokens": 8,
+              "stopped_by_eos": false,
+              "finish_reason": "length",
+              "unpark_ms": 0.0,
+              "prefill_ms": 9181.01,
+              "prefill_chunk_tokens": 64,
+              "decode_s": 0.874,
+              "decode_tok_per_s": 8.0,
+              "avg_tokens_per_backbone_pass": 1.0,
+              "peak_vram_mib": 674.19,
+              "park_to_ram_ms": 0.0,
+              "parked_session_ram_mib": 0.0,
+              "spec_gate": {
+                "overall_accept_rate_pct": 0.0,
+                "mtp_accept_rate_pct": 0.0
+              },
+              "packed_projections": {
+                "modules": 112,
+                "bits": [
+                  6
+                ],
+                "fused_calls": 784,
+                "tiled_calls": 112
+              }
+            },
+            "text": "The sky appears blue during the day due",
+            "text_sha256": "c5f6335f2ff8ad48d7022b0ee30278edef1d9955ef24bc86b48477b09d6b1cbe",
+            "read_bytes": 584456752,
+            "ram_hits": 112,
+            "ram_misses": 16,
+            "ram_evictions": 0
+          },
+          "ram_cache": {
+            "peak_bytes": 790757376,
+            "cap_bytes": 939524096,
+            "layers": 16
+          },
+          "hardware_after": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 4517, 3508, 200.00, 617.42"
+          }
+        },
+        {
+          "placement": "half",
+          "pressure_mib": 2048,
+          "pressure_process": {
+            "allocated_bytes": 2147483648,
+            "reserved_bytes": 2147483648,
+            "requested_mib": 2048
+          },
+          "block": 4,
+          "trials": [
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 726.72,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 5.278,
+                "decode_tok_per_s": 11.94,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 1051.25,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 7840,
+                  "tiled_calls": 224
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 512,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            },
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 687.28,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 5.228,
+                "decode_tok_per_s": 12.05,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 1051.25,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 14896,
+                  "tiled_calls": 336
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 512,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            }
+          ],
+          "status": "passed",
+          "hardware_before": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 3869, 4156, 200.00, 617.42"
+          },
+          "available_ram_before_bytes": 922128384,
+          "automatic_plan_before_override": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 4357640192,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 3537653760,
+            "layers_total": 16,
+            "resident_layers": 16,
+            "ring_slots": 0,
+            "slot_bytes": 0,
+            "full_residency": true,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "constructor_s": 5.385953400051221,
+          "startup_memory_probe": {
+            "cuda_free_bytes": 7413432320,
+            "cuda_total_bytes": 8589279232,
+            "free_bytes": 4357640192,
+            "total_bytes": 8589279232,
+            "source": "cuda_nvml_min",
+            "physical_free_bytes": 4357640192,
+            "physical_total_bytes": 8589934592
+          },
+          "controlled_plan": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 4357640192,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 3537653760,
+            "layers_total": 16,
+            "resident_layers": 8,
+            "ring_slots": 3,
+            "slot_bytes": 50331648,
+            "full_residency": false,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "warmup": {
+            "metrics": {
+              "prompt_tokens": 51,
+              "cached_prefix_tokens": 0,
+              "generated_tokens": 8,
+              "stopped_by_eos": false,
+              "finish_reason": "length",
+              "unpark_ms": 0.0,
+              "prefill_ms": 5253.05,
+              "prefill_chunk_tokens": 64,
+              "decode_s": 0.595,
+              "decode_tok_per_s": 11.76,
+              "avg_tokens_per_backbone_pass": 1.0,
+              "peak_vram_mib": 1051.25,
+              "park_to_ram_ms": 0.0,
+              "parked_session_ram_mib": 0.0,
+              "spec_gate": {
+                "overall_accept_rate_pct": 0.0,
+                "mtp_accept_rate_pct": 0.0
+              },
+              "packed_projections": {
+                "modules": 112,
+                "bits": [
+                  6
+                ],
+                "fused_calls": 784,
+                "tiled_calls": 112
+              }
+            },
+            "text": "The sky appears blue during the day due",
+            "text_sha256": "c5f6335f2ff8ad48d7022b0ee30278edef1d9955ef24bc86b48477b09d6b1cbe",
+            "read_bytes": 292264496,
+            "ram_hits": 56,
+            "ram_misses": 8,
+            "ram_evictions": 0
+          },
+          "ram_cache": {
+            "peak_bytes": 395378688,
+            "cap_bytes": 939524096,
+            "layers": 8
+          },
+          "hardware_after": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 4745, 3280, 200.00, 617.42"
+          }
+        },
+        {
+          "placement": "resident",
+          "pressure_mib": 2048,
+          "pressure_process": {
+            "allocated_bytes": 2147483648,
+            "reserved_bytes": 2147483648,
+            "requested_mib": 2048
+          },
+          "block": 5,
+          "trials": [
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 1005.12,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 2.436,
+                "decode_tok_per_s": 25.86,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 1284.32,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 7840,
+                  "tiled_calls": 224
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 0,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            },
+            {
+              "metrics": {
+                "prompt_tokens": 51,
+                "cached_prefix_tokens": 0,
+                "generated_tokens": 64,
+                "stopped_by_eos": false,
+                "finish_reason": "length",
+                "unpark_ms": 0.0,
+                "prefill_ms": 620.48,
+                "prefill_chunk_tokens": 64,
+                "decode_s": 2.203,
+                "decode_tok_per_s": 28.6,
+                "avg_tokens_per_backbone_pass": 1.0,
+                "peak_vram_mib": 1284.32,
+                "park_to_ram_ms": 0.0,
+                "parked_session_ram_mib": 0.0,
+                "spec_gate": {
+                  "overall_accept_rate_pct": 0.0,
+                  "mtp_accept_rate_pct": 0.0
+                },
+                "packed_projections": {
+                  "modules": 112,
+                  "bits": [
+                    6
+                  ],
+                  "fused_calls": 14896,
+                  "tiled_calls": 336
+                }
+              },
+              "text": "The sky appears blue during the day due to a phenomenon called Rayleigh scattering, where shorter wavelengths of light (like blue and violet) are scattered more than longer wavelengths (like red and orange) by the tiny molecules of gases in the atmosphere.\n\nThis scattering effect is more pronounced when the sun is overhead, as the light",
+              "text_sha256": "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99",
+              "read_bytes": 166320,
+              "ram_hits": 0,
+              "ram_misses": 0,
+              "ram_evictions": 0
+            }
+          ],
+          "status": "passed",
+          "hardware_before": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 3725, 4300, 200.00, 617.42"
+          },
+          "available_ram_before_bytes": 1222868992,
+          "automatic_plan_before_override": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 4508864512,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 3688878080,
+            "layers_total": 16,
+            "resident_layers": 16,
+            "ring_slots": 0,
+            "slot_bytes": 0,
+            "full_residency": true,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "constructor_s": 3.731172399944626,
+          "startup_memory_probe": {
+            "cuda_free_bytes": 7413432320,
+            "cuda_total_bytes": 8589279232,
+            "free_bytes": 4508864512,
+            "total_bytes": 8589279232,
+            "source": "cuda_nvml_min",
+            "physical_free_bytes": 4508864512,
+            "physical_total_bytes": 8589934592
+          },
+          "controlled_plan": {
+            "mode": "normal",
+            "total_bytes": 8589279232,
+            "free_bytes": 4508864512,
+            "reserve_bytes": 819986432,
+            "budget_bytes": 3688878080,
+            "layers_total": 16,
+            "resident_layers": 16,
+            "ring_slots": 0,
+            "slot_bytes": 0,
+            "full_residency": true,
+            "enable_mtp": false,
+            "prefill_chunk_tokens": 64,
+            "max_context_tokens": 2048,
+            "weights_bytes": 1316093952
+          },
+          "warmup": {
+            "metrics": {
+              "prompt_tokens": 51,
+              "cached_prefix_tokens": 0,
+              "generated_tokens": 8,
+              "stopped_by_eos": false,
+              "finish_reason": "length",
+              "unpark_ms": 0.0,
+              "prefill_ms": 674.72,
+              "prefill_chunk_tokens": 64,
+              "decode_s": 0.272,
+              "decode_tok_per_s": 25.72,
+              "avg_tokens_per_backbone_pass": 1.0,
+              "peak_vram_mib": 1284.32,
+              "park_to_ram_ms": 0.0,
+              "parked_session_ram_mib": 0.0,
+              "spec_gate": {
+                "overall_accept_rate_pct": 0.0,
+                "mtp_accept_rate_pct": 0.0
+              },
+              "packed_projections": {
+                "modules": 112,
+                "bits": [
+                  6
+                ],
+                "fused_calls": 784,
+                "tiled_calls": 112
+              }
+            },
+            "text": "The sky appears blue during the day due",
+            "text_sha256": "c5f6335f2ff8ad48d7022b0ee30278edef1d9955ef24bc86b48477b09d6b1cbe",
+            "read_bytes": 72240,
+            "ram_hits": 0,
+            "ram_misses": 0,
+            "ram_evictions": 0
+          },
+          "ram_cache": {
+            "peak_bytes": 0,
+            "cap_bytes": null,
+            "layers": 0
+          },
+          "hardware_after": {
+            "gpu": "NVIDIA GeForce RTX 3060 Ti, 8192, 4949, 3076, 200.00, 617.42"
+          }
+        }
+      ],
+      "checkpoint_bytes": 807694368,
+      "weights_size_mtime_unchanged": true,
+      "summary": [
+        {
+          "pressure_mib": 0,
+          "placement": "resident",
+          "samples": 4,
+          "median_tok_s": 30.55,
+          "min_tok_s": 26.33,
+          "max_tok_s": 33.64,
+          "median_prefill_ms": 619.135,
+          "output_hashes": [
+            "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99"
+          ],
+          "median_read_bytes": 166320.0
+        },
+        {
+          "pressure_mib": 0,
+          "placement": "half",
+          "samples": 4,
+          "median_tok_s": 11.975,
+          "min_tok_s": 11.65,
+          "max_tok_s": 12.4,
+          "median_prefill_ms": 729.875,
+          "output_hashes": [
+            "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99"
+          ],
+          "median_read_bytes": 166320.0
+        },
+        {
+          "pressure_mib": 0,
+          "placement": "stream",
+          "samples": 4,
+          "median_tok_s": 7.34,
+          "min_tok_s": 7.25,
+          "max_tok_s": 7.62,
+          "median_prefill_ms": 779.4200000000001,
+          "output_hashes": [
+            "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99"
+          ],
+          "median_read_bytes": 166320.0
+        },
+        {
+          "pressure_mib": 2048,
+          "placement": "resident",
+          "samples": 4,
+          "median_tok_s": 31.64,
+          "min_tok_s": 25.86,
+          "max_tok_s": 34.81,
+          "median_prefill_ms": 581.9549999999999,
+          "output_hashes": [
+            "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99"
+          ],
+          "median_read_bytes": 166320.0
+        },
+        {
+          "pressure_mib": 2048,
+          "placement": "half",
+          "samples": 4,
+          "median_tok_s": 11.92,
+          "min_tok_s": 11.73,
+          "max_tok_s": 12.05,
+          "median_prefill_ms": 702.145,
+          "output_hashes": [
+            "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99"
+          ],
+          "median_read_bytes": 166320.0
+        },
+        {
+          "pressure_mib": 2048,
+          "placement": "stream",
+          "samples": 4,
+          "median_tok_s": 7.34,
+          "min_tok_s": 6.72,
+          "max_tok_s": 7.45,
+          "median_prefill_ms": 775.745,
+          "output_hashes": [
+            "fbd9a0781a28cbca3a226b5e109fbfe764af68e02597ba7f978d32af07ab2b99"
+          ],
+          "median_read_bytes": 166320.0
+        }
+      ]
+    }
+  ],
+  "status": "passed",
+  "projection_note": "Process IDs and WDDM N/A per-process rows omitted from the public projection; numeric measurements unchanged."
+}

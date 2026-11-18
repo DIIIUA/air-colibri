@@ -1,0 +1,2193 @@
+{
+  "version": "1.2.0",
+  "date": "2026-11-18",
+  "gpu_available": {
+    "counts": {
+      "passed": 261,
+      "skipped": 10
+    },
+    "tests": [
+      {
+        "test": "tests.test_bounded_projection_io::test_global_rows_and_norm_never_map_the_full_hf_shard",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_hf_runtime_globals_use_positioned_reader",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_matrix_rectangles_bound_reads_and_scratch[dtype0]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_matrix_rectangles_bound_reads_and_scratch[dtype1]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_matrix_rectangles_bound_reads_and_scratch[dtype2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_matrix_rectangles_bound_reads_and_scratch[dtype3]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_row_packer_releases_tiles_and_recovers_from_reader_failure[4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_row_packer_releases_tiles_and_recovers_from_reader_failure[6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[4-plain]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[4-fp8]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[4-awq]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[4-gptq]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[6-plain]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[6-fp8]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[6-awq]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[6-gptq]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_transposed_hf_rows_preserve_conv1d_orientation",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_unaligned_rows_cross_source_blocks_and_reject_bad_metadata[fp8]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_unaligned_rows_cross_source_blocks_and_reject_bad_metadata[awq]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_unaligned_rows_cross_source_blocks_and_reject_bad_metadata[gptq]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cli_lan::test_think_splitter_handles_tag_split_across_chunks",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cli_lan::test_think_splitter_without_thinking_phase",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cli_lan::test_spec_lookup_proposes_tokens_after_repeated_suffix",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cli_lan::test_lan_helpers_and_passport",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cli_lan::test_udp_beacon_answers_discovery_probe",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cli_lan::test_cli_parser_commands",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_context_budget::test_context_rejects_requested_output_before_allocating_cache",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_context_budget::test_cached_chat_is_checked_before_unparking",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_first::test_cache_transfer_preserves_metadata_aliases_and_all_state_kinds",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_first::test_optional_recurrent_anchor_can_keep_cpu_original_after_gpu_adoption",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_first::test_cpu_expert_payload_moves_to_gpu_without_second_read_or_quantization[4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_first::test_cpu_expert_payload_moves_to_gpu_without_second_read_or_quantization[6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_first::test_common_start_and_readiness_handoff_preserve_state[4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_first::test_common_start_and_readiness_handoff_preserve_state[6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_first::test_public_common_start_does_not_order_devices_or_wait_for_gpu",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_first::test_cpu_prefill_map_survives_ring_and_thought_anchor_handoff[4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_first::test_cpu_prefill_map_survives_ring_and_thought_anchor_handoff[6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_first::test_recurrent_and_sliding_state_survives_progressive_start[mamba]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_first::test_recurrent_and_sliding_state_survives_progressive_start[mamba2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_first::test_recurrent_and_sliding_state_survives_progressive_start[lfm2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_first::test_recurrent_and_sliding_state_survives_progressive_start[gemma2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_first::test_cancel_drains_preparation_and_next_request_can_take_over",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_no_gpu_streams_every_layer_and_preserves_logits_cache_and_session[bf16]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_no_gpu_streams_every_layer_and_preserves_logits_cache_and_session[q4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_no_gpu_streams_every_layer_and_preserves_logits_cache_and_session[q6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_large_staging_geometry_needs_no_memory_until_a_transfer",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_deferred_staging_allocates_only_on_actual_copy_and_stays_closed",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_gpu_planning_failure_keeps_cpu_state_and_does_not_retry",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_explicit_cpu_choice_never_starts_gpu_and_doctor_accepts_it",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_doctor_reports_gpu_plan_rejection_without_rejecting_cpu",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_cpu_prefill_map_and_original_probabilities_survive_decode[4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_cpu_prefill_map_and_original_probabilities_survive_decode[6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_failed_helper_returns_adopted_layer_and_live_cache_to_cpu[False]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_failed_helper_returns_adopted_layer_and_live_cache_to_cpu[True]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_partial_hf_cache_downloads_then_automatically_packs_and_generates",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_complete_cache_needs_no_network_and_missing_shard_is_not_complete",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_gguf_selection_fetches_exact_split_and_not_other_quantizations",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_ambiguous_gguf_repo_requires_selection_before_any_weight_download",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_gguf_selector_cannot_escape_or_fetch_all_variants[../model.gguf]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_gguf_selector_cannot_escape_or_fetch_all_variants[/model.gguf]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_gguf_selector_cannot_escape_or_fetch_all_variants[sub\\\\model.gguf]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_gguf_selector_cannot_escape_or_fetch_all_variants[*.gguf]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_doctor_explicit_repo_downloads_but_default_stays_offline",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_unavailable_hub_is_a_concise_model_error",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_dynamic_working_memory::test_bounded_host_staging_waits_before_reuse[4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_dynamic_working_memory::test_bounded_host_staging_waits_before_reuse[6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_dynamic_working_memory::test_dense_reclaim_preserves_recent_experts_instead_of_first_addresses",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_dynamic_working_memory::test_dynamic_pages_reused_between_dense_and_experts_without_copy[4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_dynamic_working_memory::test_dynamic_pages_reused_between_dense_and_experts_without_copy[6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_dynamic_working_memory::test_standby_cannot_be_filled_and_reset_releases_cancelled_dense",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_dynamic_working_memory::test_retired_dense_bytes_wait_for_gpu_before_expert_overwrite",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_engine_gpu::test_chunked_prefill_matches_single_pass",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_engine_gpu::test_prefill_does_not_materialise_full_vocab_logits",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_engine_gpu::test_mtp_speculation_matches_plain_greedy",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_engine_gpu::test_multirow_deltanet_step_matches_sequential_steps",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_engine_gpu::test_session_prefix_reuse_matches_fresh_prompt",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_engine_gpu::test_cancellation_releases_all_generation_vram[prefill]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_engine_gpu::test_cancellation_releases_all_generation_vram[decode]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[none-bf16]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[none-q4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[none-q6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[first-bf16]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[first-q4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[first-q6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[second-bf16]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[second-q4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[second-q6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_rejected_rows_restore_recurrent_and_sliding_state[mamba]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_rejected_rows_restore_recurrent_and_sliding_state[mamba2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_rejected_rows_restore_recurrent_and_sliding_state[lfm2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_rejected_rows_restore_recurrent_and_sliding_state[gemma2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_native_head_budget_is_checked_before_tensor_reads",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_native_adapter_cpu_cache_continuation_matches_plain",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_unvalidated_decoder_uses_plain_stream_without_excluding_model",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gguf_tokenizer_types::test_sentencepiece_default_keeps_unicode_and_whitespace[gemma2-Gemma2Config]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gguf_tokenizer_types::test_sentencepiece_default_keeps_unicode_and_whitespace[gemma3-Gemma3TextConfig]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gguf_tokenizer_types::test_sentencepiece_default_keeps_unicode_and_whitespace[nemotron-NemotronConfig]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gpu_memory::test_lower_valid_counter_matches_uuid_not_visible_ordinal[4-7-4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gpu_memory::test_lower_valid_counter_matches_uuid_not_visible_ordinal[6-3-3]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gpu_memory::test_lower_valid_counter_matches_uuid_not_visible_ordinal[0-7-0]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gpu_memory::test_optional_nvml_failure_keeps_cuda_with_diagnostic",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gpu_memory::test_physical_budget_changes_residency_without_changing_kv_reserve",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gpu_memory::test_separate_two_gib_allocation_reduces_physical_startup_budget",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_int4_matches_original_integer_matrix[cpu-awq]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_int4_matches_original_integer_matrix[cpu-gptq]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_int4_matches_original_integer_matrix[cuda-awq]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_int4_matches_original_integer_matrix[cuda-gptq]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_fp8_matches_transformers_reference_including_partial_blocks[cpu]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_fp8_matches_transformers_reference_including_partial_blocks[cuda]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_encoded_checkpoint_matches_native_model_through_ring[awq]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_encoded_checkpoint_matches_native_model_through_ring[gptq]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_encoded_checkpoint_matches_native_model_through_ring[fp8]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_oversized_body_is_rejected_without_reading_it",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_bad_requests_get_clear_errors",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_context_budget_error_is_a_client_error_and_server_recovers",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_api_key_is_enforced_and_non_ascii_keys_do_not_crash",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_stop_endpoint_cancels_running_generation",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_new_request_preempts_old_one_and_never_overlaps",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_client_disconnect_is_detected_during_prefill",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_server_log_is_written",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_context_discovery_endpoints_and_sse_disconnect_log",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cpu-reserved]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cpu-dma]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cpu-compute]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cpu-released]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cuda-reserved]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cuda-dma]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cuda-compute]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cuda-released]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_failed_backend_reset_does_not_clear_ownership",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_help_and_catalog_work_without_torch",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_catalog_numbers_and_names_resolve_same_folder",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_nested_download_marker_is_resolved_but_cannot_escape",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_hf_page_and_file_links_normalize[Qwen/Qwen3.5-0.8B-Qwen/Qwen3.5-0.8B-None-None]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_hf_page_and_file_links_normalize[https://huggingface.co/Qwen/Qwen3.5-0.8B-Qwen/Qwen3.5-0.8B-None-None]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_hf_page_and_file_links_normalize[https://huggingface.co/owner/model/tree/main-owner/model-None-main]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_hf_page_and_file_links_normalize[https://huggingface.co/owner/model/resolve/main/sub/model-Q4.gguf?download=true-owner/model-sub/model-Q4.gguf-main]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_hf_page_and_file_links_normalize[https://huggingface.co/owner/model/blob/rev/model.safetensors-owner/model-None-rev]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_hf_page_and_file_links_normalize[owner/model::model-Q6.gguf-owner/model-model-Q6.gguf-None]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_download_directory_ownership_and_external_catalog_registration",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_download_command_really_verifies_runtime_packing",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_hf_shards_map_to_canonical_names[True-True]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_hf_shards_map_to_canonical_names[False-False]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_layer_identity_changes_when_a_shard_changes",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_pread_reader_matches_safetensors",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_autodetect_skips_unsupported_models",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_capability_follows_geometry_and_qwen_stays_default",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_gguf_folder_is_detected_and_does_not_become_the_default",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_tiny_gguf_qwen35moe_source_and_sliced_experts_forward",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_hf_moe_per_expert_shards_route_on_demand",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_extended_gguf_dequantizers_and_nvrtc_exactness",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_gguf_zero_mmap_and_mid_layer_stream_cancel",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_bf16_session_prefix_reuse_on_gguf_and_olmoe",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_staging_pool_coalesce_tasks",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_nvrtc_deltanet_kernels_and_zero_fallback_warnings",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_ternary_tq1_tq2_and_q8_1_dequantizers",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_gpt2_hf_custom_safetensors_and_gguf_exact_logit_parity",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_mamba_hf_and_gguf_recurrent_cache_parity",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_vlm_gemma3_unwrapping_embed_scale_and_gguf_parity",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_variable_shape_gemma4_and_coexisting_falcon_h1_ring_streaming",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_hf_moe_all_layouts_and_routing_buffers_exact_parity",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_gguf_llama_rope_permute_split_shards_and_chat_fallback",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_prefill_wavefront::test_wave_matches_chunked_reference_cache_and_decode[bf16-0]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_prefill_wavefront::test_wave_matches_chunked_reference_cache_and_decode[q4-2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_prefill_wavefront::test_wave_matches_chunked_reference_cache_and_decode[q6-0]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_prefill_wavefront::test_wave_matches_chunked_reference_cache_and_decode[q6-7]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_prefill_wavefront::test_cancel_mid_wave_recovers_without_busy_slots",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_prefill_wavefront::test_unified_wave_session_cancel_and_thought_anchor",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_prefill_map_is_retained_until_persistent_route_change",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_initial_map_contributes_beyond_breaking_recent_ties",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_three_banks_exact_weights_wrong_forecasts_and_reset[4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_three_banks_exact_weights_wrong_forecasts_and_reset[6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_optional_source_failure_does_not_publish_partial_bank",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_bank_reuse_waits_for_actual_cuda_reader",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_predictive_region_ring_logits_kv_and_cancel[4-granitemoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_predictive_region_ring_logits_kv_and_cancel[4-olmoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_predictive_region_ring_logits_kv_and_cancel[6-granitemoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_predictive_region_ring_logits_kv_and_cancel[6-olmoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_unified_cancel_and_session_reset_clear_pending_predictions",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_refinement_preserves_published_common_and_abandons_obsolete_inflight[4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_refinement_preserves_published_common_and_abandons_obsolete_inflight[6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_busy_three_bank_ring_keeps_latest_refinement_until_real_reader_finishes",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_failed_later_expert_keeps_completed_prefix_usable",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_three_independent_maps_do_not_supersede_each_other[4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_three_independent_maps_do_not_supersede_each_other[6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_chunked_prefill_including_one_token_tail_builds_one_initial_map",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_map_can_be_prepared_later_without_rebuilding_unchanged_area",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_quantization_q4.TestQuantizationQ4::test_bitwise_unpack_no_lut_and_exact_nibbles",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_quantization_q4.TestQuantizationQ4::test_lazy_embed_lookup_equivalence",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_quantization_q4.TestQuantizationQ4::test_lazy_globals_map_chunked_read_equivalence",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_quantization_q4.TestQuantizationQ4::test_q4_layout_composition_no_lut_and_exact_stride",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_quantization_q4.TestQuantizationQ4::test_q4_real_layer_weight_cosine_f64",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_quantization_q4.TestQuantizationQ4::test_q4_tiled_linear_exactness_and_bounded_scratch",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_route_exclusion::test_exact_zero_routes_do_not_request_weights_and_next_scope_can_read_them[1]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_route_exclusion::test_exact_zero_routes_do_not_request_weights_and_next_scope_can_read_them[3]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_route_exclusion::test_rejected_route_rows_do_not_change_retained_map",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_route_exclusion::test_route_cut_stops_unread_optional_experts_but_preserves_next_scope",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_session_state::test_parked_continuation_matches_uninterrupted[mamba]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_session_state::test_parked_continuation_matches_uninterrupted[mamba2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_session_state::test_parked_continuation_matches_uninterrupted[lfm2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_session_state::test_parked_continuation_matches_uninterrupted[gemma2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_session_state::test_probe_rollback_preserves_real_family_continuation[mamba]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_session_state::test_probe_rollback_preserves_real_family_continuation[mamba2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_session_state::test_probe_rollback_preserves_real_family_continuation[lfm2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_session_state::test_probe_rollback_preserves_real_family_continuation[gemma2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_speculation_joint::test_verification_boundaries[budget]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_speculation_joint::test_verification_boundaries[eos]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_speculation_joint::test_verification_boundaries[cancel]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_speculation_joint::test_verified_routes_anchor_dynamic_three_regions_match_plain[4-granitemoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_speculation_joint::test_verified_routes_anchor_dynamic_three_regions_match_plain[4-olmoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_speculation_joint::test_verified_routes_anchor_dynamic_three_regions_match_plain[6-granitemoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_speculation_joint::test_verified_routes_anchor_dynamic_three_regions_match_plain[6-olmoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_speculation_joint::test_speculative_cpu_work_continues_into_gpu_ring_without_prefix_replay",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_snapshot_and_restore_hybrid_cache",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_unknown_state_rejected_before_probe",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_conv_only_snapshot_and_no_false_reanchor_counter",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_blend_recurrent_anchor_preserves_s0_channel",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_syntactic_support_mask_prevents_ungrammatical_intrusion",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_entropy_gate_zero_on_deterministic_steps",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_mtp_speculative_rows_and_committed_reanchor",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_working_conclusion_can_change_without_erasing_original_probabilities",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_original_prior_cannot_override_explicit_input_revision",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_log_odds_bound_and_observed_tokyo_regression",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_default_anchor_preserves_recurrent_transition_state",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_ask_anchored_parses_stream_chat_events",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_original_channel_participates_even_when_working_field_is_empty",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_failed_mid_probe_restores_borrowed_cache_and_capture_metadata",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[False-4-granitemoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[False-4-olmoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[False-6-granitemoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[False-6-olmoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[True-4-granitemoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[True-4-olmoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[True-6-granitemoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[True-6-olmoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[dynamic-4-granitemoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[dynamic-4-olmoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[dynamic-6-granitemoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[dynamic-6-olmoe]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[False-4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[False-6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[True-4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[True-6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[dynamic-4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[dynamic-6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_unified_cancel_mid_forward_and_restart[4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_unified_cancel_mid_forward_and_restart[6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_unified_working_memory::test_one_allocation_and_direct_routed_parity[4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_unified_working_memory::test_one_allocation_and_direct_routed_parity[6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_unified_working_memory::test_budget_rejection_preserves_original_storage",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_unified_working_memory::test_unified_producer_reset_inflight_error_and_exact_fallback",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_unified_working_memory::test_retained_regions_need_no_io_and_producer_resumes_for_missing_weight",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_unified_working_memory::test_prefetch_cannot_reuse_a_live_reader_and_refinement_keeps_common",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_universal_quant::test_packing_is_independent_of_cpu_or_gpu_placement[4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_universal_quant::test_packing_is_independent_of_cpu_or_gpu_placement[6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[16-4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[16-6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[32-4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[32-6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[64-4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[64-6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_universal_quant::test_routed_kernel_cache_eviction_prefill_and_math_guard[4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_universal_quant::test_routed_kernel_cache_eviction_prefill_and_math_guard[6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_universal_quant::test_unified_ring_experts_session_cancel_and_recovery[4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_universal_quant::test_unified_ring_experts_session_cancel_and_recovery[6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_vram_plan::test_lm_head_q4_size",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_vram_plan::test_8gb_card_keeps_everything_resident_with_a_reserve",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_vram_plan::test_turbo_uses_more_vram_than_normal",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_vram_plan::test_4gb_card_streams_through_equal_ring_slots",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_vram_plan::test_fixed_profiles_are_rejected",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_vram_plan::test_too_little_vram_is_a_clear_error",
+        "status": "passed"
+      }
+    ]
+  },
+  "cuda_hidden": {
+    "counts": {
+      "passed": 142,
+      "skipped": 130
+    },
+    "tests": [
+      {
+        "test": "tests.test_bounded_projection_io::test_global_rows_and_norm_never_map_the_full_hf_shard",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_hf_runtime_globals_use_positioned_reader",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_matrix_rectangles_bound_reads_and_scratch[dtype0]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_matrix_rectangles_bound_reads_and_scratch[dtype1]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_matrix_rectangles_bound_reads_and_scratch[dtype2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_matrix_rectangles_bound_reads_and_scratch[dtype3]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_row_packer_releases_tiles_and_recovers_from_reader_failure[4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_row_packer_releases_tiles_and_recovers_from_reader_failure[6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[4-plain]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[4-fp8]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[4-awq]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[4-gptq]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[6-plain]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[6-fp8]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[6-awq]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_tiny_buffer_matches_full_source_through_ring[6-gptq]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_transposed_hf_rows_preserve_conv1d_orientation",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_unaligned_rows_cross_source_blocks_and_reject_bad_metadata[fp8]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_unaligned_rows_cross_source_blocks_and_reject_bad_metadata[awq]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_bounded_projection_io::test_unaligned_rows_cross_source_blocks_and_reject_bad_metadata[gptq]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cli_lan::test_think_splitter_handles_tag_split_across_chunks",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cli_lan::test_think_splitter_without_thinking_phase",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cli_lan::test_spec_lookup_proposes_tokens_after_repeated_suffix",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cli_lan::test_lan_helpers_and_passport",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cli_lan::test_udp_beacon_answers_discovery_probe",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cli_lan::test_cli_parser_commands",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_context_budget::test_context_rejects_requested_output_before_allocating_cache",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_context_budget::test_cached_chat_is_checked_before_unparking",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_first::test_cache_transfer_preserves_metadata_aliases_and_all_state_kinds",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_first::test_optional_recurrent_anchor_can_keep_cpu_original_after_gpu_adoption",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_cpu_first::test_cpu_expert_payload_moves_to_gpu_without_second_read_or_quantization[4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_cpu_first::test_cpu_expert_payload_moves_to_gpu_without_second_read_or_quantization[6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_cpu_first::test_common_start_and_readiness_handoff_preserve_state[4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_cpu_first::test_common_start_and_readiness_handoff_preserve_state[6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_cpu_first::test_public_common_start_does_not_order_devices_or_wait_for_gpu",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_cpu_first::test_cpu_prefill_map_survives_ring_and_thought_anchor_handoff[4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_cpu_first::test_cpu_prefill_map_survives_ring_and_thought_anchor_handoff[6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_cpu_first::test_recurrent_and_sliding_state_survives_progressive_start[mamba]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_cpu_first::test_recurrent_and_sliding_state_survives_progressive_start[mamba2]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_cpu_first::test_recurrent_and_sliding_state_survives_progressive_start[lfm2]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_cpu_first::test_recurrent_and_sliding_state_survives_progressive_start[gemma2]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_cpu_first::test_cancel_drains_preparation_and_next_request_can_take_over",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_no_gpu_streams_every_layer_and_preserves_logits_cache_and_session[bf16]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_no_gpu_streams_every_layer_and_preserves_logits_cache_and_session[q4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_no_gpu_streams_every_layer_and_preserves_logits_cache_and_session[q6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_large_staging_geometry_needs_no_memory_until_a_transfer",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_deferred_staging_allocates_only_on_actual_copy_and_stays_closed",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_gpu_planning_failure_keeps_cpu_state_and_does_not_retry",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_explicit_cpu_choice_never_starts_gpu_and_doctor_accepts_it",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_doctor_reports_gpu_plan_rejection_without_rejecting_cpu",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_cpu_prefill_map_and_original_probabilities_survive_decode[4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_cpu_prefill_map_and_original_probabilities_survive_decode[6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_failed_helper_returns_adopted_layer_and_live_cache_to_cpu[False]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_cpu_independence::test_failed_helper_returns_adopted_layer_and_live_cache_to_cpu[True]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_download_preparation::test_partial_hf_cache_downloads_then_automatically_packs_and_generates",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_complete_cache_needs_no_network_and_missing_shard_is_not_complete",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_gguf_selection_fetches_exact_split_and_not_other_quantizations",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_ambiguous_gguf_repo_requires_selection_before_any_weight_download",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_gguf_selector_cannot_escape_or_fetch_all_variants[../model.gguf]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_gguf_selector_cannot_escape_or_fetch_all_variants[/model.gguf]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_gguf_selector_cannot_escape_or_fetch_all_variants[sub\\\\model.gguf]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_gguf_selector_cannot_escape_or_fetch_all_variants[*.gguf]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_doctor_explicit_repo_downloads_but_default_stays_offline",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_download_preparation::test_unavailable_hub_is_a_concise_model_error",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_dynamic_working_memory::test_bounded_host_staging_waits_before_reuse[4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_dynamic_working_memory::test_bounded_host_staging_waits_before_reuse[6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_dynamic_working_memory::test_dense_reclaim_preserves_recent_experts_instead_of_first_addresses",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_dynamic_working_memory::test_dynamic_pages_reused_between_dense_and_experts_without_copy[4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_dynamic_working_memory::test_dynamic_pages_reused_between_dense_and_experts_without_copy[6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_dynamic_working_memory::test_standby_cannot_be_filled_and_reset_releases_cancelled_dense",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_dynamic_working_memory::test_retired_dense_bytes_wait_for_gpu_before_expert_overwrite",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_engine_gpu::test_chunked_prefill_matches_single_pass",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_engine_gpu::test_prefill_does_not_materialise_full_vocab_logits",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_engine_gpu::test_mtp_speculation_matches_plain_greedy",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_engine_gpu::test_multirow_deltanet_step_matches_sequential_steps",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_engine_gpu::test_session_prefix_reuse_matches_fresh_prompt",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_engine_gpu::test_cancellation_releases_all_generation_vram[prefill]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_engine_gpu::test_cancellation_releases_all_generation_vram[decode]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[none-bf16]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[none-q4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[none-q6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[first-bf16]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[first-q4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[first-q6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[second-bf16]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[second-q4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_streamed_dense_accept_and_reject_preserve_tokens_and_cache[second-q6]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_rejected_rows_restore_recurrent_and_sliding_state[mamba]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_rejected_rows_restore_recurrent_and_sliding_state[mamba2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_rejected_rows_restore_recurrent_and_sliding_state[lfm2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_rejected_rows_restore_recurrent_and_sliding_state[gemma2]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_native_head_budget_is_checked_before_tensor_reads",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_native_adapter_cpu_cache_continuation_matches_plain",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_general_speculation::test_unvalidated_decoder_uses_plain_stream_without_excluding_model",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gguf_tokenizer_types::test_sentencepiece_default_keeps_unicode_and_whitespace[gemma2-Gemma2Config]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gguf_tokenizer_types::test_sentencepiece_default_keeps_unicode_and_whitespace[gemma3-Gemma3TextConfig]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gguf_tokenizer_types::test_sentencepiece_default_keeps_unicode_and_whitespace[nemotron-NemotronConfig]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gpu_memory::test_lower_valid_counter_matches_uuid_not_visible_ordinal[4-7-4]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gpu_memory::test_lower_valid_counter_matches_uuid_not_visible_ordinal[6-3-3]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gpu_memory::test_lower_valid_counter_matches_uuid_not_visible_ordinal[0-7-0]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gpu_memory::test_optional_nvml_failure_keeps_cuda_with_diagnostic",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gpu_memory::test_physical_budget_changes_residency_without_changing_kv_reserve",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_gpu_memory::test_separate_two_gib_allocation_reduces_physical_startup_budget",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_int4_matches_original_integer_matrix[cpu-awq]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_int4_matches_original_integer_matrix[cpu-gptq]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_int4_matches_original_integer_matrix[cuda-awq]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_int4_matches_original_integer_matrix[cuda-gptq]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_fp8_matches_transformers_reference_including_partial_blocks[cpu]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_fp8_matches_transformers_reference_including_partial_blocks[cuda]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_encoded_checkpoint_matches_native_model_through_ring[awq]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_encoded_checkpoint_matches_native_model_through_ring[gptq]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_hf_quantized_source::test_encoded_checkpoint_matches_native_model_through_ring[fp8]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_oversized_body_is_rejected_without_reading_it",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_bad_requests_get_clear_errors",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_context_budget_error_is_a_client_error_and_server_recovers",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_api_key_is_enforced_and_non_ascii_keys_do_not_crash",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_stop_endpoint_cancels_running_generation",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_new_request_preempts_old_one_and_never_overlaps",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_client_disconnect_is_detected_during_prefill",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_server_log_is_written",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lan_server_cancel::test_context_discovery_endpoints_and_sse_disconnect_log",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cpu-reserved]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cpu-dma]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cpu-compute]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cpu-released]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cuda-reserved]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cuda-dma]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cuda-compute]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_cancel_discards_abandoned_work_then_reuses_slot[cuda-released]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_lease_ack_reset::test_failed_backend_reset_does_not_clear_ownership",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_census.CensusCompletionTest::test_late_controller_poll_keeps_completed_reports",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_help_and_catalog_work_without_torch",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_catalog_numbers_and_names_resolve_same_folder",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_nested_download_marker_is_resolved_but_cannot_escape",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_hf_page_and_file_links_normalize[Qwen/Qwen3.5-0.8B-Qwen/Qwen3.5-0.8B-None-None]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_hf_page_and_file_links_normalize[https://huggingface.co/Qwen/Qwen3.5-0.8B-Qwen/Qwen3.5-0.8B-None-None]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_hf_page_and_file_links_normalize[https://huggingface.co/owner/model/tree/main-owner/model-None-main]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_hf_page_and_file_links_normalize[https://huggingface.co/owner/model/resolve/main/sub/model-Q4.gguf?download=true-owner/model-sub/model-Q4.gguf-main]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_hf_page_and_file_links_normalize[https://huggingface.co/owner/model/blob/rev/model.safetensors-owner/model-None-rev]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_hf_page_and_file_links_normalize[owner/model::model-Q6.gguf-owner/model-model-Q6.gguf-None]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_download_directory_ownership_and_external_catalog_registration",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_management::test_download_command_really_verifies_runtime_packing",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_hf_shards_map_to_canonical_names[True-True]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_hf_shards_map_to_canonical_names[False-False]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_layer_identity_changes_when_a_shard_changes",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_pread_reader_matches_safetensors",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_autodetect_skips_unsupported_models",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_capability_follows_geometry_and_qwen_stays_default",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_gguf_folder_is_detected_and_does_not_become_the_default",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_tiny_gguf_qwen35moe_source_and_sliced_experts_forward",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_hf_moe_per_expert_shards_route_on_demand",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_extended_gguf_dequantizers_and_nvrtc_exactness",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_gguf_zero_mmap_and_mid_layer_stream_cancel",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_bf16_session_prefix_reuse_on_gguf_and_olmoe",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_model_source::test_staging_pool_coalesce_tasks",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_nvrtc_deltanet_kernels_and_zero_fallback_warnings",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_model_source::test_ternary_tq1_tq2_and_q8_1_dequantizers",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_gpt2_hf_custom_safetensors_and_gguf_exact_logit_parity",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_mamba_hf_and_gguf_recurrent_cache_parity",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_vlm_gemma3_unwrapping_embed_scale_and_gguf_parity",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_variable_shape_gemma4_and_coexisting_falcon_h1_ring_streaming",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_hf_moe_all_layouts_and_routing_buffers_exact_parity",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_model_source::test_gguf_llama_rope_permute_split_shards_and_chat_fallback",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_prefill_wavefront::test_wave_matches_chunked_reference_cache_and_decode[bf16-0]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_prefill_wavefront::test_wave_matches_chunked_reference_cache_and_decode[q4-2]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_prefill_wavefront::test_wave_matches_chunked_reference_cache_and_decode[q6-0]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_prefill_wavefront::test_wave_matches_chunked_reference_cache_and_decode[q6-7]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_prefill_wavefront::test_cancel_mid_wave_recovers_without_busy_slots",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_prefill_wavefront::test_unified_wave_session_cancel_and_thought_anchor",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_prefill_map_is_retained_until_persistent_route_change",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_initial_map_contributes_beyond_breaking_recent_ties",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_three_banks_exact_weights_wrong_forecasts_and_reset[4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_three_banks_exact_weights_wrong_forecasts_and_reset[6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_optional_source_failure_does_not_publish_partial_bank",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_bank_reuse_waits_for_actual_cuda_reader",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_predictive_region_ring_logits_kv_and_cancel[4-granitemoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_predictive_region_ring_logits_kv_and_cancel[4-olmoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_predictive_region_ring_logits_kv_and_cancel[6-granitemoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_predictive_region_ring_logits_kv_and_cancel[6-olmoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_unified_cancel_and_session_reset_clear_pending_predictions",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_refinement_preserves_published_common_and_abandons_obsolete_inflight[4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_refinement_preserves_published_common_and_abandons_obsolete_inflight[6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_busy_three_bank_ring_keeps_latest_refinement_until_real_reader_finishes",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_failed_later_expert_keeps_completed_prefix_usable",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_three_independent_maps_do_not_supersede_each_other[4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_three_independent_maps_do_not_supersede_each_other[6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_chunked_prefill_including_one_token_tail_builds_one_initial_map",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_probability_warmup::test_map_can_be_prepared_later_without_rebuilding_unchanged_area",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_quantization_q4.TestQuantizationQ4::test_bitwise_unpack_no_lut_and_exact_nibbles",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_quantization_q4.TestQuantizationQ4::test_lazy_embed_lookup_equivalence",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_quantization_q4.TestQuantizationQ4::test_lazy_globals_map_chunked_read_equivalence",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_quantization_q4.TestQuantizationQ4::test_q4_layout_composition_no_lut_and_exact_stride",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_quantization_q4.TestQuantizationQ4::test_q4_real_layer_weight_cosine_f64",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_quantization_q4.TestQuantizationQ4::test_q4_tiled_linear_exactness_and_bounded_scratch",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_route_exclusion::test_exact_zero_routes_do_not_request_weights_and_next_scope_can_read_them[1]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_route_exclusion::test_exact_zero_routes_do_not_request_weights_and_next_scope_can_read_them[3]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_route_exclusion::test_rejected_route_rows_do_not_change_retained_map",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_route_exclusion::test_route_cut_stops_unread_optional_experts_but_preserves_next_scope",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_session_state::test_parked_continuation_matches_uninterrupted[mamba]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_session_state::test_parked_continuation_matches_uninterrupted[mamba2]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_session_state::test_parked_continuation_matches_uninterrupted[lfm2]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_session_state::test_parked_continuation_matches_uninterrupted[gemma2]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_session_state::test_probe_rollback_preserves_real_family_continuation[mamba]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_session_state::test_probe_rollback_preserves_real_family_continuation[mamba2]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_session_state::test_probe_rollback_preserves_real_family_continuation[lfm2]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_session_state::test_probe_rollback_preserves_real_family_continuation[gemma2]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_speculation_joint::test_verification_boundaries[budget]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_speculation_joint::test_verification_boundaries[eos]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_speculation_joint::test_verification_boundaries[cancel]",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_speculation_joint::test_verified_routes_anchor_dynamic_three_regions_match_plain[4-granitemoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_speculation_joint::test_verified_routes_anchor_dynamic_three_regions_match_plain[4-olmoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_speculation_joint::test_verified_routes_anchor_dynamic_three_regions_match_plain[6-granitemoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_speculation_joint::test_verified_routes_anchor_dynamic_three_regions_match_plain[6-olmoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_speculation_joint::test_speculative_cpu_work_continues_into_gpu_ring_without_prefix_replay",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_snapshot_and_restore_hybrid_cache",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_unknown_state_rejected_before_probe",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_conv_only_snapshot_and_no_false_reanchor_counter",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_blend_recurrent_anchor_preserves_s0_channel",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_syntactic_support_mask_prevents_ungrammatical_intrusion",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_entropy_gate_zero_on_deterministic_steps",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_mtp_speculative_rows_and_committed_reanchor",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_working_conclusion_can_change_without_erasing_original_probabilities",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_original_prior_cannot_override_explicit_input_revision",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_log_odds_bound_and_observed_tokyo_regression",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_default_anchor_preserves_recurrent_transition_state",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_ask_anchored_parses_stream_chat_events",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_original_channel_participates_even_when_working_field_is_empty",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_buffer::test_failed_mid_probe_restores_borrowed_cache_and_capture_metadata",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[False-4-granitemoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[False-4-olmoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[False-6-granitemoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[False-6-olmoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[True-4-granitemoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[True-4-olmoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[True-6-granitemoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[True-6-olmoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[dynamic-4-granitemoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[dynamic-4-olmoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[dynamic-6-granitemoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_anchor_probes_continuation_and_three_banks_match_anchor_only[dynamic-6-olmoe]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[False-4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[False-6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[True-4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[True-6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[dynamic-4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_public_thought_buffer_entrypoints_with_warmup[dynamic-6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_unified_cancel_mid_forward_and_restart[4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_thought_warmup::test_unified_cancel_mid_forward_and_restart[6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_unified_working_memory::test_one_allocation_and_direct_routed_parity[4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_unified_working_memory::test_one_allocation_and_direct_routed_parity[6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_unified_working_memory::test_budget_rejection_preserves_original_storage",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_unified_working_memory::test_unified_producer_reset_inflight_error_and_exact_fallback",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_unified_working_memory::test_retained_regions_need_no_io_and_producer_resumes_for_missing_weight",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_unified_working_memory::test_prefetch_cannot_reuse_a_live_reader_and_refinement_keeps_common",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_universal_quant::test_packing_is_independent_of_cpu_or_gpu_placement[4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_universal_quant::test_packing_is_independent_of_cpu_or_gpu_placement[6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[16-4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[16-6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[32-4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[32-6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[64-4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_universal_quant::test_dense_kernel_matches_independent_affine_reference[64-6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_universal_quant::test_routed_kernel_cache_eviction_prefill_and_math_guard[4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_universal_quant::test_routed_kernel_cache_eviction_prefill_and_math_guard[6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_universal_quant::test_unified_ring_experts_session_cancel_and_recovery[4]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_universal_quant::test_unified_ring_experts_session_cancel_and_recovery[6]",
+        "status": "skipped"
+      },
+      {
+        "test": "tests.test_vram_plan::test_lm_head_q4_size",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_vram_plan::test_8gb_card_keeps_everything_resident_with_a_reserve",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_vram_plan::test_turbo_uses_more_vram_than_normal",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_vram_plan::test_4gb_card_streams_through_equal_ring_slots",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_vram_plan::test_fixed_profiles_are_rejected",
+        "status": "passed"
+      },
+      {
+        "test": "tests.test_vram_plan::test_too_little_vram_is_a_clear_error",
+        "status": "passed"
+      }
+    ]
+  },
+  "cpu_retry_note": "The first CUDA-hidden run had one incomplete mocked-GPU fixture (unmocked UUID properties). The fixture was corrected and the full CPU suite rerun; production GPU probing was not weakened."
+}

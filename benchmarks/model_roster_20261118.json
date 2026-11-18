@@ -1,0 +1,364 @@
+{
+  "date": "2026-11-18",
+  "scope": "Active local checkpoints; DeepSeek and OLMoE were intentionally deleted by the user for disk space. Keep the large uncensored Qwen; do not redownload deleted checkpoints for this census.",
+  "excluded": [
+    "deepseek-v4-9b-colibri",
+    "OLMoE-1B-7B-0125-Instruct"
+  ],
+  "models": [
+    {
+      "model": "01_gguf_Llama-3.2-1B-Instruct-Q4_K_M",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "02_gguf_SmolLM3-3B-IQ3_XXS",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "03_gguf_Phi-4-mini-instruct-IQ3_XXS",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "04_gguf_granite-3.3-2b-instruct-Q4_K_M",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "05_gguf_gemma-3-1b-it-Q4_K_M",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "06_gguf_gemma-2-2b-it-Q4_K_M",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "07_gguf_OLMo-2-0425-1B-Q4_K_M",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "08_gguf_command-r7b-12-2024-IQ3_XS",
+      "short_cycle_completed": false,
+      "scenarios": {
+        "baseline": "bounded_stop",
+        "ring": "bounded_stop"
+      }
+    },
+    {
+      "model": "09_gguf_gemma-3n-E2B-it-Q2_K_L",
+      "short_cycle_completed": false,
+      "scenarios": {
+        "baseline": "failed"
+      }
+    },
+    {
+      "model": "10_gguf_MiniCPM3-4B-MLA-Q4_K_M",
+      "short_cycle_completed": false,
+      "scenarios": {
+        "baseline": "failed"
+      }
+    },
+    {
+      "model": "11_gguf_Nemotron-Mini-4B-IQ3_M",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "12_gguf_Qwen3.5-0.8B-Q4_K_M",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "13_gguf_Falcon-H1-0.5B-Q4_K_M",
+      "short_cycle_completed": false,
+      "scenarios": {
+        "baseline": "failed"
+      }
+    },
+    {
+      "model": "14_gguf_granite-4.0-tiny-hybrid-IQ3_XXS",
+      "short_cycle_completed": false,
+      "scenarios": {
+        "baseline": "failed"
+      }
+    },
+    {
+      "model": "15_gguf_LFM2-350M-Q4_K_M",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "16_gguf_Quant_SmolLM2-135M-Q2_K",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "17_gguf_Quant_Qwen2.5-0.5B-Q3_K_M",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "18_gguf_Quant_Qwen2.5-0.5B-Q4_0",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "19_gguf_Quant_Llama-3.2-1B-Q4_1",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "20_gguf_Quant_SmolLM2-135M-IQ4_XS",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "21_gguf_Quant_Llama-3.2-1B-IQ4_NL",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "22_gguf_Quant_Llama-3.2-1B-IQ2_XXS",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "23_gguf_Quant_Llama-3.2-1B-IQ1_S",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "24_gguf_BitNet-b1.58-2B-TQ2_0",
+      "short_cycle_completed": false,
+      "scenarios": {
+        "baseline": "failed"
+      }
+    },
+    {
+      "model": "25_gguf_BitNet-b1.58-2B-i2_s",
+      "short_cycle_completed": false,
+      "scenarios": {
+        "baseline": "failed"
+      }
+    },
+    {
+      "model": "26_hf_Qwen3-0.6B-FP8",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "27_hf_ERNIE-4.5-0.3B-PT",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "28_hf_granite-3.1-1b-a400m-MoE",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "29_hf_mamba-130m",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "30_hf_mamba2-370m",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "31_hf_Zamba2-1.2B-instruct-v2",
+      "short_cycle_completed": false,
+      "scenarios": {
+        "baseline": "failed"
+      }
+    },
+    {
+      "model": "32_hf_rwkv7-0.1B-g1",
+      "short_cycle_completed": false,
+      "scenarios": {
+        "baseline": "failed"
+      }
+    },
+    {
+      "model": "33_hf_recurrentgemma-2b-it-8bit",
+      "short_cycle_completed": false,
+      "scenarios": {
+        "baseline": "failed"
+      }
+    },
+    {
+      "model": "34_hf_xlstm-german-wikipedia",
+      "short_cycle_completed": false,
+      "scenarios": {
+        "baseline": "failed"
+      }
+    },
+    {
+      "model": "35_hf_RWKV4-169m-bin",
+      "short_cycle_completed": false,
+      "scenarios": {
+        "baseline": "failed"
+      }
+    },
+    {
+      "model": "36_hf_OpenELM-270M-Instruct",
+      "short_cycle_completed": false,
+      "scenarios": {
+        "baseline": "failed"
+      }
+    },
+    {
+      "model": "37_hf_gpt2-124m",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "38_hf_bloom-560m",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "39_hf_pythia-410m",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "40_hf_SmolVLM2-256M",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "41_hf_Qwen2-VL-2B-Instruct-AWQ",
+      "short_cycle_completed": false,
+      "scenarios": {
+        "baseline": "failed"
+      }
+    },
+    {
+      "model": "42_hf_Qwen2.5-0.5B-AWQ",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "43_hf_Qwen2.5-0.5B-GPTQ-Int4",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "passed",
+        "ring": "passed"
+      }
+    },
+    {
+      "model": "44_hf_internlm2_5-1_8b-chat",
+      "short_cycle_completed": false,
+      "scenarios": {
+        "baseline": "failed"
+      }
+    },
+    {
+      "model": "45_hf_gpt-oss-20b-MXFP4",
+      "short_cycle_completed": false,
+      "scenarios": {
+        "baseline": "failed"
+      }
+    },
+    {
+      "model": "Qwen3.6-35B-A3B-uncensored-heretic-APEX-Balanced",
+      "short_cycle_completed": true,
+      "scenarios": {
+        "baseline": "bounded_stop",
+        "compact": "passed",
+        "ring_compact": "passed"
+      }
+    }
+  ]
+}

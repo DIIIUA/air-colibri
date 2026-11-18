@@ -171,6 +171,7 @@ class ProbabilityWarmup:
         self.building_counts = {}
         self.submitted_versions = {}
         self._auxiliary_depth = 0
+        self._verification_depth = 0
         self.counters = dict(prefill_chunks=0, prefill_route_batches=0, route_checks=0,
                              map_submissions=0, stable_checks=0, actual_experts=0,
                              map_hits=0, extra_lm_head_calls=0, extra_attention_calls=0,
@@ -218,6 +219,20 @@ class ProbabilityWarmup:
             if not self.prefetch.closed:
                 self.cache.warmup = previous
 
+    @contextmanager
+    def verification_forwards(self):
+        # Keep the retained-map producer alive while tentative routes are held
+        # out of the task history. Actual misses can still use uncached weights.
+        self._verification_depth += 1
+        self.cache.auxiliary_depth += 1
+        self.cache.verification_depth += 1
+        try:
+            yield
+        finally:
+            self.cache.verification_depth -= 1
+            self.cache.auxiliary_depth -= 1
+            self._verification_depth -= 1
+
     def begin_step(self, tokens, past, *, prefill=None, prefill_end=True):
         self.prefetch._check()
         if self._auxiliary_depth:
@@ -246,13 +261,16 @@ class ProbabilityWarmup:
             if layer != self._next_target or version is None:
                 return
             request = next(iter(self.prefetch.requests.values()),None)
-            if request is not None and request['layer']==layer and request['region']==(layer,version):
+            if (request is not None and request['layer']==layer and request['region']==(layer,version)
+                    and request['ids'] == tuple(self.region_map.regions[layer][:self.capacity])):
                 return
             self.prefetch.submit(layer,self.region_map.regions[layer][:self.capacity],
                 region=(layer,version),lane=self.lanes[layer],depth=reason,step=self.step)
             self.counters['map_submissions'] += 1
             return
-        if version is None or self.submitted_versions.get(layer) == version:
+        request = self.prefetch.requests.get(self.lanes[layer])
+        complete_region = request is not None and request['ids'] == tuple(self.region_map.regions[layer][:self.capacity])
+        if version is None or (self.submitted_versions.get(layer) == version and complete_region):
             return
         self.prefetch.submit(layer, self.region_map.regions[layer], region=layer, lane=self.lanes[layer],
                              depth=reason, step=self.step)
@@ -300,12 +318,20 @@ class ProbabilityWarmup:
             engine.pipeline.tail_prefetches += 1
 
     def _observe(self, layer, module, args):
-        if self._auxiliary_depth or not self.enabled_step:
+        if self._auxiliary_depth or self._verification_depth or not self.enabled_step:
             return
         indices = args[1].detach()
+        # The dispatcher needs the same CPU routes. Share this bounded current
+        # chunk copy instead of a histogram kernel plus a second GPU->CPU sync.
+        observed = self.cache.observed_route_rows(layer, args[1])
+        rows = observed if observed is not None else indices.cpu().tolist()
+        self.cache._observed_routes = (layer,args[1],rows)
+        ids = [eid for row in rows for eid in row if 0 <= eid < self.num_experts[layer]]
         if self.is_prefill:
-            # Only a small histogram leaves the GPU, not a full prompt route trace.
-            counts = torch.bincount(indices.reshape(-1), minlength=self.num_experts[layer]).cpu().tolist()
+            counts = [0]*self.num_experts[layer]
+            for eid in ids:
+                if 0 <= eid < len(counts):
+                    counts[eid] += 1
             self.building_counts[layer] = [a+b for a, b in zip(self.building_counts[layer], counts)]
             self.counters["prefill_route_batches"] += 1
             if self.prefill_end:
@@ -316,7 +342,6 @@ class ProbabilityWarmup:
             return
         if layer not in self.lanes or layer not in self.region_map.regions:
             return
-        ids = indices.reshape(-1).cpu().tolist()
         self.counters["route_checks"] += 1
         self.counters["actual_experts"] += len(ids)
         self.counters["map_hits"] += sum(e in self.region_map.regions[layer] for e in ids)
@@ -335,6 +360,7 @@ class ProbabilityWarmup:
             self.building_counts.clear()
 
     def reset(self):
+        self.cache._observed_routes = None
         self.prefetch.reset()
         self.region_map = PrefillRegionMap(self.num_experts, self.capacity, **self.guard_options)
         self.collecting = self.enabled_step = False

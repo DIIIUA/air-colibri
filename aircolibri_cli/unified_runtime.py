@@ -30,32 +30,8 @@ from typing import Any, Callable, Iterator
 import torch
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-
-def find_aircolibri_root(explicit_root: str | Path | None = None) -> Path:
-    """Returns the project root (folder containing `src/aircolibri_integrated.py`)."""
-    candidates: list[Path] = []
-    if explicit_root:
-        candidates.append(Path(explicit_root))
-    env_root = os.environ.get("AIRCOLIBRI_ROOT")
-    if env_root:
-        candidates.append(Path(env_root))
-    candidates.append(PROJECT_ROOT)
-    for cand in candidates:
-        if (cand / "src" / "aircolibri_integrated.py").exists():
-            resolved = cand.resolve()
-            if str(resolved) not in sys.path:
-                sys.path.insert(0, str(resolved))
-            return resolved
-    raise FileNotFoundError(
-        "Could not locate the AirColibri project root (expected `src/aircolibri_integrated.py`). "
-        "Pass `--aircolibri-root <path>` or set `AIRCOLIBRI_ROOT`."
-    )
-
-
-def checkpoint_manifest_path(root: Path) -> Path:
-    return root / "data" / "trusted-checkpoint-manifest.json"
+from .runtime_config import (PROJECT_ROOT, VRAM_MODES, ContextBudgetExceeded, GenerationCancelled,
+                             find_aircolibri_root, checkpoint_manifest_path)
 
 
 DEFAULT_DRAFT_SEED_CORPUS = (
@@ -1142,6 +1118,10 @@ class ColibriKVPrefixSession:
         consumed_tokens: int | None = None,
     ) -> float:
         self.config = config
+        # Cache-only callers need no engine. Their GPU-to-CPU copies below are
+        # blocking, so only an actual CUDA executor needs allocator/sync work.
+        execution_device = torch.device(getattr(engine, "device", "cpu"))
+        using_cuda = execution_device.type == "cuda"
         self.chatml_think_format = bool(chatml_think_format)
         all_ids = list(all_ids_full)
         need_bridge = (mtp_head is not None) or (last_fed_h_post is not None) or ("post_norm" in captured)
@@ -1150,7 +1130,7 @@ class ColibriKVPrefixSession:
             self.reset()
             self.tainted = True
             gc.collect()
-            if torch.cuda.is_available():
+            if using_cuda:
                 torch.cuda.empty_cache()
             return 0.0
         # Pure recurrent caches have no KV sequence axis. Generation owns the
@@ -1163,7 +1143,7 @@ class ColibriKVPrefixSession:
             self.reset()
             self.tainted = True
             gc.collect()
-            if torch.cuda.is_available():
+            if using_cuda:
                 torch.cuda.empty_cache()
             return 0.0
         if need_bridge:
@@ -1185,7 +1165,7 @@ class ColibriKVPrefixSession:
             self.unfed_tail = all_ids[past_len:]
 
         ram_budget = _streaming_ram_budget_bytes()
-        allow_pin = ram_budget is None or ram_budget >= 512 * MiB
+        allow_pin = using_cuda and (ram_budget is None or ram_budget >= 512 * MiB)
         self._pending_bridge_h = _detach_park_cpu(last_h, allow_pin) if last_h is not None else None
 
         t0 = time.perf_counter()
@@ -1231,8 +1211,9 @@ class ColibriKVPrefixSession:
 
         del past_key_values
         gc.collect()
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
+        if using_cuda:
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize(execution_device)
         self.park_ms = (time.perf_counter() - t0) * 1000.0
         self.parked_bytes = total_bytes
         return self.park_ms
@@ -1294,7 +1275,8 @@ class ColibriKVPrefixSession:
                 mtp_head._forward_pairs(h_bridge, [first_new_token], start_pos=mtp_head.committed_len)
                 mtp_head.committed_len += 1
 
-        torch.cuda.synchronize()
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
         return past, (time.perf_counter() - t0) * 1000.0
 
 
@@ -1358,24 +1340,6 @@ class _IncrementalThinkSplitter:
 
 MiB = 1024 ** 2
 GiB = 1024 ** 3
-VRAM_MODES = ("normal", "turbo")
-
-
-class ContextBudgetExceeded(ValueError):
-    """Request exceeds the context capacity reserved by the current VRAM plan."""
-
-
-class GenerationCancelled(RuntimeError):
-    """Raised inside a generation when its cancel check fires (client gone, stop request, preemption)."""
-
-    _is_cooperative_cancel = True
-
-    def __init__(self, phase: str, reason: str = "cancelled"):
-        super().__init__(f"generation cancelled during {phase}: {reason}")
-        self.phase = phase
-        self.reason = reason
-
-
 def _align(value: int, alignment: int = 2 * MiB) -> int:
     return ((int(value) + alignment - 1) // alignment) * alignment
 
@@ -1622,6 +1586,8 @@ def plan_for_checkpoint(
     prefill_chunk_tokens: int | None = None,
     weight_format: str = "auto",
     prefill_wavefront: bool = False,
+    force_universal: bool = False,
+    projection_metadata: dict | None = None,
 ) -> tuple[dict[str, Any], VRAMPlan, bool]:
     """Plan from headers and meta modules, including the actual packed projections.
 
@@ -1637,7 +1603,7 @@ def plan_for_checkpoint(
     if weight_format not in ("auto", "bf16", "q4", "q6"):
         raise ValueError("weight_format must be auto, bf16, q4 or q6")
     profile = dict(profile)
-    fast = bool(profile["fast_qwen"]) and weight_format in ("auto", "q4")
+    fast = bool(profile["fast_qwen"]) and weight_format in ("auto", "q4") and not force_universal
     selected_format = ("q4" if fast else "q6") if weight_format == "auto" else weight_format
     profile.update(fast_qwen=fast, weight_format=selected_format,
                    backend="qwen35-q4" if fast else f"universal-{selected_format}")
@@ -1671,10 +1637,13 @@ def plan_for_checkpoint(
             from transformers import AutoModelForCausalLM
             from .model_source import load_runtime_config
             from src.quantized_projection import projection_map, packed_specs
-            with init_empty_weights():
-                probe_model = AutoModelForCausalLM.from_config(load_runtime_config(folder), dtype=torch.bfloat16)
-            quant_map = projection_map(probe_model, layers, int(selected_format[-1]))
-            del probe_model
+            if projection_metadata is not None:
+                quant_map = projection_metadata
+            else:
+                with init_empty_weights():
+                    probe_model = AutoModelForCausalLM.from_config(load_runtime_config(folder), dtype=torch.bfloat16)
+                quant_map = projection_map(probe_model, layers, int(selected_format[-1]))
+                del probe_model
         layer_bytes = []
         for idx, shapes in enumerate(layers):
             size = 0
@@ -1785,8 +1754,35 @@ class AirColibriUnifiedEngine:
         allow_download: bool = False,
         weight_format: str = "auto",
         prefill_wavefront: bool = False,
+        cpu_first: bool | None = None,
+        progressive_start: bool = True,
+        device: str = "auto",
+        speculation: str = "auto",
+        mtp_head_path: str | Path | None = None,
+        mtp_head_budget_mib: int = 128,
+        prune_regions: bool = True,
     ):
+        if device not in ("auto", "cpu"):
+            raise ValueError("device must be auto or cpu")
+        if speculation not in ("auto", "off", "lookup", "native") or mtp_head_budget_mib <= 0:
+            raise ValueError("Invalid speculation mode or native head budget")
+        if speculation == "auto" and not enable_mtp:
+            speculation = "off"
+        if speculation == "off":
+            enable_mtp = False
+        self.speculator = self._region_controller = None
         self.root = find_aircolibri_root(aircolibri_root)
+        # Historical spelling remains accepted by local experiments; it no
+        # longer means that GPU startup waits for CPU work.
+        if cpu_first is not None:
+            progressive_start = bool(cpu_first)
+        if progressive_start or device == "cpu":
+            self._init_progressive(model_dir, vram_mode, enable_mtp, enable_vocab_pruner,
+                                 max_drafts, verbose, max_context_tokens,
+                                 prefill_chunk_tokens, allow_download, weight_format,
+                                 prefill_wavefront, allow_gpu=device != "cpu")
+            self._configure_general_stream(speculation, mtp_head_path, mtp_head_budget_mib, prune_regions)
+            return
         from src.aircolibri_engine import PriorityRanker
         from src.aircolibri_integrated import AirColibriModel
         from src.catalog_bridge import ExistingCrossLayerCatalog
@@ -1816,7 +1812,9 @@ class AirColibriUnifiedEngine:
         self.model_source = open_model_source(self.model_dir)
         self.model_format = getattr(self.model_source, "kind", "hf") if self.model_source is not None else "colibri"
 
-        free_b, total_b = torch.cuda.mem_get_info(self.device)
+        from .gpu_memory import measure_gpu_memory
+        self.memory_probe = measure_gpu_memory(self.device)
+        free_b, total_b = self.memory_probe["free_bytes"], self.memory_probe["total_bytes"]
         self.total_vram_gib = round(total_b / GiB, 2)
         self.profile, self.plan, has_mtp = plan_for_checkpoint(
             self.model_dir,
@@ -1828,6 +1826,7 @@ class AirColibriUnifiedEngine:
             prefill_chunk_tokens=prefill_chunk_tokens,
             weight_format=weight_format,
             prefill_wavefront=prefill_wavefront,
+            force_universal=(mtp_head_path is not None or speculation in ("native", "lookup")),
         )
         self.fast_qwen = bool(self.profile["fast_qwen"])
         self.vram_mode = vram_mode
@@ -1994,6 +1993,112 @@ class AirColibriUnifiedEngine:
                 flush=True,
             )
 
+        if not self.fast_qwen:
+            self._configure_general_stream(speculation, mtp_head_path, mtp_head_budget_mib, prune_regions)
+
+    def _configure_general_stream(self, mode, head_path, head_budget_mib, prune_regions):
+        try:
+            if prune_regions:
+                from src.route_exclusion import RouteExclusion
+                self._region_controller = RouteExclusion(self.engine)
+                self.engine.route_exclusion = self._region_controller
+            if mode != "off" and self.max_drafts:
+                from src.general_speculation import GeneralSpeculation
+                self.speculator = GeneralSpeculation(self, mode, head_path, head_budget_mib*MiB)
+                self.mtp_enabled = self.speculator.native is not None
+        except BaseException:
+            self.close()
+            raise
+
+    def _init_progressive(self, model_dir, mode, enable_mtp, enable_vocab_pruner,
+                        max_drafts, verbose, max_context, prefill_chunk,
+                        allow_download, weight_format, prefill_wavefront, allow_gpu=True):
+        from .model_source import (PreadSafetensorsReader, open_model_source,
+                                   resolve_model_dir, runtime_profile, load_runtime_config)
+        from src.aircolibri_integrated import AirColibriModel
+        if mode not in VRAM_MODES:
+            raise ValueError(f"vram_mode must be one of {VRAM_MODES}")
+        if weight_format not in ("auto", "bf16", "q4", "q6"):
+            raise ValueError("Unsupported runtime weight format")
+        self.engine = self.pread_reader = self.model_source = self.native_policy = None
+        self.device = torch.device("cpu")
+        self.gpu_name = "preparing in parallel" if allow_gpu and torch.cuda.is_available() else "NONE"
+        self.total_vram_gib = 0.0
+        self.model_dir = resolve_model_dir(model_dir, self.root, allow_download=allow_download)
+        self.model_id = self.model_dir.name
+        self.model_source = open_model_source(self.model_dir)
+        self.model_format = getattr(self.model_source, "kind", "colibri")
+        self.profile = runtime_profile(self.model_dir)
+        fmt = ("q4" if self.profile["fast_qwen"] else "q6") if weight_format == "auto" else weight_format
+        self.profile = dict(self.profile, fast_qwen=False, backend="progressive-hf", weight_format=fmt)
+        config = load_runtime_config(self.model_dir)
+        layers = int(getattr(config, "num_hidden_layers", 0) or getattr(config, "n_layer", 0)
+                     or getattr(config, "n_layers", 0))
+        self.vram_mode = mode
+        self.prefill_chunk_tokens = int(prefill_chunk or 512)
+        context = int(max_context or 8192)
+        if context < 1 or self.prefill_chunk_tokens < 1:
+            raise ValueError("Context and prefill chunk must be positive")
+        self.plan = VRAMPlan(mode, 0, 0, 0, 0, layers, 0, 3, 0, False, False,
+                             self.prefill_chunk_tokens, context, 0)
+        self.fast_qwen = False
+        self.prefill_wavefront = bool(prefill_wavefront)
+        self._wavefront_windows = []
+        self.max_drafts = max(0, min(3, int(max_drafts)))
+        self.gk = self.snap_mgr = self.draft_vocab = self.mtp_head = None
+        self.captured = {}
+        self.mtp_enabled = False
+        self.mtp_vram_mib = 0.0
+        self.enable_vocab_pruner = False
+        self._requested_native_mtp = bool(enable_mtp)
+        self.has_native_dll = False
+        self.anchor_schedule = {"resident_layers": [], "streamed_layers": list(range(layers))}
+        self.pread_reader = PreadSafetensorsReader(max_handles=8)
+        self.session = ColibriKVPrefixSession()
+        self._session_messages = []
+        self.last_metrics = {}
+        self.generations_started = self.generations_cancelled = 0
+
+        def prepare_gpu_plan(initializing_engine):
+            if not torch.cuda.is_available():
+                raise RuntimeError("CUDA GPU is required for progressive GPU takeover")
+            gpu = torch.device("cuda:0")
+            from .gpu_memory import measure_gpu_memory
+            self.memory_probe = measure_gpu_memory(gpu)
+            free, total = self.memory_probe["free_bytes"], self.memory_probe["total_bytes"]
+            _, plan, _ = plan_for_checkpoint(
+                self.model_dir, mode=mode, total_bytes=total, free_bytes=free,
+                enable_mtp=False, max_context_tokens=context,
+                prefill_chunk_tokens=self.prefill_chunk_tokens, weight_format=fmt,
+                prefill_wavefront=prefill_wavefront, force_universal=True,
+                projection_metadata=initializing_engine.weight_manager.quantized_projections)
+            self.plan = plan
+            self.gpu_name = torch.cuda.get_device_name(gpu)
+            self.total_vram_gib = round(total / GiB, 2)
+            self.anchor_schedule = {"resident_layers": list(range(plan.resident_layers)),
+                                    "streamed_layers": list(range(plan.resident_layers, layers))}
+            return plan
+
+        boot = time.perf_counter()
+        try:
+            self.engine = AirColibriModel(
+                str(self.model_dir), device=torch.device("cpu"),
+                vram_resident_layers=0, max_ram_layers=2,
+                max_ram_bytes=_streaming_ram_budget_bytes(), cache_policy="lru", num_slots=3,
+                weight_format=fmt, universal_quantization=True,
+                use_fused_q4_gemv=False, model_source=self.model_source,
+                weight_reader=self.pread_reader, cpu_first_plan=prepare_gpu_plan,
+                expert_cache_bytes=64*MiB, progressive_gpu=allow_gpu)
+        except BaseException:
+            self.close()
+            raise
+        self.boot_seconds = round(time.perf_counter() - boot, 2)
+        metric_device = self._gpu_metric_device()
+        self.resident_vram_mib = round(torch.cuda.memory_allocated(metric_device)/MiB, 2) if metric_device is not None else 0.0
+        if verbose:
+            policy = "Common CPU/GPU start" if self.engine.progressive.gpu_enabled else "CPU streaming"
+            print(f"[AirColibri] {policy} | {self.model_id} ({fmt}); work follows device readiness", flush=True)
+
     @property
     def tokenizer(self):
         return self.engine.tokenizer
@@ -2006,16 +2111,36 @@ class AirColibriUnifiedEngine:
 
     # ------------------------------------------------------------------ state management
 
+    def _gpu_metric_device(self):
+        if self.engine.device.type == "cuda":
+            return self.engine.device
+        progressive = getattr(self.engine, "progressive", None)
+        return (progressive.gpu if progressive is not None and progressive.gpu_enabled and progressive.error is None
+                and progressive.plan is not None else None)
+
+    def _sync_compute(self):
+        self.device = self.engine.device
+        if self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+
+    def _reset_compute_peaks(self):
+        self.device = self.engine.device
+        if self.device.type == "cuda":
+            torch.cuda.reset_peak_memory_stats(self.device)
+
     def _release_transient_state(self) -> None:
         """Drops per-generation tensors (MTP cache, captured hidden states, snapshots) and returns VRAM."""
         if self.mtp_head is not None:
             self.mtp_head.reset_cache()
+        if self.speculator is not None:
+            self.speculator.reset()
         if self.snap_mgr is not None:
             self.snap_mgr.active_capture = False
         if self.captured:
             self.captured.pop("post_norm", None)
         gc.collect()
-        torch.cuda.empty_cache()
+        if self.engine is not None and self.engine.device.type == "cuda":
+            torch.cuda.empty_cache()
 
     def _abort_cleanup(self) -> None:
         """Restores a clean engine after a cancelled or failed generation (no VRAM or busy ring slot may stay behind)."""
@@ -2052,19 +2177,23 @@ class AirColibriUnifiedEngine:
         self._release_transient_state()
 
     def status_snapshot(self) -> dict[str, Any]:
-        alloc_mib = round(torch.cuda.memory_allocated(self.device) / MiB, 2)
+        self.device = self.engine.device
+        metric_device = self._gpu_metric_device()
+        alloc_mib = round(torch.cuda.memory_allocated(metric_device) / MiB, 2) if metric_device is not None else 0.0
         snap = {
             "model_id": self.model_id,
             "model_dir": str(self.model_dir),
             "model_format": self.model_format,
             "backend": self.profile.get("backend"),
             "weight_format": self.profile.get("weight_format"),
+            "execution_device": str(self.device),
             "fast_qwen": self.fast_qwen,
             "gpu_name": self.gpu_name,
             "total_vram_gib": self.total_vram_gib,
             "vram_mode": self.vram_mode,
             "vram_plan": self.plan.as_dict(),
             "allocated_vram_mib": alloc_mib,
+            "startup_memory_probe": getattr(self, "memory_probe", None),
             "mtp_enabled": self.mtp_enabled,
             "mtp_vram_mib": self.mtp_vram_mib,
             "vocab_pruner_enabled": self.enable_vocab_pruner,
@@ -2078,6 +2207,15 @@ class AirColibriUnifiedEngine:
         ec = self.expert_cache_stats()
         if ec is not None:
             snap["expert_cache"] = ec
+        progressive = getattr(self.engine, "progressive", None)
+        if progressive is not None:
+            snap["progressive_execution"] = progressive.stats()
+            snap["mtp_status"] = ("native head on CPU; shared streamed verification" if self.mtp_enabled
+                                  else "prompt lookup" if self.speculator is not None else "disabled")
+        if self.speculator is not None:
+            snap["speculation"] = self.speculator.stats()
+        if self._region_controller is not None:
+            snap["route_exclusion"] = self._region_controller.stats()
         from src.quantized_projection import projection_stats
         snap["packed_projections"] = projection_stats(self.engine.model)
         projection_io = getattr(self.model_source, "projection_io_stats", None)
@@ -2274,15 +2412,15 @@ class AirColibriUnifiedEngine:
             self.engine._step_cancel_check = lambda: check(phase_ref[0])
         try:
             with torch.no_grad():
-                torch.cuda.reset_peak_memory_stats(self.device)
-                torch.cuda.synchronize()
+                self._reset_compute_peaks()
+                self._sync_compute()
                 t_pre0 = time.perf_counter()
                 for a in range(start, n, stride):
                     check("prefill")
                     b = min(n, a + stride)
                     step = torch.tensor([prompt_ids[a:b]], dtype=torch.long)
                     cache_pos = torch.arange(a, b, dtype=torch.long)
-                    if self.prefill_wavefront and b - a > chunk:
+                    if self.prefill_wavefront and b - a > chunk and self.engine.device.type == "cuda":
                         logits, past = self.engine.prefill_wavefront(step, chunk, past)
                         self._wavefront_windows.append(dict(self.engine.last_wavefront_stats))
                     else:
@@ -2300,7 +2438,7 @@ class AirColibriUnifiedEngine:
                         picked = int(logits[0].argmax().item())
                     del logits
                 all_ids.append(picked)
-                torch.cuda.synchronize()
+                self._sync_compute()
                 prefill_ms = (time.perf_counter() - t_pre0) * 1000.0
                 yield {"kind": "tokens", "new_ids": [picked]}
 
@@ -2308,7 +2446,7 @@ class AirColibriUnifiedEngine:
                 passes = 0
                 cursor = n
                 phase_ref[0] = "decode"
-                torch.cuda.synchronize()
+                self._sync_compute()
                 t_dec0 = time.perf_counter()
                 while generated < max_new_tokens:
                     if stop_on_eos and picked in eos_ids:
@@ -2332,7 +2470,7 @@ class AirColibriUnifiedEngine:
                     generated += 1
                     passes += 1
                     yield {"kind": "tokens", "new_ids": [picked]}
-                torch.cuda.synchronize()
+                self._sync_compute()
                 dec_s = time.perf_counter() - t_dec0
         finally:
             self.engine._step_cancel_check = None
@@ -2360,6 +2498,10 @@ class AirColibriUnifiedEngine:
         cancel_check: Callable[[], bool] | None = None,
     ) -> Iterator[dict[str, Any]]:
         if not self.fast_qwen:
+            if self.speculator is not None:
+                yield from self.speculator.stream(prompt_ids, max_new_tokens, stop_on_eos,
+                    cached_prefix_len, past_kv, cancel_check)
+                return
             yield from self._stream_bf16(
                 prompt_ids,
                 max_new_tokens=max_new_tokens,
@@ -2378,20 +2520,20 @@ class AirColibriUnifiedEngine:
 
         if not self.mtp_enabled or self.mtp_head is None or self.draft_vocab is None:
             with torch.no_grad():
-                torch.cuda.reset_peak_memory_stats(self.device)
-                torch.cuda.synchronize()
+                self._reset_compute_peaks()
+                self._sync_compute()
                 t_pre0 = time.perf_counter()
                 picked, past, last_fed_h, _ = self._prefill(
                     tail_ids, past_kv, use_mtp=False, check=check, prefetch_next=max_new_tokens > 1
                 )
                 all_ids.append(picked)
-                torch.cuda.synchronize()
+                self._sync_compute()
                 prefill_ms = (time.perf_counter() - t_pre0) * 1000.0
                 yield {"kind": "tokens", "new_ids": [picked]}
 
                 generated_count = 1
                 passes = 0
-                torch.cuda.synchronize()
+                self._sync_compute()
                 t_dec0 = time.perf_counter()
                 while generated_count < max_new_tokens:
                     if stop_on_eos and picked == eos_id:
@@ -2414,7 +2556,7 @@ class AirColibriUnifiedEngine:
                     generated_count += 1
                     passes += 1
                     yield {"kind": "tokens", "new_ids": [picked]}
-                torch.cuda.synchronize()
+                self._sync_compute()
                 dec_s = time.perf_counter() - t_dec0
 
             yield {
@@ -2437,8 +2579,8 @@ class AirColibriUnifiedEngine:
             self.mtp_head.reset_cache()
 
         with torch.no_grad():
-            torch.cuda.reset_peak_memory_stats(self.device)
-            torch.cuda.synchronize()
+            self._reset_compute_peaks()
+            self._sync_compute()
             t_pre0 = time.perf_counter()
             picked, past, last_fed_h_post, mtp_draft = self._prefill(
                 tail_ids, past_kv, use_mtp=True, check=check, prefetch_next=True
@@ -2446,13 +2588,13 @@ class AirColibriUnifiedEngine:
             d1, p1, last_mtp_norm = mtp_draft
             all_ids.append(picked)
             self.draft_vocab.observe_picked_token(picked)
-            torch.cuda.synchronize()
+            self._sync_compute()
             prefill_ms = (time.perf_counter() - t_pre0) * 1000.0
             yield {"kind": "tokens", "new_ids": [picked]}
 
             generated_count = 1
             backbone_passes = 0
-            torch.cuda.synchronize()
+            self._sync_compute()
             t_dec0 = time.perf_counter()
 
             while generated_count < max_new_tokens:
@@ -2559,7 +2701,7 @@ class AirColibriUnifiedEngine:
                     self.mtp_head.commit_and_draft_first(h_post_b[:, : accepted + 1, :].clone(), mtp_tokens)
                 del h_post_b
 
-            torch.cuda.synchronize()
+            self._sync_compute()
             dec_s = time.perf_counter() - t_dec0
 
         yield {
@@ -2670,7 +2812,8 @@ class AirColibriUnifiedEngine:
                     answer_acc.append(chunk)
                 yield {"type": "delta", "phase": phase, "text": chunk}
 
-            peak_vram_mib = round(torch.cuda.max_memory_allocated(self.device) / MiB, 2)
+            metric_device = self._gpu_metric_device()
+            peak_vram_mib = round(torch.cuda.max_memory_allocated(metric_device) / MiB, 2) if metric_device is not None else 0.0
             dec_tokens = int(final_info.get("decode_tokens", 0))
             dec_s = float(final_info.get("decode_s", 0.0))
             tok_per_s = round(dec_tokens / max(1e-6, dec_s), 2) if dec_tokens > 0 else 0.0
@@ -2701,7 +2844,8 @@ class AirColibriUnifiedEngine:
                 self._release_transient_state()
             else:
                 gc.collect()
-                torch.cuda.empty_cache()
+                if self.engine.device.type == "cuda":
+                    torch.cuda.empty_cache()
 
             stopped_by_eos = bool(raw_gen_ids and raw_gen_ids[-1] in eos_ids)
             metrics = {
@@ -2721,6 +2865,9 @@ class AirColibriUnifiedEngine:
                 "parked_session_ram_mib": round(self.session.parked_bytes / MiB, 2),
                 "spec_gate": final_info.get("spec_gate", {}),
             }
+            progressive = getattr(self.engine, "progressive", None)
+            if progressive is not None:
+                metrics["progressive_execution"] = progressive.stats()
             ec = self.expert_cache_stats()
             if ec is not None:
                 metrics["expert_cache"] = ec
@@ -2756,6 +2903,12 @@ class AirColibriUnifiedEngine:
         self._neutral_logprob_cache = None
         if getattr(self, "session", None) is not None:
             self.reset_session()
+        if getattr(self, "speculator", None) is not None:
+            self.speculator.close()
+            self.speculator = None
+        if getattr(self, "_region_controller", None) is not None:
+            self._region_controller.close()
+            self._region_controller = None
         if self.pread_reader is not None:
             try:
                 self.pread_reader.close()
@@ -2775,7 +2928,7 @@ class AirColibriUnifiedEngine:
                 pass
             self.model_source = None
         gc.collect()
-        if torch.cuda.is_available():
+        if torch.cuda.is_initialized():
             torch.cuda.empty_cache()
 
     def __enter__(self) -> "AirColibriUnifiedEngine":

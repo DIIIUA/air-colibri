@@ -158,7 +158,7 @@ def test_unified_ring_experts_session_cancel_and_recovery(tmp_path, monkeypatch,
         return profile, replace(plan, full_residency=False, resident_layers=1, ring_slots=3), mtp
 
     monkeypatch.setattr(runtime, "plan_for_checkpoint", force_ring)
-    with runtime.AirColibriUnifiedEngine(model_dir=folder, weight_format=f"q{bits}", verbose=False,
+    with runtime.AirColibriUnifiedEngine(cpu_first=False, model_dir=folder, weight_format=f"q{bits}", verbose=False,
                                         max_context_tokens=256, prefill_chunk_tokens=16) as engine:
         assert engine.engine.num_slots == 3
         assert engine.engine.tail_to_head_prefetch

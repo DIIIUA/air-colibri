@@ -136,7 +136,7 @@ def test_public_thought_buffer_entrypoints_with_warmup(tmp_path,monkeypatch,bits
         checked.append(anchor)
         return out
     monkeypatch.setattr(InitialProbabilityAnchor,'on_prefill_end',observe)
-    with runtime.AirColibriUnifiedEngine(model_dir=tmp_path,weight_format=f'q{bits}',enable_mtp=False,
+    with runtime.AirColibriUnifiedEngine(cpu_first=False, model_dir=tmp_path,weight_format=f'q{bits}',enable_mtp=False,
                                         verbose=False,max_context_tokens=2048,prefill_chunk_tokens=32) as u:
         warm=u.engine.enable_probability_warmup(region_experts=4,gpu_budget_bytes=2**20,
             unified_memory=bool(unified),dynamic_regions=unified=='dynamic')
@@ -146,9 +146,12 @@ def test_public_thought_buffer_entrypoints_with_warmup(tmp_path,monkeypatch,bits
         assert result['metrics']['generated_tokens']>0
         result=buffer.ask_wave_buffered([{'role':'user','content':'Remember number 7.'}],
                                        buffer_tokens=4,answer_tokens=6,min_buffer_alignment=100)
-        assert result['retried_drifted_wave']
+        assert not result['retried_drifted_wave']
+        assert not result['buffer_verified'] and result['alignment_is_diagnostic_only']
         assert result['synth_telemetry']['initial_rows_active']>0
         assert result['initial_phi0_sha256']==result['wave1_initial_phi0_sha256']==result['synth_initial_phi0_sha256']
+        assert result['initial_probability_sha256'] is not None
+        assert result['initial_probability_sha256']==result['wave1_initial_probability_sha256']==result['synth_initial_probability_sha256']
         assert len(checked)>=3 and all(a.phi0 is not None for a in checked)
         assert all(n>0 for n in warm.prefetch.stats()['bank_consumptions'])
         assert warm._auxiliary_depth==0 and u._active_thought_anchor is None

@@ -1,0 +1,63 @@
+{
+  "passed": true,
+  "source_files_unchanged": true,
+  "head_tensor_hashes_match": true,
+  "tests": {
+    "spec_target_3": {
+      "tests": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 12
+    },
+    "spec_final_3": {
+      "tests": 244,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 10,
+      "passed": 234
+    }
+  },
+  "models": {
+    "qwen": {
+      "passed": true,
+      "tokens_match": true,
+      "generated_tokens": 12,
+      "plain_passes": 10,
+      "speculative_passes": 6,
+      "proposed": 9,
+      "accepted": 4,
+      "weights_size_mtime_unchanged": true,
+      "cache_budget_respected": true
+    },
+    "granite": {
+      "passed": true,
+      "tokens_match": true,
+      "generated_tokens": 12,
+      "plain_passes": 10,
+      "speculative_passes": 5,
+      "proposed": 7,
+      "accepted": 5,
+      "weights_size_mtime_unchanged": true,
+      "cache_budget_respected": true,
+      "expert_slots": 95,
+      "total_experts": 768,
+      "expert_arena_below_whole_model": true,
+      "all_areas_read": true,
+      "arena_budget_respected": true,
+      "standby_empty": true,
+      "all_areas_consumed_prepared_weights": true,
+      "standby_used_bytes": 0,
+      "standby_reserved_bytes": 0,
+      "original_probability_preserved": true,
+      "initial_map_preserved": true
+    }
+  },
+  "limits": [
+    "Short execution checks; no semantic quality or universal speedup certificate",
+    "Native adapter Qwen3.5 text; shared dynamic MoE arena HF Granite/OLMoE",
+    "Exactly zero routed contributions; no arbitrary dense probability pruning",
+    "No 90-350GB checkpoint tested; whole operator limits remain"
+  ],
+  "scope": "Development integration before the final 1.2.0 census; exact Qwen native/Granite lookup parity and bounded memory, not semantic quality or universal speed."
+}

@@ -205,7 +205,7 @@ def test_unified_cancel_and_session_reset_clear_pending_predictions(tmp_path,mon
         profile,plan,mtp=original(*args,**kwargs)
         return profile,replace(plan,full_residency=False,resident_layers=1,ring_slots=3),mtp
     monkeypatch.setattr(runtime,'plan_for_checkpoint',ring)
-    with runtime.AirColibriUnifiedEngine(model_dir=tmp_path,weight_format='q6',enable_mtp=False,
+    with runtime.AirColibriUnifiedEngine(cpu_first=False, model_dir=tmp_path,weight_format='q6',enable_mtp=False,
                                         verbose=False,max_context_tokens=128,prefill_chunk_tokens=8) as engine:
         warm=engine.engine.enable_probability_warmup(region_experts=4,gpu_budget_bytes=2**20)
         engine.engine._forward_step(torch.tensor([[1,2,3]]))

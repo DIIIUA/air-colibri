@@ -106,6 +106,18 @@ class ThreeBankExpertPrefetch:
             self.cv.notify_all()
             return self.serial
 
+    def restrict_to_route(self, layer, allowed, step):
+        """Cancel obsolete optional reads for this exact work scope, not future tokens."""
+        with self.cv:
+            for lane, request in list(self.requests.items()):
+                if request['layer'] != layer or request.get('step') != step:
+                    continue
+                kept = tuple(e for e in request['ids'] if e in allowed)
+                if kept == request['ids']:
+                    continue
+                self.counters['route_pruned_ids'] = self.counters.get('route_pruned_ids', 0)+len(request['ids'])-len(kept)
+                self.submit(layer, kept, region=request['region'], depth=request.get('depth'), lane=lane, step=step)
+
     def finish_step(self, region):
         event = torch.cuda.Event(enable_timing=True)
         event.record(torch.cuda.current_stream(self.device))

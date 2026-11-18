@@ -1,19 +1,11 @@
-"""Experimental Thought Buffer & Initial-Probability Anchor (`ColibriThoughtBuffer`).
+"""Retained initial probabilities, bounded lexical steering and reversible probes.
 
-Retains a task-derived probability field and state across generation. The
-mechanisms below do not by themselves establish improved reasoning quality:
-1. **Initial Semantic Probability Field (`Phi_0`)**: Captures the contrastive log-probability
-   field `log P(w | Task) - log P(w | Neutral)` across start-of-thought and mid-clause probes
-   at `t = 0` so syntactic starter tokens cancel out (`~0`) while task-grounded concepts,
-   constraints, entities, and deductions retain positive probability weight throughout decode.
-2. **Entropy-Gated Participation on Syntactic Support**: At step `t`, `Phi_buf` participates
-   only inside the grammatically valid candidate set `z_t >= max(z_t) - syntax_margin` and
-   scales with current step entropy `H(P_t)` — leaving deterministic syntax/math untouched
-   while steering uncertain semantic forks back toward the initial meaning.
-3. **Un-corrupted Layer State Snapshot (`KV_0, Conv_0, Rec_0`) & Non-Decaying `S_0` Anchor**:
-   Snapshots Full-Attention KV lengths (`0 MiB` copy via `crop`) and GatedDeltaNet recurrent
-   matrices (`S_0`), keeping an un-erased `S_0` readout channel alive (`S_t <- (1 - lam) S_t + lam S_0`)
-   and enabling millisecond rollback of noisy intermediate reasoning waves (`ThoughtWaveRunner`).
+The complete initial log-probability distribution is immutable. A separate
+contrastive Phi0 prior participates in an entropy-gated, bounded log-odds update;
+the current input can supersede contradicted prior entries without deleting them.
+This is not a semantic verifier. Derived notes remain unverified, and full cache
+snapshots protect task state from auxiliary probes. Direct recurrent-state mixing
+is an explicit research option, disabled by default because it changes the model.
 """
 from __future__ import annotations
 
@@ -41,10 +33,12 @@ def _auxiliary_forwards(u_eng: Any):
     metadata = {key: getattr(u_eng, key, missing) for key in fields}
     prefetch = getattr(engine, "_prefetch_next_step", missing)
     captured = getattr(u_eng, "captured", None)
+    progressive = getattr(engine, "progressive", None)
     saved = dict(captured) if captured is not None else None
     try:
-        with warmup.auxiliary_forwards() if warmup is not None else nullcontext():
-            yield
+        with progressive.auxiliary_forwards() if progressive is not None else nullcontext():
+            with warmup.auxiliary_forwards() if warmup is not None else nullcontext():
+                yield
     finally:
         if saved is not None:
             captured.clear()
@@ -142,7 +136,8 @@ def blend_recurrent_anchor(past_key_values: Any, snap: CacheStateSnapshot, lam: 
     w = float(min(max(lam, 0.0), 1.0))
     for l_idx, r0 in snap.rec_states.items():
         l_cache = past_key_values.layers[l_idx]
-        l_cache.recurrent_states[0].lerp_(r0, w)
+        current = l_cache.recurrent_states[0]
+        current.lerp_(r0.to(device=current.device, dtype=current.dtype), w)
 
 
 def _control_token_ids(tokenizer: Any) -> list[int]:
@@ -168,7 +163,7 @@ def _control_token_ids(tokenizer: Any) -> list[int]:
 
 @dataclass
 class AnchorStepTelemetry:
-    """Diagnostic counters proving initial-probability participation and drift prevention."""
+    """Diagnostic counters for initial-prior participation; no quality certification."""
 
     total_rows_scored: int = 0
     fork_rows_gated: int = 0
@@ -183,19 +178,25 @@ class AnchorStepTelemetry:
 
     def summary(self) -> dict[str, Any]:
         n = max(1, self.total_rows_scored)
-        e_early = sum(self.phi0_chosen_early) / max(1, len(self.phi0_chosen_early))
-        e_late = sum(self.phi0_chosen_late) / max(1, len(self.phi0_chosen_late))
+        # Accumulate on the device during decode; one transfer when reporting.
+        device = self.entropy_sum.device if isinstance(self.entropy_sum, torch.Tensor) else 'cpu'
+        scalar = lambda value: torch.as_tensor(value, device=device, dtype=torch.float32)
+        average = lambda values: torch.stack([scalar(v) for v in values]).mean() if values else scalar(0)
+        values = torch.stack([scalar(self.fork_rows_gated), scalar(self.argmax_corrections),
+            scalar(self.entropy_sum)/n, scalar(self.initial_rows_active), scalar(self.initial_logit_l1),
+            average(self.phi0_chosen_early), average(self.phi0_chosen_late)]).detach().cpu().tolist()
         return {
             "total_rows_scored": self.total_rows_scored,
-            "fork_rows_gated": self.fork_rows_gated,
-            "argmax_corrections": self.argmax_corrections,
+            "fork_rows_gated": int(values[0]),
+            "argmax_corrections": int(values[1]),
+            "argmax_changes": int(values[1]),
             "recurrent_reanchors": self.recurrent_reanchors,
             "snapshot_setup_ms": round(self.snapshot_setup_ms, 2),
-            "mean_step_entropy": round(self.entropy_sum / n, 4),
-            "initial_rows_active": self.initial_rows_active,
-            "initial_logit_l1": round(self.initial_logit_l1, 6),
-            "mean_phi0_early": round(e_early, 4),
-            "mean_phi0_late": round(e_late, 4),
+            "mean_step_entropy": round(values[2], 4),
+            "initial_rows_active": int(values[3]),
+            "initial_logit_l1": round(values[4], 6),
+            "mean_phi0_early": round(values[5], 4),
+            "mean_phi0_late": round(values[6], 4),
         }
 
 
@@ -209,12 +210,13 @@ class InitialProbabilityAnchor:
         syntax_margin: float = 5.5,
         entropy_low: float = 0.25,
         entropy_high: float = 1.85,
-        rec_anchor_lambda: float = 0.06,
+        rec_anchor_lambda: float = 0.0,
         rec_reanchor_every: int = 16,
         phi_clip_neg: float = -2.0,
         phi_clip_pos: float = 4.0,
         use_mid_clause_probe: bool = True,
         initial_weight: float = 0.75,
+        max_log_odds_shift: float = 0.125,
     ):
         self.alpha = float(alpha)
         self.syntax_margin = float(syntax_margin)
@@ -228,10 +230,16 @@ class InitialProbabilityAnchor:
         if not 0.0 < initial_weight <= 1.0:
             raise ValueError("initial_weight must retain a nonzero initial channel")
         self.initial_weight = float(initial_weight)
+        if not 0.0 < max_log_odds_shift < float('inf'):
+            raise ValueError('max_log_odds_shift must be finite and positive')
+        self.max_log_odds_shift = float(max_log_odds_shift)
 
         self.snap0: CacheStateSnapshot | None = None
         self.phi0: torch.Tensor | None = None
         self.phi_buf: torch.Tensor | None = None
+        self.initial_log_probs: torch.Tensor | None = None
+        self.input_field: torch.Tensor | None = None
+        self.input_revision_enabled = True
         self.telemetry = AnchorStepTelemetry()
         self._steps_since_reanchor = 0
 
@@ -240,6 +248,21 @@ class InitialProbabilityAnchor:
             return None
         data = self.phi0.detach().contiguous().view(torch.uint8).cpu().numpy().tobytes()
         return hashlib.sha256(data).hexdigest()
+
+    def initial_probability_fingerprint(self) -> str | None:
+        if self.initial_log_probs is None:
+            return None
+        data = self.initial_log_probs.detach().contiguous().view(torch.uint8).cpu().numpy().tobytes()
+        return hashlib.sha256(data).hexdigest()
+
+    def revise_input(self, field: torch.Tensor) -> None:
+        """A new input may contradict the old prior; preserve Phi0 as evidence.
+
+        This distribution-level conflict gate is not a semantic truth detector.
+        Derived draft conclusions do not invoke it.
+        """
+        self.input_field = field.detach().float().clone()
+        self.phi_buf = self.input_field.clamp(self.phi_clip_neg, self.phi_clip_pos).clone()
 
     @staticmethod
     def _ensure_neutral_baseline(u_eng: Any) -> tuple[torch.Tensor, torch.Tensor, list[int]]:
@@ -313,6 +336,8 @@ class InitialProbabilityAnchor:
 
         z0 = logits_last[0, -1].float() if logits_last.ndim == 3 else logits_last[0].float()
         lp_t0 = torch.log_softmax(z0, dim=-1)
+        if self.initial_log_probs is None:
+            self.initial_log_probs = lp_t0.detach().clone()
         pmi = lp_t0 - lp_n0.to(device=z0.device, dtype=torch.float32)
 
         if self.use_mid_clause_probe and past_key_values is not None and hasattr(past_key_values, "layers"):
@@ -347,7 +372,7 @@ class InitialProbabilityAnchor:
             if valid_ctrl:
                 pmi[torch.tensor(valid_ctrl, device=pmi.device, dtype=torch.long)] = 0.0
 
-        pmi = pmi.clamp(self.phi_clip_neg, self.phi_clip_pos).to(torch.bfloat16)
+        pmi = pmi.clamp(self.phi_clip_neg, self.phi_clip_pos)
         if self.snap0 is None:
             self.snap0 = probe_snapshot
         if self.phi0 is None:
@@ -357,7 +382,10 @@ class InitialProbabilityAnchor:
             self.phi0 = self.phi0.to(device=pmi.device)
             if self.phi_buf is not None:
                 self.phi_buf = self.phi_buf.to(device=pmi.device)
-            self._merge_working_field(pmi, weight=0.35)
+            if self.input_revision_enabled:
+                self.revise_input(pmi)
+            else:
+                self._merge_working_field(pmi, weight=0.35)
         self._steps_since_reanchor = 0
         if torch.cuda.is_available() and z0.is_cuda:
             torch.cuda.synchronize(z0.device)
@@ -365,7 +393,7 @@ class InitialProbabilityAnchor:
         return self.transform_logits(logits_last, past_key_values, step_index=0)
 
     def layer_conclusion_into_buffer(self, step_logits_last: torch.Tensor, lp_neutral: torch.Tensor, weight: float = 0.35) -> None:
-        """Layers a verified semantic boundary distribution onto `Phi_buf` without erasing `Phi_0`."""
+        """Update the working prior from a derived distribution, preserving Phi0."""
         if self.phi0 is None:
             return
         z = step_logits_last[0, -1].float() if step_logits_last.ndim == 3 else step_logits_last[0].float()
@@ -375,21 +403,37 @@ class InitialProbabilityAnchor:
         self._merge_working_field(pmi_step, weight)
 
     def _merge_working_field(self, field: torch.Tensor, weight: float) -> None:
+        self._move_to_device(field.device)
         base = self.phi_buf.float() if self.phi_buf is not None else self.phi0.float()
-        combined = (base + float(weight) * field.float()).clamp(self.phi_clip_neg, self.phi_clip_pos)
-        # Never allow `Phi_0` positive support to be erased by intermediate drift
-        combined = torch.where(self.phi0.float() > 0.5, torch.maximum(combined, 0.75 * self.phi0.float()), combined)
-        self.phi_buf = combined.to(torch.bfloat16)
+        if not 0.0 <= weight <= 1.0:
+            raise ValueError('Working-field update weight must be between zero and one')
+        self.phi_buf = ((1.0-weight)*base + weight*field.float()).clamp(self.phi_clip_neg, self.phi_clip_pos)
+
+    def _move_to_device(self, device) -> None:
+        """Follow a progressive device handoff without regenerating original evidence."""
+        for name in ("phi0", "phi_buf", "initial_log_probs", "input_field"):
+            value = getattr(self, name)
+            if value is not None and value.device != device:
+                setattr(self, name, value.to(device))
+        for name, value in vars(self.telemetry).items():
+            if isinstance(value, torch.Tensor):
+                setattr(self.telemetry, name, value.to(device))
+            elif isinstance(value, list):
+                value[:] = [v.to(device) if isinstance(v, torch.Tensor) else v for v in value]
 
     def transform_logits(self, logits: torch.Tensor, past_key_values: Any, step_index: int) -> torch.Tensor:
-        """Applies entropy-gated `Phi_buf` participation on syntactically admissible candidates + `S_0` retention."""
+        """Apply a bounded prior on current model candidates, retaining original evidence."""
         if self.phi_buf is None or self.alpha <= 0.0:
             return logits
+        self._move_to_device(logits.device)
 
         is_3d = logits.ndim == 3
         z2d = logits[0].float() if is_3d else logits.float()  # [M, V]
         M, V = z2d.shape
         initial = self.phi0[:V].float() if self.phi0 is not None else self.phi_buf[:V].float()
+        if self.input_field is not None:
+            current_input = self.input_field[:V].to(initial.device)
+            initial = torch.where(initial*current_input < 0, torch.zeros_like(initial), initial)
         # A fixed original channel survives even if the working field is replaced.
         phi = self.initial_weight * initial + (1.0 - self.initial_weight) * self.phi_buf[:V].float()
 
@@ -401,29 +445,36 @@ class InitialProbabilityAnchor:
         syntax_mask = (z2d >= (z_max - self.syntax_margin)).to(torch.float32)
 
         raw_top = z2d.argmax(dim=-1)
-        anchored = z2d + (self.alpha * gate) * (syntax_mask * phi.unsqueeze(0))
+        delta = (self.alpha * gate) * (syntax_mask * phi.unsqueeze(0))
+        # Bound every pairwise log-odds change. A static vocabulary prior may
+        # resolve a close alternative, but cannot apply the old 1-2 logit shove
+        # to each new position. Preserve FP32 through sampling to avoid BF16 ties.
+        span = delta.amax(dim=-1,keepdim=True)-delta.amin(dim=-1,keepdim=True)
+        scale = (self.max_log_odds_shift/span.clamp_min(1e-12)).clamp(max=1.0)
+        delta = delta*scale
+        anchored = z2d + delta
         new_top = anchored.argmax(dim=-1)
-        initial_delta = (self.alpha * self.initial_weight * gate) * (syntax_mask * initial.unsqueeze(0))
-        self.telemetry.initial_rows_active += int((initial_delta.abs().sum(-1) > 0).sum().item())
-        self.telemetry.initial_logit_l1 += float(initial_delta.abs().sum().item())
+        initial_delta = scale * (self.alpha * self.initial_weight * gate) * (syntax_mask * initial.unsqueeze(0))
+        self.telemetry.initial_rows_active += (initial_delta.abs().sum(-1) > 0).sum().detach()
+        self.telemetry.initial_logit_l1 += initial_delta.abs().sum().detach()
 
         self.telemetry.total_rows_scored += int(M)
-        self.telemetry.fork_rows_gated += int((gate.squeeze(-1) > 0.0).sum().item())
-        self.telemetry.argmax_corrections += int((raw_top != new_top).sum().item())
-        self.telemetry.entropy_sum += float(entropy.sum().item())
+        self.telemetry.fork_rows_gated += (gate.squeeze(-1) > 0.0).sum().detach()
+        self.telemetry.argmax_corrections += (raw_top != new_top).sum().detach()
+        self.telemetry.entropy_sum += entropy.sum().detach()
 
         if self.phi0 is not None:
-            chosen_phi = float(self.phi0[int(new_top[0].item())].item())
+            chosen_phi = self.phi0.gather(0,new_top[:1])[0].detach()
             if step_index < 32:
                 self.telemetry.phi0_chosen_early.append(chosen_phi)
             else:
                 self.telemetry.phi0_chosen_late.append(chosen_phi)
 
-        out = anchored.to(dtype=logits.dtype)
+        out = anchored
         return out.unsqueeze(0) if is_3d else out
 
     def on_step_committed(self, past_key_values: Any, committed_tokens: int = 1) -> None:
-        """Maintains non-decaying `S_0` participation on committed state after any speculative rollback."""
+        """Apply explicitly enabled recurrent-state mixing after speculative rollback."""
         if self.snap0 is not None and self.snap0.rec_states and self.rec_anchor_lambda > 0.0 and committed_tokens > 0:
             self._steps_since_reanchor += int(committed_tokens)
             if self._steps_since_reanchor >= self.rec_reanchor_every:
@@ -442,19 +493,16 @@ class InitialProbabilityAnchor:
         if idx.numel() == 0:
             return 0.0
         vals = self.phi0.float().index_select(0, idx)
-        # Top-half mean captures semantic content tokens without diluting on punctuation/prepositions
+        # A lexical-support diagnostic only; high scores can also reward copying.
         k = max(1, idx.numel() // 2)
         return float(torch.topk(vals, k=k).values.mean().item())
 
 
 class ColibriThoughtBuffer:
-    """Two-tier reasoning controller:
+    """Retained initial evidence with optional draft notes and bounded steering.
 
-    1. `ask_anchored(...)`: Runs standard single-pass generation with continuous `InitialProbabilityAnchor`
-       (`Phi_0` + non-decaying `S_0` recurrent memory) so initial probabilities never wash out.
-    2. `ask_wave_buffered(...)`: Assembles a compact, verified Semantic Buffer (`Буфер смысла`) from `(KV_0, S_0)`,
-       discards raw intermediate draft clutter via GPU snapshot rollback, checks drift against `Phi_0`,
-       and generates the final response directly from `[Initial Task + Clean Thought Buffer]`.
+    Both public paths retain the original distribution. Draft notes are explicitly
+    unverified, and lexical alignment never authorizes stronger steering or retries.
     """
 
     def __init__(self, unified_engine: Any):
@@ -467,9 +515,10 @@ class ColibriThoughtBuffer:
         max_new_tokens: int = 512,
         enable_thinking: bool = False,
         alpha: float = 0.42,
-        rec_anchor_lambda: float = 0.06,
+        rec_anchor_lambda: float = 0.0,
         rec_reanchor_every: int = 16,
         initial_phi0: torch.Tensor | None = None,
+        initial_log_probs: torch.Tensor | None = None,
     ) -> dict[str, Any]:
         anchor = InitialProbabilityAnchor(
             alpha=alpha,
@@ -479,6 +528,9 @@ class ColibriThoughtBuffer:
         if initial_phi0 is not None:
             anchor.phi0 = initial_phi0.detach().clone()
             anchor.phi_buf = anchor.phi0.clone()
+            anchor.input_revision_enabled = False
+        if initial_log_probs is not None:
+            anchor.initial_log_probs = initial_log_probs.detach().clone()
         prev = getattr(self.u_eng, "_active_thought_anchor", None)
         self.u_eng._active_thought_anchor = anchor
         t0 = time.perf_counter()
@@ -514,6 +566,7 @@ class ColibriThoughtBuffer:
             "metrics": metrics,
             "anchor_telemetry": anchor.telemetry.summary(),
             "initial_phi0_sha256": anchor.initial_fingerprint(),
+            "initial_probability_sha256": anchor.initial_probability_fingerprint(),
             "phi0_alignment": round(anchor.score_text_alignment(self.u_eng.tokenizer, answer_txt), 4),
         }
 
@@ -525,11 +578,13 @@ class ColibriThoughtBuffer:
         answer_tokens: int = 384,
         alpha_wave: float = 0.38,
         alpha_final: float = 0.48,
-        rec_anchor_lambda: float = 0.08,
+        rec_anchor_lambda: float = 0.0,
         min_buffer_alignment: float = 0.25,
     ) -> dict[str, Any]:
-        """Builds a compact Meaning Buffer from `t = 0`, verifies alignment against `Phi_0` (rolling back
-        and re-anchoring if mutated draft drifts), discards draft noise, and answers from the clean buffer.
+        """Generate working notes and a final response with the original evidence.
+
+        min_buffer_alignment is retained for call compatibility; lexical scores
+        are diagnostic and no longer trigger retries or certify the notes.
         """
         t_start = time.perf_counter()
         norm_msgs = [{"role": str(m["role"]), "content": str(m.get("content", ""))} for m in messages]
@@ -555,6 +610,7 @@ class ColibriThoughtBuffer:
                 )
             orig_anchor.on_prefill_end(self.u_eng, past_orig, lg_orig)
             saved_orig_phi0 = orig_anchor.phi0.clone()
+            saved_orig_log_probs = orig_anchor.initial_log_probs.clone()
             del past_orig
             self.u_eng._release_transient_state()
 
@@ -575,35 +631,24 @@ class ColibriThoughtBuffer:
             alpha=alpha_wave,
             rec_anchor_lambda=rec_anchor_lambda,
             initial_phi0=saved_orig_phi0,
+            initial_log_probs=saved_orig_log_probs,
         )
         buf_text = w1["answer"]
         buf_align = w1["phi0_alignment"]
         retried_wave = False
 
-        # Verification against initial field ("то, что меняется, не всегда правильно"):
-        if buf_align < min_buffer_alignment:
-            retried_wave = True
-            w1_retry = self.ask_anchored(
-                wave_msgs,
-                max_new_tokens=buffer_tokens,
-                enable_thinking=False,
-                alpha=min(0.75, alpha_wave + 0.25),
-                rec_anchor_lambda=min(0.16, rec_anchor_lambda * 1.8),
-                initial_phi0=saved_orig_phi0,
-            )
-            if w1_retry["phi0_alignment"] >= buf_align:
-                w1 = w1_retry
-                buf_text = w1["answer"]
-                buf_align = w1["phi0_alignment"]
+        # Lexical support cannot verify facts. Do not retry with a stronger bias
+        # merely because a draft uses different words from the original prompt.
 
-        # Wave 2: Synthesize final response from [Original Task + Verified Meaning Buffer] with Phi_0 + S_0 active.
+        # Wave 2: Keep the original task authoritative over unverified notes.
         synth_msgs = norm_msgs + [
             {"role": "assistant", "content": f"[Буфер смысла]\n{buf_text}"},
             {
                 "role": "user",
                 "content": (
-                    "Опираясь строго на исходные условия и проверенный буфер смысла выше "
-                    "(без лишней воды и без пропуска ни одного условия), дай точный итоговый ответ в требуемом формате."
+                    "Дай итоговый ответ в формате исходного запроса. Исходные условия имеют приоритет. "
+                    "Буфер выше — непроверенные рабочие заметки: проверь их по условиям и исправь ошибки, "
+                    "не принимай их утверждения за доказанные факты."
                 ),
             },
         ]
@@ -620,6 +665,7 @@ class ColibriThoughtBuffer:
             synth_anchor.snap0 = capture_cache_snapshot(past_kv)
             synth_anchor.phi0 = saved_orig_phi0.to(device=lg_last.device)
             synth_anchor.phi_buf = saved_orig_phi0.to(device=lg_last.device).clone()
+            synth_anchor.initial_log_probs = saved_orig_log_probs.to(device=lg_last.device)
             synth_anchor.layer_conclusion_into_buffer(lg_last, lp_n0, weight=0.40)
             synth_anchor._steps_since_reanchor = 0
             synth_anchor.telemetry.snapshot_setup_ms = (time.perf_counter() - t_s0) * 1000.0
@@ -652,6 +698,8 @@ class ColibriThoughtBuffer:
             "thought_buffer": buf_text,
             "buffer_phi0_alignment": buf_align,
             "retried_drifted_wave": retried_wave,
+            "buffer_verified": False,
+            "alignment_is_diagnostic_only": True,
             "answer": final_answer,
             "wall_s": round(time.perf_counter() - t_start, 3),
             "wave1_telemetry": w1["anchor_telemetry"],
@@ -659,6 +707,9 @@ class ColibriThoughtBuffer:
             "initial_phi0_sha256": orig_anchor.initial_fingerprint(),
             "wave1_initial_phi0_sha256": w1["initial_phi0_sha256"],
             "synth_initial_phi0_sha256": synth_anchor.initial_fingerprint(),
+            "initial_probability_sha256": orig_anchor.initial_probability_fingerprint(),
+            "wave1_initial_probability_sha256": w1['initial_probability_sha256'],
+            "synth_initial_probability_sha256": synth_anchor.initial_probability_fingerprint(),
             "answer_phi0_alignment": round(
                 synth_anchor.score_text_alignment(self.u_eng.tokenizer, final_answer), 4
             ),

@@ -8,10 +8,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache 2.0"></a>
 </p>
 
-Local inference of supported **Hugging Face and GGUF language models** on a single consumer
-NVIDIA GPU, with packed Q4/Q6 execution, bounded layer streaming and an OpenAI-compatible LAN server.
+Local inference of supported **Hugging Face and GGUF language models** with bounded layer
+streaming, BF16 or packed Q4/Q6 execution and an OpenAI-compatible LAN server. The
+CPU executor can run on its own; an NVIDIA GPU can join when ready.
 
-**Version 1.1.0 does not support every model.** See [model support](MODEL_SUPPORT.md) for dated
+**Version 1.2.0 does not support every model.** See [model support](MODEL_SUPPORT.md) for dated
 per-checkpoint evidence, unsupported cases and experimental mechanisms.
 
 AirColibri combines ideas from [AirLLM](https://github.com/lyogavin/airllm) (layer streaming,
@@ -25,7 +26,7 @@ native MTP speculation) with its own packed Q4/Q6 weights and NVRTC CUDA kernels
 
 ## Requirements
 
-- NVIDIA GPU with CUDA (tested: RTX 3060 Ti 8 GB; smaller budgets require streaming and sufficient room for individual operators)
+- Optional NVIDIA GPU with CUDA (tested: RTX 3060 Ti 8 GB; smaller budgets require streaming and sufficient room for individual operators). CPU-only execution is available with `--device cpu`.
 - Python 3.12, PyTorch 2.6 with CUDA 12.4 (`requirements.txt`)
 - Windows x64 or Linux
 
@@ -37,13 +38,14 @@ python -m venv .venv
 
 ## Model
 
-The recommended model is **[Qwen/Qwen3.5-9B](https://huggingface.co/Qwen/Qwen3.5-9B)**.
-Standard Hugging Face shards (`model-0000X-of-0000N.safetensors` + `model.safetensors.index.json`)
-are read directly — no converter and no second copy on disk. On first start the Q4 weights are
-built once into `data/q4-g64-cache/`.
+Choose a tested checkpoint from [model support](MODEL_SUPPORT.md). Standard Hugging
+Face shards (`model-0000X-of-0000N.safetensors` + `model.safetensors.index.json`)
+are read directly. The common path packs eligible projections into Q4/Q6 on demand;
+it needs no manual converter or second full checkpoint. The specialized Qwen3.5-9B
+path builds its persistent Q4 cache in `data/q4-g64-cache/`.
 
 ```bash
-aircolibri doctor --model Qwen/Qwen3.5-9B      # downloads once (~19 GB) and checks the setup
+aircolibri download https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct --device cpu
 ```
 
 You can point `--model` at a local folder or place it in `models/`. The loader reads
@@ -76,6 +78,8 @@ operations without Triton. The specialized Qwen MTP head is not enabled on unrel
 
 ```bash
 aircolibri doctor                      # GPU, model, VRAM plan, LAN addresses
+aircolibri models                      # numbered local model catalog
+aircolibri ask --model 1 "Hello"        # select the current catalog's first entry
 aircolibri ask "Привет! Кто ты?"       # one answer, streamed
 aircolibri chat                        # multi-turn chat (Ctrl+C stops the current answer)
 aircolibri serve                       # web chat + OpenAI API on :8787, UDP beacon on :8788
@@ -83,10 +87,48 @@ aircolibri discover                    # find AirColibri servers on the LAN
 ```
 
 On Windows use `aircolibri.cmd` (it picks `.venv` automatically) or `python aircolibri.py`.
+In PowerShell from the program directory, for example: `.\aircolibri.cmd models`.
+
+### Model downloads and preparation
+
+`models` accepts `--json` and `--check`. The latter checks adaptation metadata;
+it does not run generation or certify support. Choose with `--model NUMBER`, a
+catalog folder name or a full path. Numbers refer to the current sorted catalog.
+Plain listing and command help do not initialize PyTorch or CUDA.
+
+```bash
+aircolibri download https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct --directory "D:/Models/SmolLM2-135M" --device cpu --weight-format q6
+aircolibri ask --model "D:/Models/SmolLM2-135M" --device cpu "What is 6 times 7?"
+aircolibri prepare --model "D:/Models/SmolLM2-135M" --device cpu --weight-format q6
+```
+
+`download` defaults to `models/OWNER__REPO`, registers external destinations in the
+local catalog, and performs a finite first-forward check including runtime packing.
+Its `aircolibri-source.json` records `ready`, an unverified download or a failure;
+downloaded files alone are not a support claim. `--no-verify` skips that forward.
+An unsupported checkpoint reports the error and retains its source files.
+
+Repository IDs, model-page URLs, revision pages and GGUF file URLs are accepted.
+Use `--file path/model.gguf` or `OWNER/REPO::path/model.gguf` to choose a quantization;
+numbered split parts are downloaded together. Repositories with several GGUF variants
+require a selection. `--revision` selects a revision in a separate destination.
+Completed compatible downloads can be reused offline. Partial Hub caches trigger
+completion rather than being mistaken for runnable models. A nonempty unrelated
+directory is never reused for a new download.
+
+`ask`, `chat`, `serve` and `doctor` also accept `--download-dir DIRECTORY` with an
+HF reference. Without it, explicit remote references retain the standard Hub-cache
+behavior. Automatic preparation is validated on a fresh SmolLM2 HF download and
+synthetic HF/GGUF selection cases; [CLI evidence](benchmarks/CLI_MODELS_20261118.md)
+records the scope.
 
 ### VRAM modes
 
 AirColibri measures the **free** VRAM at start and plans with it — there are no fixed card profiles.
+When NVML is available it matches the CUDA device by UUID and uses the lower CUDA/NVML
+free reading, so another process's allocation enters the startup budget. Status and
+`doctor` expose the counters and any NVML fallback diagnostic. This samples startup
+memory; it does not continuously rebalance after later desktop allocations.
 
 | Mode | What it takes |
 |---|---|
@@ -144,7 +186,7 @@ against normal chunked prefill and against the same wave scheduled on one CUDA s
   requests is a different number and is not quoted here.
 - `--fast-vocab` is experimental and off by default: it can drop rare tokens on long outputs.
 
-Fresh 1.1.0 small-model measurements on the same RTX 3060 Ti, with models on HDD:
+Earlier 1.1.0 small-model measurements on the same RTX 3060 Ti, with models on HDD:
 
 | Model | Q4 median tok/s | Q6 median tok/s |
 |---|---:|---:|
@@ -156,6 +198,67 @@ These are three 48-token requests after a warm-up, automatic placement, MTP off.
 They exclude prefill and loading. See [full ranges and protocol](benchmarks/RELEASE_1_1_0.md).
 The optional dynamic arena was slower than the matched streaming-ring control in
 these experiments and remains opt-in; no dynamic-memory speedup is claimed.
+
+The new controlled Llama 3.2 1B Q6 comparison measured **30.55 tok/s resident,
+11.98 with half the layers streamed and 7.34 with all layers streamed**. Four
+64-token samples per placement, warm host cache, MTP off; all output hashes matched.
+A separate 2 GiB allocation was reflected in the corrected startup budget. These
+are different placements on a small model, not a repeat of the historical Qwen9B
+measurement or a cold-disk test. See [protocol and pressure results](benchmarks/STREAMING_DECODE_20261118.md).
+
+## Common CPU/GPU startup
+
+CPU and GPU preparation share one start event after the common graph geometry is
+known. CPU global-weight preparation and GPU context/kernel preparation then proceed
+independently. No CPU layer has to finish before GPU startup. Each ready device takes
+eligible work; there is no forced device priority, startup delay or token-count ramp.
+
+The foreground reads weights once and offers them to a bounded GPU-transfer queue
+before computation. Prepared dense layers can join the same running graph; their live
+per-layer cache follows them. At a safe chunk/token boundary the completed GPU setup
+adopts that graph, state and the existing streaming ring. The prompt is not replayed.
+Readiness includes the original Colibri NVRTC kernels and completed weight transfers.
+Construction and CPU arithmetic still cost time; this does not guarantee instant output
+or a lower time to first token.
+
+This is the default (`progressive_start=True` in Python). `--no-progressive-start`
+selects the previous GPU-first reference. The `--cpu-first` / `cpu_first=`
+spelling remains an alias for compatibility; it imposes no CPU-first ordering.
+Without CUDA, the same graph streams layers on CPU. `--device cpu` (Python:
+`device="cpu"`) selects that path explicitly and starts no GPU helper. GPU planning,
+compilation or preparation failure before full adoption retires the helper and
+continues on CPU at a forward boundary, retaining the live cache and diagnostic.
+Already adopted layers return to CPU without replaying the prefix. CPU sessions
+park and restore state without CUDA synchronization or pinned allocation.
+CPU startup retains the slot geometry without allocating a staging arena; GPU
+transfer buffers are allocated when the GPU ring is prepared.
+Failures during execution after full GPU adoption are still reported normally.
+`doctor --device cpu` does not require a VRAM plan. This is not a guarantee that
+every model fits its CPU working buffer: whole layer/projection limits still apply;
+cluster/"cube" scheduling is not implemented by this change.
+The common path now has a bounded draft/verify/commit loop over the same HF executor.
+`--speculation auto` uses compatible trained MTP tensors when present, otherwise prompt
+lookup. `--speculation native --mtp-head PATH` loads a separate Qwen3.5 text head
+(default weight cap: 128 MiB); it shares the base embeddings and output projection.
+`--speculation off` disables drafts. Lookup is not a trained MTP head. Each verification
+row uses ordinary one-token layer arithmetic; rejected rows are removed from attention
+and recurrent state before commit. A 64 MiB optional state-snapshot estimate limits
+draft depth and falls back to ordinary decoding. No second backbone is loaded.
+See [streamed MTP validation](benchmarks/MTP_STREAMING_20261118.md) for tested scope.
+The specialized GPU-first Qwen reference and experimental vocabulary pruner remain
+separate paths. MoE expert-cache adoption is atomic: those layers remain on CPU until their
+cache can follow them. Up to 64 MiB of prepared CPU experts can be reused by the GPU
+without a second read or quantization. Optional common memory retains the initial
+prefill map during adoption, and the probability anchor follows the device while
+preserving original values. These changes are included in 1.2.0.
+
+`--region-pruning` (default) excludes exactly zero output-weighted Granite/OLMoE
+routes before expert reads and cancels obsolete optional preparation for the same
+layer/work scope. Later tokens can select those experts again. Actual nonzero routes
+outside the prefill forecast are always loaded. This does not certify skipping arbitrary
+dense weights based on early probabilities; models without a supported exclusion
+contract keep their normal computation. Verification retains the warming producer,
+but only accepted route rows may revise the task map.
 
 ## Experimental common weight arena
 
@@ -189,14 +292,23 @@ still needs contiguous pages. It is not a speed or reasoning-quality guarantee.
 
 ## Experimental thought buffer
 
-The Python `ColibriThoughtBuffer` API keeps the initial probability field separate from the
-working field. It is off by default and changes the model's output distribution. Its lexical
-alignment score is a heuristic, not an answer verifier. Improved reasoning and reliable handling
-of corrections to an earlier premise have not been established. In the release probes,
-Granite answered the Japan-capital question with `N/A` under anchoring, versus `Tokyo`
-without it. This experimental mode can worsen factual answers. Use a new anchor for a new task.
-The release fixes probe rollback for sliding-window and conv/recurrent caches; unsupported
-state containers fail explicitly. Native MTP plus anchoring is not certified as lossless.
+The Python `ColibriThoughtBuffer` API keeps the original full FP32 log-probability distribution
+and its contrastive prior separate from the revisable working field. It is off by default and
+changes the model's output distribution. Version 1.2.0 bounds the prior's pairwise
+log-odds contribution to 0.125 and retains FP32 sampling logits. New user input may revise the
+working field while the original distribution remains available throughout waves and synthesis.
+Direct mixing of the original recurrent state into current state is now explicit opt-in
+(`rec_anchor_lambda > 0`); snapshots and rollback remain active independently.
+
+Lexical alignment is diagnostic only: it neither verifies notes nor triggers retries with
+stronger bias. In the **1.1.0 release** probes Granite answered the Japan-capital question with
+`N/A` under the older anchor, versus `Tokyo` without it. The regression checks cover
+that failure and explicit premise corrections; they do not establish generally improved
+reasoning or answer correctness. Use a new anchor for a new task. Unsupported state containers
+fail explicitly. Native MTP plus anchoring is not certified as lossless.
+
+See [current development validation](benchmarks/DEVELOPMENT_20261118.md) for the
+paired checks and the distinction between probability retention and semantic memory.
 
 ## Reproducing small-model measurements
 

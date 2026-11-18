@@ -150,7 +150,7 @@ def test_mtp_speculative_rows_and_committed_reanchor():
     logits_mtp = torch.randn(1, 3, 20, dtype=torch.bfloat16)
     out = anchor.transform_logits(logits_mtp, past_key_values=cache, step_index=10)
     assert out.shape == (1, 3, 20)
-    assert out.dtype == torch.bfloat16
+    assert out.dtype == torch.float32  # preserve close rankings through sampling
     assert anchor.telemetry.total_rows_scored == 3
 
     cache.layers[1].recurrent_states[0].zero_()
@@ -161,10 +161,11 @@ def test_mtp_speculative_rows_and_committed_reanchor():
     assert cache.layers[1].recurrent_states[0].abs().sum().item() > 0.0
 
 
-def test_layer_conclusion_never_erases_positive_phi0():
+def test_working_conclusion_can_change_without_erasing_original_probabilities():
     anchor = InitialProbabilityAnchor()
     anchor.phi0 = torch.tensor([3.2, 0.1, -0.5, 1.6], dtype=torch.bfloat16)
     anchor.phi_buf = anchor.phi0.clone()
+    original = anchor.phi0.clone()
 
     # Intermediate wave strongly dislikes token 0, likes token 1
     step_logits = torch.tensor([[[ -5.0, 6.0, 0.0, -4.0 ]]], dtype=torch.float32)
@@ -172,10 +173,46 @@ def test_layer_conclusion_never_erases_positive_phi0():
     anchor.layer_conclusion_into_buffer(step_logits, lp_neutral, weight=0.5)
 
     buf = anchor.phi_buf.float()
-    # Token 0 had phi0 = 3.2 > 0.5 -> must retain at least 0.75 * 3.2 = 2.4!
-    assert buf[0].item() >= 0.74 * 3.2
+    assert torch.equal(anchor.phi0, original)
+    assert buf[0].item() < 0.74 * 3.2
     # Token 1 gained positive support from the verified wave conclusion
     assert buf[1].item() > 0.5
+
+
+def test_original_prior_cannot_override_explicit_input_revision():
+    anchor = InitialProbabilityAnchor()
+    anchor.phi0 = torch.tensor([4.0, -2.0, 1.0])
+    anchor.phi_buf = anchor.phi0.clone()
+    original = anchor.phi0.clone()
+    anchor.revise_input(torch.tensor([-2.0, 4.0, 1.0]))
+    logits = torch.tensor([[3.0, 3.01, 1.5]])
+    result = anchor.transform_logits(logits, None, 0)
+    assert result.argmax().item() == 1
+    assert torch.equal(anchor.phi0, original)
+    assert anchor.telemetry.initial_rows_active > 0  # uncontradicted channel survives
+
+
+def test_log_odds_bound_and_observed_tokyo_regression():
+    anchor = InitialProbabilityAnchor()
+    anchor.phi0 = torch.tensor([4.0, 3.28125, 3.40625, 4.0, 4.0])
+    anchor.phi_buf = anchor.phi0.clone()
+    # Actual Granite top candidates: N, To, The, Os, J. The old bias chose N.
+    logits = torch.tensor([[17.75, 18.0, 17.125, 16.125, 16.0]], dtype=torch.bfloat16)
+    result = anchor.transform_logits(logits, None, 0)
+    assert result.dtype == torch.float32 and result.argmax().item() == 1
+    delta = result - logits.float()
+    assert (delta.max()-delta.min()).item() <= anchor.max_log_odds_shift + 1e-6
+    assert not torch.equal(result, logits.float())  # bounded participation, not alpha=0
+
+
+def test_default_anchor_preserves_recurrent_transition_state():
+    cache = _FakeHybridCache()
+    anchor = InitialProbabilityAnchor(rec_reanchor_every=1)
+    anchor.snap0 = capture_cache_snapshot(cache)
+    cache.layers[1].recurrent_states[0].zero_()
+    anchor.on_step_committed(cache, 32)
+    assert cache.layers[1].recurrent_states[0].count_nonzero() == 0
+    assert anchor.telemetry.recurrent_reanchors == 0
 
 
 def test_ask_anchored_parses_stream_chat_events():

@@ -32,6 +32,7 @@ class UnifiedWorkingMemory:
         self.epoch = 0
         self.desired = set()
         self.directory = OrderedDict()
+        self.access_clock = 0
         self.counts = Counter()
         self.area_reads = [0, 0, 0]
         self.area_writes = [0, 0, 0]
@@ -107,9 +108,24 @@ class UnifiedWorkingMemory:
                 if e is not None and not e.query()]
 
     def _views(self, record, host=False):
+        cache_key = '_host_views' if host else '_gpu_views'
+        if cache_key in record:
+            return record[cache_key]
         banks = self.host_banks if host else self.banks
-        return tuple({k: v[record['pos']] for k, v in projection.items()}
-                     for projection in banks[record['bank']])
+        views = tuple({k: v[record['pos']] for k, v in projection.items()}
+                      for projection in banks[record['bank']])
+        record[cache_key] = views
+        return views
+
+    def _stage_packed(self, packed, record):
+        staged = self._views(record, host=True)
+        for dst, src in zip(staged, packed):
+            for name in dst:
+                dst[name].copy_(src[name])
+        return staged
+
+    def _staging_complete(self, event):
+        pass
 
     def area_for(self, record):
         return record['bank']
@@ -143,21 +159,20 @@ class UnifiedWorkingMemory:
         if origin == 'prefetch':
             # Optional writers are admitted only after prior H2D has finished,
             # so the pinned staging views can be overwritten on the CPU.
-            staged = self._views(record, host=True)
-            for dst, src in zip(staged, packed):
-                for name in dst:
-                    dst[name].copy_(src[name])
-            packed = staged
+            packed = self._stage_packed(packed, record)
         with torch.cuda.stream(stream):
             start = torch.cuda.Event(enable_timing=True)
             start.record(stream)
-            for dst, src in zip(self._views(record), packed):
+            for dst, src in zip(destinations, packed):
                 for name in dst:
                     dst[name].copy_(src[name], non_blocking=True)
             event = torch.cuda.Event(enable_timing=True)
             event.record(stream)
+        if origin == 'prefetch':
+            self._staging_complete(event)
         record.update(key=key, generation=record['generation']+1, ready=event,
                       readers=[], origin=origin, transfer_start=start,
+                      last_used=-1,
                       warm_epoch=self.epoch if key in self.desired else -1)
         self.directory[key] = record['bank']*self.per_area + record['pos']
         self.area_writes[self.area_for(record)] += 1
@@ -234,8 +249,15 @@ class UnifiedWorkingMemory:
             self.counts['aux_hits' if auxiliary else 'hits'] += 1
         if allow_evict and not auxiliary:
             self.directory.move_to_end(key)
+            self.access_clock += 1
+            record['last_used'] = self.access_clock
         record['leases'] += 1
-        stream.wait_event(record['ready'])
+        ready = record['ready']
+        if ready is not None:
+            if ready.query():
+                record['ready'] = None
+            else:
+                stream.wait_event(ready)
         self.counts['aux_leases' if auxiliary else 'leases'] += 1
         self.area_reads[self.area_for(record)] += 1
         if not auxiliary and record['warm_epoch'] == self.epoch:
@@ -312,6 +334,10 @@ class UnifiedWorkingMemory:
             self.cv.notify_all()
         torch.cuda.synchronize(self.device)
         self.directory.clear()
+        # Cached tensor views must not keep the arena alive after close.
+        for record in self.records:
+            record.pop('_gpu_views', None)
+            record.pop('_host_views', None)
         self.banks.clear()
         self.host_banks.clear()
         self.gpu = self.host = None

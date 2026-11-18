@@ -75,12 +75,21 @@ def main():
 
     engine = None
     process = psutil.Process()
+    def cache_counters():
+        stats = engine.expert_cache_stats() or {}
+        result = {k:v for k,v in stats.items() if isinstance(v,(int,float,bool))}
+        for key in ('source','shared_memory'):
+            section = stats.get(key) or {}
+            result[key] = {k:v for k,v in section.items()
+                           if isinstance(v,(int,float,bool)) and k != 'allocation_ptr'}
+        return result
     def generate(messages, tokens, *, measured=False):
         if args.anchor:
             from aircolibri_cli.thought_buffer import InitialProbabilityAnchor
             engine._active_thought_anchor = InitialProbabilityAnchor()
         engine.reset_session()
         torch.cuda.synchronize()
+        before_cache = cache_counters()
         torch.cuda.reset_peak_memory_stats()
         io0 = process.io_counters()
         t0 = time.perf_counter()
@@ -102,6 +111,7 @@ def main():
                       output_sha256=hashlib.sha256((done["thinking_text"]+done["answer_text"]).encode()).hexdigest(),
                       process_read_bytes=io1.read_bytes-io0.read_bytes,
                       process_read_count=io1.read_count-io0.read_count)
+        result.update(cache_before=before_cache, cache_after=cache_counters())
         engine._active_thought_anchor = None
         return result
     try:

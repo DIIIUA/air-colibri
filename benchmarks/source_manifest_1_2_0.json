@@ -1,0 +1,188 @@
+{
+  "engine_lf_sha256": "b80a8701d6d98f0686035d9f00957546af9a57d72d81f321989402b4356457d4",
+  "census_engine_lf_sha256": "d6a2a11cf36bbe0f3a1060f6c4c5be58dcf76293200a1ad2dc3fee0679c86ad7",
+  "finalization_changes": [
+    {
+      "path": "src/progressive_execution.py",
+      "change": "Remove one trailing empty line; Python AST unchanged"
+    }
+  ],
+  "files": [
+    {
+      "path": "src/__init__.py",
+      "lf_sha256": "54a8d417e7bc01acb1b5256758eb15ed760a901e9025ed6322f37c8fa0afd798"
+    },
+    {
+      "path": "src/adaptive_streaming.py",
+      "lf_sha256": "11aec856686d3c1e541c82852674534bd27d2c0b0de1ae613d1f4173bcceae19"
+    },
+    {
+      "path": "src/aircolibri_engine.py",
+      "lf_sha256": "e2a026b7812b8a7bb8a7983f9661e199ba2e0a1f1fb89d96de1070a3b118abd5"
+    },
+    {
+      "path": "src/aircolibri_integrated.py",
+      "lf_sha256": "35f2813c9760cd887c90454532c0fa9b5befb285eb2714b46e67f36626fd67cf"
+    },
+    {
+      "path": "src/bounded_memory_manager.py",
+      "lf_sha256": "2bd25ff2bd1da0e01fada1fdd1c5ab2454b56b9424818c615886e430a2e22d24"
+    },
+    {
+      "path": "src/catalog_bridge.py",
+      "lf_sha256": "73b6026fb32d3715782144e4179500abbad6a68bcdf2a31d51a39c51379bc788"
+    },
+    {
+      "path": "src/colibri_deltanet_nvrtc.py",
+      "lf_sha256": "aecc60997fc86eb3128070a79f8dd43ff1478e89516228a891879441b29a8f97"
+    },
+    {
+      "path": "src/colibri_nvrtc.py",
+      "lf_sha256": "6e60018e28f5d313a9a2d3c33d148c9439a2d14d97797fd24c41407beef023f1"
+    },
+    {
+      "path": "src/control_contract.py",
+      "lf_sha256": "67edab68397c54e17790645f46f5a096a1ff2e4c34cecc497123f668049366af"
+    },
+    {
+      "path": "src/dynamic_working_memory.py",
+      "lf_sha256": "fca14d92021c9ea68ea6f20c4a6a660658ae7a554c7514e02328ad9e6d06d599"
+    },
+    {
+      "path": "src/existing_hooks.py",
+      "lf_sha256": "82992634fabc66d72f6d098bc640013ba83ac6b94195f2c8eceec9a1f12a6ebf"
+    },
+    {
+      "path": "src/general_speculation.py",
+      "lf_sha256": "77ebe688fe149b379d0a5058bcfe536e8b7b6810d840187500aacc687e9e2b7d"
+    },
+    {
+      "path": "src/gpu_ring_pipeline.py",
+      "lf_sha256": "ee465d302f41929d022c7f7dbff7c940ef19e36abd7925d09f55f9f56d9a8a3f"
+    },
+    {
+      "path": "src/lease_ack_bridge.py",
+      "lf_sha256": "c3b436e4fb63014f73e5be674d3dcbf044ccd698fa8a3544de90d0f42ae27ee6"
+    },
+    {
+      "path": "src/lfru_cache.py",
+      "lf_sha256": "3342351299862280e7c395c5399b03d8771a39562b2b89f7dfd929ff40a510e4"
+    },
+    {
+      "path": "src/native/colibri_fused_quant.cu",
+      "lf_sha256": "2a12bd62c0bad8f263f08339757e52db121e2b9cf91f0b9535c125c2f291e118"
+    },
+    {
+      "path": "src/native_mtp.py",
+      "lf_sha256": "99c60559d620bd886ef33bd56ed315ee67ab8ee0b0e5a698fe3f7c05b4938ccf"
+    },
+    {
+      "path": "src/prefill_wavefront.py",
+      "lf_sha256": "dfaea3312306460beaf8de5f92f6986cfaf97be185e0b45a1c1861d2c02bd2f6"
+    },
+    {
+      "path": "src/prepacked_q4_cache.py",
+      "lf_sha256": "b49bf6dcf19d4d9dd3dc8de72505f7f894731ec995e839eb88f4173012acee3b"
+    },
+    {
+      "path": "src/probability_warmup.py",
+      "lf_sha256": "cf5559e1a45f97a0a56553743badffd6355ebfd88c6ef9e5cbfed2f46165010b"
+    },
+    {
+      "path": "src/progressive_execution.py",
+      "lf_sha256": "4f54048b76f1c069375cac54c302c36de6590b1e9bdd004b90efd7402865cf0e"
+    },
+    {
+      "path": "src/progressive_prefetch.py",
+      "lf_sha256": "d967d8ab39072a712d0f86e22a3eab0d09b0c5d0ebbf3811c95d4c18be4cf70d"
+    },
+    {
+      "path": "src/quantization_q4.py",
+      "lf_sha256": "148ea3984cb1ff8c76296d89a2dd7f6f1be9243b1ce53d7df7363b7cdf19ff82"
+    },
+    {
+      "path": "src/quantized_experts.py",
+      "lf_sha256": "fb7787de853ce8da12ae407c9c1223a80f373a927e8a0af1a2a87b5e829e1272"
+    },
+    {
+      "path": "src/quantized_projection.py",
+      "lf_sha256": "b7182d979e47d4d43591740cee7a1f48b700988d4811c07626d9abd294789589"
+    },
+    {
+      "path": "src/route_exclusion.py",
+      "lf_sha256": "322d2bad210a8b41de530fcec28b28ef798375e652313db3dcdace1355052950"
+    },
+    {
+      "path": "src/rowwise_verification.py",
+      "lf_sha256": "bc81389a6a81938f298bdaff1307713c6ea9e935637ebb95bf1cd4343ca64bd2"
+    },
+    {
+      "path": "src/unified_prefetch.py",
+      "lf_sha256": "88341ec46f06d6a0972bba5310ee45bc14d7ba16131b74bc7302e6300cfb6b56"
+    },
+    {
+      "path": "src/unified_working_memory.py",
+      "lf_sha256": "49319107edec3d75da05767ebd3ea0567e9b9eab748fbdab32ca766d1b6a4e3f"
+    },
+    {
+      "path": "src/upstream_bridge.py",
+      "lf_sha256": "cbc6e90cae3267b912fd52b9815719af678a5e62b94bc78e5cc37bd2149ebe30"
+    },
+    {
+      "path": "aircolibri_cli/__init__.py",
+      "lf_sha256": "053e926999a552d894a211e4720ca33e8c3a591ebf782648a13ea208270b500c"
+    },
+    {
+      "path": "aircolibri_cli/cli.py",
+      "lf_sha256": "e2454fd5a875da8eeac57c3e9cca29a37e15eb099176fbc23615b07f66fdb0c9"
+    },
+    {
+      "path": "aircolibri_cli/gguf_arch_registry.py",
+      "lf_sha256": "8c4c1aec814e3f626a4494a8f4e039ddf7ebb08d22f959f279c81140cc870923"
+    },
+    {
+      "path": "aircolibri_cli/gguf_reader.py",
+      "lf_sha256": "e3b096db06822a063dc71578e3fbb6a34327eaf333a47a12570411d197bda57e"
+    },
+    {
+      "path": "aircolibri_cli/gpu_memory.py",
+      "lf_sha256": "a5870ee9f84b52d69bc8069d4ecbcbe02a8aa3c7eb099c6824cf50867d9b7a42"
+    },
+    {
+      "path": "aircolibri_cli/hf_quantized_source.py",
+      "lf_sha256": "659f7417493abf0237f1f042a59b1776669ee94cbc3e38b8d1a495503337d5ab"
+    },
+    {
+      "path": "aircolibri_cli/kernels.py",
+      "lf_sha256": "7ccafbec2f11e2b81048058d27c1be3a47f9a7f02ccfee926ceff461bcd478a2"
+    },
+    {
+      "path": "aircolibri_cli/lan_server.py",
+      "lf_sha256": "25ffa7ea2728751ad068d1e8bae265d64db3f92348bfe126815ecbb44c1b0901"
+    },
+    {
+      "path": "aircolibri_cli/model_hub.py",
+      "lf_sha256": "768930826b5fa054f3977cb3e9db5275f575337a1cb4ed0546d6740d8be0d9e3"
+    },
+    {
+      "path": "aircolibri_cli/model_reference.py",
+      "lf_sha256": "bba18d7f6568286d5e2b6c7a786d732edd6f3d396c1ffcd4f41d4e3dc4aa9026"
+    },
+    {
+      "path": "aircolibri_cli/model_source.py",
+      "lf_sha256": "f4703e4dc1de5329e933bd16c1b6462f38e19df92b1615a08e33dda049bac34d"
+    },
+    {
+      "path": "aircolibri_cli/runtime_config.py",
+      "lf_sha256": "3734bd4b07b56d0c6037a278258583078926997a56ba3cbdfa8c9ea5fed49c56"
+    },
+    {
+      "path": "aircolibri_cli/thought_buffer.py",
+      "lf_sha256": "894fb6e6384dc42c78fd42f19e1a24b7c79122aa4c090d39f3716f31f3c1e583"
+    },
+    {
+      "path": "aircolibri_cli/unified_runtime.py",
+      "lf_sha256": "b0d4bdb4736a8921aec95050440a2685283f8cf5081cb373d5cb70f492a57812"
+    }
+  ]
+}
